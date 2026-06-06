@@ -40,43 +40,6 @@ def _candidate_payload(candidate: Mapping[str, Any]) -> dict[str, Any]:
     return dict(candidate)
 
 
-def _uoa_root_from_cycle(
-    symbol: str | None,
-    cycle: Mapping[str, Any] | None,
-) -> dict[str, Any] | None:
-    if symbol is None or not isinstance(cycle, Mapping):
-        return None
-    decisions = cycle.get("uoa_decisions")
-    if not isinstance(decisions, Mapping):
-        return None
-    roots = decisions.get("roots")
-    if not isinstance(roots, list):
-        return None
-    for row in roots:
-        if (
-            isinstance(row, Mapping)
-            and str(row.get("underlying_symbol") or "").strip().upper() == symbol
-        ):
-            return dict(row)
-    return None
-
-
-def _uoa_quote_root_from_cycle(
-    symbol: str | None,
-    cycle: Mapping[str, Any] | None,
-) -> dict[str, Any] | None:
-    if symbol is None or not isinstance(cycle, Mapping):
-        return None
-    summary = cycle.get("uoa_quote_summary")
-    if not isinstance(summary, Mapping):
-        return None
-    roots = summary.get("roots")
-    if not isinstance(roots, Mapping):
-        return None
-    payload = roots.get(symbol)
-    return None if not isinstance(payload, Mapping) else dict(payload)
-
-
 def _leg_value(candidate: Mapping[str, Any], *, role_name: str, key: str) -> Any:
     return candidate.get(f"{role_name}_{key}")
 
@@ -181,33 +144,13 @@ def build_earnings_signal_evidence(
     candidate: Mapping[str, Any],
     *,
     family: str | None = None,
-    cycle: Mapping[str, Any] | None = None,
-    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = _candidate_payload(candidate)
-    explicit = dict(evidence or {})
     symbol = _as_text(payload.get("underlying_symbol"))
     resolved_family = family or _strategy_family(_as_text(payload.get("strategy")))
-    uoa_root = explicit.get("uoa_root_decision")
-    if not isinstance(uoa_root, Mapping):
-        uoa_root = payload.get("uoa_root_decision")
-    if not isinstance(uoa_root, Mapping):
-        uoa_root = _uoa_root_from_cycle(None if symbol is None else symbol.upper(), cycle)
-    uoa_quote_root = explicit.get("uoa_quote_root_summary")
-    if not isinstance(uoa_quote_root, Mapping):
-        uoa_quote_root = payload.get("uoa_quote_root_summary")
-    if not isinstance(uoa_quote_root, Mapping):
-        uoa_quote_root = _uoa_quote_root_from_cycle(
-            None if symbol is None else symbol.upper(),
-            cycle,
-        )
     return {
         "family": resolved_family,
         "symbol": None if symbol is None else symbol.upper(),
-        "uoa_root_decision": None if not isinstance(uoa_root, Mapping) else dict(uoa_root),
-        "uoa_quote_root_summary": None
-        if not isinstance(uoa_quote_root, Mapping)
-        else dict(uoa_quote_root),
         "candidate_quote_quality": _candidate_quote_quality(payload),
         "setup_context": {
             "setup_status": _as_text(payload.get("setup_status")),

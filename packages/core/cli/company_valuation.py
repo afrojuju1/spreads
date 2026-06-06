@@ -503,7 +503,7 @@ def company_valuation_benchmark_prior_report_command(
 
 @company_valuation_app.command(
     "cluster-research-dataset",
-    help="Run offline clustering and template-discovery analysis on a valuation research dataset.",
+    help="Run offline clustering and template analysis on a valuation research dataset.",
 )
 def company_valuation_cluster_research_dataset_command(
     dataset_root: str = typer.Option(

@@ -4,7 +4,7 @@ from typing import Any
 
 from core.services.option_quote_records import build_option_symbol_metadata
 
-UOA_ALLOWED_TRADE_CONDITIONS = frozenset({"I", "J", "S", "a", "b"})
+SCOREABLE_OPTION_TRADE_CONDITIONS = frozenset({"I", "J", "S", "a", "b"})
 
 
 def build_trade_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -19,11 +19,11 @@ def normalize_trade_conditions(raw_conditions: Any) -> list[str]:
     return [str(raw_conditions)]
 
 
-def classify_trade_conditions_for_uoa(raw_conditions: Any) -> tuple[bool, str | None, list[str]]:
+def classify_trade_conditions_for_scoring(raw_conditions: Any) -> tuple[bool, str | None, list[str]]:
     conditions = normalize_trade_conditions(raw_conditions)
     if not conditions:
         return False, "missing_conditions", conditions
-    excluded = [condition for condition in conditions if condition not in UOA_ALLOWED_TRADE_CONDITIONS]
+    excluded = [condition for condition in conditions if condition not in SCOREABLE_OPTION_TRADE_CONDITIONS]
     if excluded:
         return False, f"excluded_conditions:{','.join(excluded)}", conditions
     return True, None, conditions
@@ -39,7 +39,7 @@ def build_trade_records(
     records: list[dict[str, Any]] = []
     for trade in trades:
         metadata = symbol_metadata.get(trade.symbol, {})
-        included_in_score, exclusion_reason, conditions = classify_trade_conditions_for_uoa(trade.conditions)
+        included_in_score, exclusion_reason, conditions = classify_trade_conditions_for_scoring(trade.conditions)
         records.append(
             {
                 "captured_at": captured_at,

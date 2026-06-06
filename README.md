@@ -115,9 +115,9 @@ uv run ruff check .
 
 - In Docker, `api` hot-reloads source changes.
 - In Docker, `web` is the canonical frontend dev path. It bind-mounts source and auto-syncs `node_modules` from `packages/web/package-lock.json` on container start or restart.
-- `worker-runtime`, `worker-discovery`, and `scheduler` do not hot-reload. Restart those containers after backend changes they import.
+- `worker-runtime`, `worker-data`, and `scheduler` do not hot-reload. Restart those containers after backend changes they import.
 - Prefer using the existing Docker services for runtime checks instead of starting duplicate local processes.
-- Postgres is the source of truth for runtime history, sessions, alerts, jobs, execution, and opportunity state.
+- Postgres is the source of truth for runtime history, sessions, alerts, jobs, execution, engine facts, and positions.
 
 ## Useful Docs
 

@@ -55,14 +55,14 @@ Start with the shipped ops CLI, then fall back to logs or code:
 
 ```bash
 docker compose ps
-uv run spreads ops state
-uv run spreads ops storage
+uv run spreads status
+uv run spreads storage
 uv run spreads jobs
 uv run spreads jobs lanes
 uv run spreads positions --date <YYYY-MM-DD> --json
 ```
 
-Do not add new investigation workflow around retired fragmented ops, pipeline, discovery, or UOA product names.
+Do not add investigation workflow around removed runtime product names or fragmented ops surfaces.
 
 Use direct API reads or code inspection only when the CLI is insufficient.
 
@@ -109,8 +109,8 @@ Run:
 
 ```bash
 docker compose ps
-uv run spreads ops state
-uv run spreads ops storage
+uv run spreads status
+uv run spreads storage
 docker compose logs --tail=100 scheduler worker-runtime worker-data market-recorder api
 ```
 
@@ -127,7 +127,7 @@ If backend code changed recently, stale workers are a first-class suspect.
 Use:
 
 ```bash
-uv run spreads ops state
+uv run spreads status
 uv run spreads jobs --limit 25 --json
 uv run spreads positions --date YYYY-MM-DD --json
 ```
@@ -153,7 +153,7 @@ Treat these as hard signals:
 Use:
 
 ```bash
-uv run spreads ops state
+uv run spreads status
 uv run spreads positions --date YYYY-MM-DD --json
 uv run spreads jobs --job-type execution_intent_dispatch --limit 10 --json
 ```
@@ -171,13 +171,13 @@ Do not present modeled session results as realized account performance.
 There is no shipped `audit`, `automations`, or `backtest` CLI in the current app. If live ops state is not enough, inspect current persisted engine facts, positions, job runs, and logs through shipped surfaces first:
 
 ```bash
-uv run spreads ops state --json
+uv run spreads status --json
 uv run spreads jobs --json
 uv run spreads positions --date YYYY-MM-DD --json
 docker compose logs --since 30m scheduler worker-runtime worker-data market-recorder
 ```
 
-If a historical evaluator or policy comparison tool is needed, create or update a bead and design it against the current ticker-source/candidate/signal/decision model instead of reviving old pipeline/audit/backtest wrappers.
+If a historical evaluator or policy comparison tool is needed, create or update a bead and design it against the current ticker-source/candidate/signal/decision model instead of reviving removed evaluation wrappers.
 
 Look for:
 
@@ -281,8 +281,8 @@ If the task turns into a code change, finish with:
 uv run ruff check <touched-python-files>
 uv run python -m py_compile <touched-python-files>
 docker compose ps
-uv run spreads ops state
-uv run spreads ops storage
+uv run spreads status
+uv run spreads storage
 uv run spreads jobs
 ```
 

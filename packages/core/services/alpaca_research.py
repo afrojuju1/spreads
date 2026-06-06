@@ -725,7 +725,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
                     "expiration_date_lte": _iso_day(14),
                     "limit": 5,
                 },
-                role="Contract discovery and OI metadata.",
+                role="Option contract lookup and OI metadata.",
                 docs_confirmed="/v2/options/contracts" in trading_paths,
                 summarizer=_summarize_option_contracts,
             )

@@ -199,31 +199,6 @@ def _meets_promotable_thresholds(
     )
 
 
-def read_previous_selection(
-    discovery_store: Any,
-    label: str,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    latest_cycle = discovery_store.get_latest_cycle(label)
-    if latest_cycle is None:
-        return {}, {}
-
-    promotable_rows = discovery_store.list_cycle_candidates(
-        latest_cycle["cycle_id"],
-        selection_state="promotable",
-        eligibility="live",
-    )
-    previous: dict[str, dict[str, Any]] = {}
-    for candidate in promotable_rows:
-        payload = dict(candidate.get("candidate") or {})
-        symbol = payload.get("underlying_symbol")
-        if symbol:
-            previous[str(symbol)] = payload
-
-    raw_memory = latest_cycle.get("selection_memory") or {}
-    selection_memory = {str(symbol): state for symbol, state in raw_memory.items() if isinstance(symbol, str) and isinstance(state, dict)}
-    return previous, selection_memory
-
-
 def _evaluate_pending_candidate(
     *,
     winner: dict[str, Any],

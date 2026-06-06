@@ -328,12 +328,8 @@ def _session_extreme_score(candidate: Mapping[str, Any], *, family: str) -> floa
 
 
 def _dominant_flow_score(candidate: Mapping[str, Any], *, family: str) -> float | None:
-    dominant_flow = str(
-        candidate.get("uoa_dominant_flow") or candidate.get("dominant_flow") or ""
-    ).strip().lower()
-    dominant_flow_ratio = _as_float(
-        candidate.get("uoa_dominant_flow_ratio") or candidate.get("dominant_flow_ratio")
-    )
+    dominant_flow = str(candidate.get("dominant_flow") or "").strip().lower()
+    dominant_flow_ratio = _as_float(candidate.get("dominant_flow_ratio"))
     direction = _family_direction(family)
     if dominant_flow not in {"call", "put", "mixed"} and dominant_flow_ratio is None:
         return None
@@ -362,18 +358,6 @@ def _dominant_flow_score(candidate: Mapping[str, Any], *, family: str) -> float 
     return 0.45
 
 
-def _evidence_root_decision(evidence: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    payload = {} if not isinstance(evidence, Mapping) else dict(evidence)
-    root = payload.get("uoa_root_decision")
-    return root if isinstance(root, Mapping) else {}
-
-
-def _evidence_quote_root(evidence: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    payload = {} if not isinstance(evidence, Mapping) else dict(evidence)
-    root = payload.get("uoa_quote_root_summary")
-    return root if isinstance(root, Mapping) else {}
-
-
 def _candidate_quote_quality(evidence: Mapping[str, Any] | None) -> Mapping[str, Any]:
     payload = {} if not isinstance(evidence, Mapping) else dict(evidence)
     quality = payload.get("candidate_quote_quality")
@@ -386,68 +370,7 @@ def _evidence_quote_quality_score(evidence: Mapping[str, Any] | None) -> float |
     )
     if candidate_quality is not None:
         return candidate_quality
-    return _normalize_unit_score(_evidence_quote_root(evidence).get("average_quality_score"))
-
-
-def _evidence_dominant_flow(evidence: Mapping[str, Any] | None) -> tuple[str | None, float | None]:
-    root = _evidence_root_decision(evidence)
-    current = root.get("current") if isinstance(root.get("current"), Mapping) else {}
-    dominant_flow = _as_text(current.get("dominant_flow")) or _as_text(root.get("dominant_flow"))
-    dominant_flow_ratio = _as_float(current.get("dominant_flow_ratio"))
-    if dominant_flow_ratio is None:
-        dominant_flow_ratio = _as_float(root.get("dominant_flow_ratio"))
-    return (
-        None if dominant_flow is None else dominant_flow.lower(),
-        dominant_flow_ratio,
-    )
-
-
-def _evidence_flow_score(*, evidence: Mapping[str, Any] | None, family: str) -> float | None:
-    dominant_flow, dominant_flow_ratio = _evidence_dominant_flow(evidence)
-    direction = _family_direction(family)
-    if dominant_flow is None and dominant_flow_ratio is None:
-        return None
-    if direction == "neutral":
-        if dominant_flow == "mixed":
-            return 1.0
-        if dominant_flow_ratio is None:
-            return 0.6
-        if dominant_flow_ratio <= 0.6:
-            return 0.9
-        if dominant_flow_ratio >= 0.8:
-            return 0.1
-        return 0.45
-    if dominant_flow == "mixed":
-        return 0.5
-    if direction == "bullish":
-        if dominant_flow == "call":
-            return 1.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.75
-        if dominant_flow == "put":
-            return 0.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.25
-    if direction == "bearish":
-        if dominant_flow == "put":
-            return 1.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.75
-        if dominant_flow == "call":
-            return 0.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.25
-    return 0.5
-
-
-def _evidence_intensity_score(evidence: Mapping[str, Any] | None) -> float | None:
-    root = _evidence_root_decision(evidence)
-    deltas = root.get("deltas") if isinstance(root.get("deltas"), Mapping) else {}
-    current = root.get("current") if isinstance(root.get("current"), Mapping) else {}
-    values = [
-        _as_float(deltas.get("max_premium_rate_ratio")),
-        _as_float(deltas.get("max_trade_rate_ratio")),
-        _as_float(current.get("max_volume_oi_ratio")),
-        _as_float(current.get("supporting_volume_oi_ratio")),
-    ]
-    components = [
-        _clamp((value - 1.0) / 2.0, 0.0, 1.0)
-        for value in values
-        if value is not None
-    ]
-    return _mean_score(components)
+    return None
 
 
 def _resolve_options_bias_alignment(
@@ -462,7 +385,6 @@ def _resolve_options_bias_alignment(
     evidence_components = [
         value
         for value in (
-            _evidence_flow_score(evidence=evidence, family=family),
             _evidence_quote_quality_score(evidence),
         )
         if value is not None
@@ -507,7 +429,6 @@ def _resolve_neutral_regime_signal(
     evidence_components = [
         value
         for value in (
-            _evidence_flow_score(evidence=evidence, family="iron_condor"),
             _evidence_quote_quality_score(evidence),
             _status_score(candidate, family="iron_condor"),
             _vwap_alignment_score(candidate, family="iron_condor"),
@@ -559,13 +480,10 @@ def _resolve_residual_iv_richness(
     evidence_quote_quality = _evidence_quote_quality_score(evidence)
     if evidence_quote_quality is not None:
         components.append(evidence_quote_quality)
-    evidence_intensity = _evidence_intensity_score(evidence)
-    if evidence_intensity is not None:
-        components.append(evidence_intensity)
     score = _mean_score(components)
     if score is None:
         return None, None, "missing"
-    if evidence_quote_quality is not None or evidence_intensity is not None:
+    if evidence_quote_quality is not None:
         return score, len(components), "evidence"
     return score, len(components), "fallback"
 
@@ -593,9 +511,7 @@ def _derived_direction_signal(
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
     for item in (
-        _evidence_flow_score(evidence=evidence, family=family),
         _evidence_quote_quality_score(evidence),
-        _evidence_intensity_score(evidence),
     ):
         if item is not None:
             components.append(item)
@@ -625,7 +541,6 @@ def _derived_jump_risk_signal(
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
     for item in (
-        _evidence_intensity_score(evidence),
         _evidence_quote_quality_score(evidence),
     ):
         if item is not None:
@@ -687,7 +602,6 @@ def _derived_post_event_confirmation_signal(
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
     for item in (
-        _evidence_flow_score(evidence=evidence, family=family),
         _evidence_quote_quality_score(evidence),
     ):
         if item is not None:
@@ -748,15 +662,11 @@ def build_earnings_signal_bundle(
     candidate: Mapping[str, Any],
     *,
     family: str | None = None,
-    cycle: Mapping[str, Any] | None = None,
-    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_family = _resolve_family(candidate, family)
     signal_evidence = build_earnings_signal_evidence(
         candidate,
         family=resolved_family,
-        cycle=cycle,
-        evidence=evidence,
     )
     options_bias_alignment, options_bias_source = _resolve_options_bias_alignment(
         candidate,
@@ -799,12 +709,7 @@ def build_earnings_signal_bundle(
                 else (
                     "evidence"
                     if derived_score is not None
-                    and (
-                        _evidence_flow_score(evidence=signal_evidence, family=resolved_family)
-                        is not None
-                        or _evidence_quote_quality_score(signal_evidence) is not None
-                        or _evidence_intensity_score(signal_evidence) is not None
-                    )
+                    and _evidence_quote_quality_score(signal_evidence) is not None
                     else ("fallback" if derived_score is not None else "missing")
                 )
             ),

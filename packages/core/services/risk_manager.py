@@ -965,7 +965,7 @@ def build_session_risk_snapshot(
         }
     return {
         "status": "ok",
-        "note": "Pipeline run can submit new executions under the current risk policy.",
+        "note": "Strategy run can submit new executions under the current risk policy.",
         "policy": normalized_policy,
         "metrics": metrics,
     }

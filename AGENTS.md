@@ -12,7 +12,7 @@
 - Do not duplicate the domain ownership map in `AGENTS.md`. If ownership, object vocabulary, or runtime topology matters, read or update [docs/current_system_state.md](docs/current_system_state.md).
 - For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 - Current execution direction: `spreads` owns the live paper runtime. The active execution adapter is `alpaca_direct`; Nautilus Trader is retained only as historical context and a source of architectural ideas. Do not route new live Spreads work through Nautilus, Rust bridge paths, or host-managed Nautilus services unless the user explicitly asks to re-enable a separate experiment.
-- Canonical operator state is split between `TradingOpsState` and `StorageOpsState`. Do not add new active operator surfaces around retired fragmented status, trading-health, ledger, pipeline, discovery, or UOA product names.
+- Canonical operator state is split between `TradingOpsState` and `StorageOpsState`. Do not add parallel operator products, compatibility routes, or duplicate status pages outside those read models.
 
 ## Code Quality And Architecture
 
