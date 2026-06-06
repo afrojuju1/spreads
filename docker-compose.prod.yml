@@ -102,7 +102,25 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.DataWorkerSettings"]
     logging: *default-logging
 
+  worker-valuation:
+    profiles: ["container-valuation"]
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    command: ["uv", "run", "arq", "core.jobs.worker.ValuationWorkerSettings"]
+    logging: *default-logging
+
   worker-research:
+    profiles: ["container-research"]
     build:
       context: .
     restart: unless-stopped

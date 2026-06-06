@@ -1001,6 +1001,7 @@ def build_trading_ops_state(
         "control_mode": control.get("mode"),
         "scheduler_status": _mapping(job_details.get("scheduler")).get("status"),
         "worker_lane_count": job_summary.get("worker_lane_count"),
+        "disabled_worker_lane_count": job_summary.get("disabled_worker_lane_count"),
         "blocked_worker_lane_count": sum(1 for row in _sequence(job_details.get("worker_lanes")) if _mapping(row).get("status") == "blocked"),
         "idle_worker_lane_count": sum(1 for row in _sequence(job_details.get("worker_lanes")) if _mapping(row).get("status") == "idle"),
         "actionable_failed_job_count": job_summary.get("actionable_failed_count"),

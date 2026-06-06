@@ -503,6 +503,46 @@ def _worker_lane_rows(
     return rows
 
 
+def _disabled_worker_lane_rows(
+    *,
+    excluded_job_types: set[str],
+) -> list[dict[str, Any]]:
+    excluded = {str(value).strip() for value in excluded_job_types if str(value).strip()}
+    rows: list[dict[str, Any]] = []
+    for lane in WORKER_LANES:
+        disabled_task_names = []
+        disabled_job_types = []
+        active_task_names = []
+        for task_name in lane.task_names:
+            job_type = _JOB_TYPE_BY_TASK_NAME.get(task_name, "")
+            if job_type in excluded:
+                disabled_task_names.append(task_name)
+                disabled_job_types.append(job_type)
+            else:
+                active_task_names.append(task_name)
+        if not disabled_task_names or active_task_names:
+            continue
+        rows.append(
+            {
+                "settings_name": lane.settings_name,
+                "lane": str(lane.settings_name).removesuffix("WorkerSettings").lower(),
+                "queue_name": lane.queue_name,
+                "task_names": disabled_task_names,
+                "task_count": len(disabled_task_names),
+                "enabled_task_names": [],
+                "enabled_task_count": 0,
+                "disabled_job_types": disabled_job_types,
+                "disabled_job_type_count": len(disabled_job_types),
+                "active_worker_count": 0,
+                "queued_job_count": 0,
+                "running_job_count": 0,
+                "status": "disabled",
+                "operator_note": "Lane disabled by deploy target excluded_job_types.",
+            }
+        )
+    return rows
+
+
 def _split_active_queued_jobs(
     queued_jobs: list[dict[str, Any]],
     *,
@@ -533,6 +573,7 @@ def build_jobs_overview(
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)]
+    disabled_lane_rows = _disabled_worker_lane_rows(excluded_job_types=excluded_job_types)
     definition_rows = [
         _summarize_job_definition(
             definition,
@@ -561,6 +602,8 @@ def build_jobs_overview(
                 "limit": limit,
                 "definition_count": len(definition_rows),
                 "enabled_definition_count": sum(1 for row in definition_rows if bool(row.get("enabled"))),
+                "disabled_worker_lane_count": len(disabled_lane_rows),
+                "excluded_job_types": sorted(excluded_job_types),
                 "run_count": 0,
                 "singleton_lease_count": 0,
             },
@@ -570,6 +613,7 @@ def build_jobs_overview(
                 "scheduler": None,
                 "workers": [],
                 "singleton_leases": [],
+                "disabled_worker_lanes": disabled_lane_rows,
                 "declared_jobs": definition_rows,
                 "job_runs": [],
             },
@@ -795,6 +839,8 @@ def build_jobs_overview(
             "job_type_counts": dict(job_type_counts),
             "singleton_lease_count": len(singleton_leases),
             "worker_lane_count": len(lane_rows),
+            "disabled_worker_lane_count": len(disabled_lane_rows),
+            "excluded_job_types": sorted(excluded_job_types),
             "stale_running_count": stale_running_count,
             "stale_queued_job_count": len(stale_queued_run_rows),
             "actionable_failed_count": actionable_failed_count,
@@ -806,6 +852,7 @@ def build_jobs_overview(
             "scheduler": scheduler_payload,
             "workers": workers,
             "worker_lanes": lane_rows,
+            "disabled_worker_lanes": disabled_lane_rows,
             "singleton_leases": singleton_leases,
             "stale_singleton_leases": stale_singleton_leases,
             "stale_queued_job_runs": stale_queued_run_rows,
@@ -827,6 +874,7 @@ def build_jobs_compact_state(
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=None)]
+    disabled_lane_rows = _disabled_worker_lane_rows(excluded_job_types=excluded_job_types)
 
     job_store = storage.jobs
     if not job_store.schema_ready():
@@ -844,6 +892,8 @@ def build_jobs_compact_state(
                 "view": "compact",
                 "definition_count": len(definitions),
                 "enabled_definition_count": sum(1 for row in definitions if bool(row.get("enabled"))),
+                "disabled_worker_lane_count": len(disabled_lane_rows),
+                "excluded_job_types": sorted(excluded_job_types),
                 "run_count": 0,
                 "worker_lane_count": 0,
                 "stale_running_count": 0,
@@ -857,6 +907,7 @@ def build_jobs_compact_state(
                 "scheduler": None,
                 "workers": [],
                 "worker_lanes": [],
+                "disabled_worker_lanes": disabled_lane_rows,
                 "running_jobs": [],
                 "queued_jobs": [],
                 "job_runs": [],
@@ -987,6 +1038,8 @@ def build_jobs_compact_state(
             "operator_status_counts": dict(operator_status_counts),
             "job_type_counts": dict(job_type_counts),
             "worker_lane_count": len(lane_rows),
+            "disabled_worker_lane_count": len(disabled_lane_rows),
+            "excluded_job_types": sorted(excluded_job_types),
             "stale_running_count": stale_running_count,
             "stale_queued_job_count": len(stale_queued_runs),
             "actionable_failed_count": actionable_failed_count,
@@ -998,6 +1051,7 @@ def build_jobs_compact_state(
             "scheduler": scheduler_payload,
             "workers": workers,
             "worker_lanes": lane_rows,
+            "disabled_worker_lanes": disabled_lane_rows,
             "running_jobs": running_runs,
             "queued_jobs": active_queued_runs,
             "stale_queued_job_runs": stale_queued_runs,
@@ -1015,6 +1069,7 @@ def build_job_lanes_overview(
     payload = build_jobs_overview(db_target=db_target, storage=storage)
     details = dict(payload.get("details") or {})
     lane_rows = list(details.get("worker_lanes") or [])
+    disabled_lane_rows = list(details.get("disabled_worker_lanes") or [])
     summary = dict(payload.get("summary") or {})
     return {
         "status": payload.get("status"),
@@ -1022,6 +1077,7 @@ def build_job_lanes_overview(
         "summary": {
             "view": "lanes",
             "worker_lane_count": len(lane_rows),
+            "disabled_worker_lane_count": len(disabled_lane_rows),
             "active_worker_count": sum(int(row.get("active_worker_count") or 0) for row in lane_rows),
             "running_job_count": sum(int(row.get("running_job_count") or 0) for row in lane_rows),
             "queued_job_count": sum(int(row.get("queued_job_count") or 0) for row in lane_rows),
@@ -1033,6 +1089,7 @@ def build_job_lanes_overview(
             "scheduler": details.get("scheduler"),
             "workers": details.get("workers"),
             "worker_lanes": lane_rows,
+            "disabled_worker_lanes": disabled_lane_rows,
             "singleton_leases": details.get("singleton_leases"),
         },
     }

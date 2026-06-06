@@ -120,6 +120,8 @@ services:
     volumes:
       - .:/app
   worker-valuation:
+    profiles:
+      - container-valuation
     build:
       context: .
     restart: unless-stopped

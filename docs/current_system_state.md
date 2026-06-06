@@ -12,14 +12,15 @@ Last updated: 2026-06-05
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. |
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
-| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. |
+| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into option quote/trade ticks plus `capture_summaries`. |
 | Engine data and scanning | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/scanners/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. Scanner, ranking-policy, and runtime candidate filters are delegated build policy and persist diagnostics; discovery-run ownership is retired. |
 | Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyEngine owns entry orchestration: ticker resolution, candidate build, live signal selection, trade decisions, admission handoff, and intent creation. Helper modules are pure policy delegates, not alternate orchestration paths. |
 | Execution and portfolio state | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/execution_intents/`, `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | PortfolioEngine owns close decisions and close-policy evaluation. RiskEngine-owned close admission validates position/reconciliation/order readiness. The manage job refreshes marks, applies close admission, and creates close intents; execution services dispatch intents and persist broker attempts/orders/fills. |
 | Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, retention, and capture state. Retired pipeline/discovery/UOA product routes are not active surfaces. |
-| Research AI layer | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. |
+| Company valuation lane | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Company valuation is an offline research/maintenance lane. It can support future analysis, but live strategy selection, admission, execution, and position management must not depend on it by default. |
+| Research AI lane | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, optional `worker-research`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. This lane is disabled by default and is not a live execution dependency. |
 | Persistence and transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
 ## Non-Negotiable Boundary Rules
@@ -39,6 +40,7 @@ Last updated: 2026-06-05
 - `session_positions` owns day/session position attribution. Broker positions are reconciliation input, not the sole position truth.
 - Spreads is the active trading-ops and research-orchestration home. The old `trading_operator` wrapper repo is not an active hub for future operator guidance.
 - `external/TradingAgents` is a symlink to `/home/ade/Projects/TradingAgents`. Spreads may orchestrate research jobs against it, but does not own the external repo's internals.
+- Company valuation and TradingAgents research are optional offline lanes. Default trading health, live strategy entry/manage, execution admission, and close management must stay healthy without these workers or jobs enabled.
 
 ## Domain Ownership Map
 
@@ -64,7 +66,8 @@ Last updated: 2026-06-05
 | Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade tick retention. |
 | Trading ops state | Operator-facing trading health: market, control, scheduler/workers, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
 | Storage ops state | Operator-facing retention/storage health. | `services/retention.py`, storage ops surfaces | Live trading decisions. |
-| Research scan | Batch TradingAgents research run over a bounded ticker list. | `services/tradingagents_scan.py`, `outputs/tradingagents/`, `external/TradingAgents` | Live execution admission. |
+| Company valuation | Offline issuer valuation, ownership resolution, and research datasets. | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Live strategy entry, live execution admission, or position close management. |
+| Research scan | Batch TradingAgents research run over a bounded ticker list. | `services/tradingagents_scan.py`, `outputs/tradingagents/`, optional `worker-research`, `external/TradingAgents` | Live strategy entry or live execution admission. |
 
 ## Runtime Stack
 
@@ -85,8 +88,8 @@ ARQ workers
   |
   +--> runtime lane: broker sync, trading strategy entry/manage, intent dispatch, alerts
   +--> data lane: ticker sources
-  +--> valuation lane: company valuation jobs
-  +--> research lane: TradingAgents jobs when enabled
+  +--> optional valuation lane: company valuation jobs when enabled
+  +--> optional research lane: TradingAgents jobs when enabled
 
 Market recorder
   |
@@ -98,7 +101,7 @@ Redis = queues, leases, pub/sub
 
 ## Current Runtime Jobs
 
-Current main job types:
+Default live trading job types:
 
 - `ticker_source`
 - `broker_sync`
@@ -107,12 +110,15 @@ Current main job types:
 - `execution_intent_dispatch`
 - `alert_delivery`
 - `alert_reconcile`
+
+Optional offline job types, disabled by default:
+
 - `company_valuation_bootstrap`
 - `company_valuation_screen_materialize`
 - `company_valuation_resolve_unresolved`
 - `tradingagents_scan`
 
-The research lane is disabled by default in the deployed compose stack. It can be enabled intentionally when research jobs are needed.
+The valuation and research lanes are disabled by default in job config and deploy target config. `worker-valuation` and `worker-research` are compose profiles with zero replicas unless intentionally enabled. The live `TradingOpsState` health path should stay focused on trading/data/runtime lanes; optional offline lanes should appear as idle or disabled, not blocked live trading dependencies.
 
 ## Trading Strategy Ownership
 

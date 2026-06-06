@@ -13,6 +13,7 @@ redis_port: 56379
 web_port: 53000
 worker_runtime_replicas: 2
 worker_data_replicas: 4
+worker_valuation_replicas: 0
 worker_research_replicas: 0
 web_enabled: true
 backup_retention_days: 7

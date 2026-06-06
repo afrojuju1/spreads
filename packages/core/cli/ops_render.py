@@ -296,6 +296,27 @@ def _render_attention(console: Console, payload: dict[str, Any]) -> None:
     console.print(table)
 
 
+def _render_disabled_lanes(console: Console, rows: list[Any]) -> None:
+    disabled_lanes = [dict(row) for row in rows if isinstance(row, dict)]
+    if not disabled_lanes:
+        return
+    table = Table(title="Disabled Lanes", header_style="bold")
+    table.add_column("Lane")
+    table.add_column("Queue")
+    table.add_column("Status")
+    table.add_column("Job Types")
+    table.add_column("Note")
+    for row in disabled_lanes:
+        table.add_row(
+            str(row.get("lane") or row.get("settings_name") or "-"),
+            str(row.get("queue_name") or "-"),
+            _status_text(row.get("status")),
+            _render_count_map({str(value): 1 for value in list(row.get("disabled_job_types") or [])}, limit=6, item_length=72),
+            str(row.get("operator_note") or "-"),
+        )
+    console.print(table)
+
+
 def render_json_payload(console: Console, payload: dict[str, Any]) -> None:
     console.file.write(json.dumps(payload, indent=2, default=str) + "\n")
 
@@ -336,6 +357,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         "Workers",
         (
             f"lanes {_render_value(summary.get('worker_lane_count'))} | "
+            f"disabled {_render_value(summary.get('disabled_worker_lane_count'))} | "
             f"blocked {_render_value(summary.get('blocked_worker_lane_count'))} | "
             f"idle {_render_value(summary.get('idle_worker_lane_count'))}"
         ),
@@ -532,6 +554,7 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
         f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
     )
     overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
+    overview.add_row("Disabled Lanes", _render_value(summary.get("disabled_worker_lane_count")))
     overview.add_row("Workers", _render_value(summary.get("active_worker_count")))
     overview.add_row(
         "Jobs",
@@ -569,6 +592,8 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
                 _render_value(row.get("max_jobs")),
             )
         console.print(table)
+
+    _render_disabled_lanes(console, list(details.get("disabled_worker_lanes") or []))
 
     workers = list(details.get("workers") or [])
     if workers:
@@ -691,6 +716,12 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Workers", _render_value(len(list(details.get("workers") or []))))
     overview.add_row("Singleton Leases", _render_value(summary.get("singleton_lease_count")))
     overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
+    overview.add_row("Disabled Lanes", _render_value(summary.get("disabled_worker_lane_count")))
+    if summary.get("excluded_job_types"):
+        overview.add_row(
+            "Excluded Job Types",
+            _render_count_map({str(value): 1 for value in list(summary.get("excluded_job_types") or [])}, limit=6, item_length=72),
+        )
     if summary.get("status_filter") == "failed" or summary.get("actionable_failed_count"):
         overview.add_row(
             "Actionable Failed",
@@ -733,6 +764,8 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
                 _render_value(row.get("max_jobs")),
             )
         console.print(table)
+
+    _render_disabled_lanes(console, list(details.get("disabled_worker_lanes") or []))
 
     definition_rows = [] if summary.get("status_filter") else list(details.get("declared_jobs") or [])
     if definition_rows:
