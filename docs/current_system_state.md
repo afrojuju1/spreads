@@ -155,6 +155,8 @@ Available but disabled-by-default strategy configs:
 
 Disabled strategy configs are kept as authored strategy definitions, but they do not generate default scheduler jobs until intentionally re-enabled.
 
+The long-vol strategy configs are disabled and shadow-mode by default as operator policy. The Spreads execution path itself supports their two-long-leg `mleg` debit order shape when a strategy is intentionally enabled for paper/live; long-vol must not be blocked by vertical-only width or return-on-risk validation.
+
 ## Engine Entry State
 
 Strategy entry follows the Nautilus-shaped spine:

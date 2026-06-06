@@ -99,6 +99,9 @@ from .shared import (
 )
 
 
+LONG_VOL_DEBIT_FAMILIES = {"long_straddle", "long_strangle"}
+
+
 class ExecutionAdmissionError(ValueError):
     def __init__(self, message: str, *, admission: Mapping[str, Any]) -> None:
         super().__init__(message)
@@ -655,14 +658,113 @@ def _candidate_capped_structure_span(
     return round(span_dollars / 100.0, 4)
 
 
+def _validate_uncapped_debit_live_quality(
+    *,
+    candidate_payload: Mapping[str, Any],
+    execution_policy: Mapping[str, Any],
+    profile: str,
+    live_snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    live_midpoint_value = _normalize_limit_value(live_snapshot.get("midpoint_value"))
+    live_natural_value = _normalize_limit_value(live_snapshot.get("natural_value"))
+    if live_midpoint_value is None or live_natural_value is None or live_midpoint_value <= 0 or live_natural_value <= 0:
+        return {
+            "ok": False,
+            "reason": "live_quotes_not_executable",
+            "message": "Open execution is blocked because the live long-vol debit quotes were not executable.",
+            "profile": profile,
+            "live_quote": dict(live_snapshot),
+        }
+
+    scanned_midpoint_value, _ = _resolve_candidate_entry_prices(dict(candidate_payload))
+    min_retention_pct = _clamp_fraction(
+        _coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
+        minimum=0.5,
+        maximum=1.0,
+    )
+    live_quote = {
+        **dict(live_snapshot),
+        "live_debit": live_midpoint_value,
+        "live_natural_debit": live_natural_value,
+        "live_fill_ratio": _entry_fill_ratio(
+            midpoint_value=live_midpoint_value,
+            natural_value=live_natural_value,
+            premium_kind="debit",
+        ),
+    }
+    if scanned_midpoint_value is not None and scanned_midpoint_value > 0:
+        debit_ceiling = _execution_retention_bound(
+            midpoint_value=scanned_midpoint_value,
+            premium_kind="debit",
+            min_retention_pct=min_retention_pct,
+        )
+        live_quote.update(
+            {
+                "scanned_debit": scanned_midpoint_value,
+                "debit_ceiling": debit_ceiling,
+                "min_retention_pct": min_retention_pct,
+            }
+        )
+        if live_midpoint_value > debit_ceiling:
+            return {
+                "ok": False,
+                "reason": "live_debit_above_ceiling",
+                "message": (
+                    "Open execution is blocked because the live long-vol debit "
+                    f"{live_midpoint_value:.2f} rose above the execution ceiling "
+                    f"{debit_ceiling:.2f}."
+                ),
+                "profile": profile,
+                "live_quote": live_quote,
+            }
+
+    return {
+        "ok": True,
+        "profile": profile,
+        "live_quote": live_quote,
+    }
+
+
 def _validate_live_deployment_quality(
     *,
     candidate_payload: Mapping[str, Any],
     deployment_mode: str | None = None,
+    execution_policy: Mapping[str, Any] | None = None,
     client: Any | None = None,
 ) -> dict[str, Any]:
     profile = resolve_candidate_profile(candidate_payload)
     thresholds = resolve_deployment_quality_thresholds(profile)
+    strategy_family = _strategy_family_from_payload(candidate_payload)
+    premium_kind = net_premium_kind(strategy_family)
+    legs = candidate_legs(candidate_payload)
+    if strategy_family in LONG_VOL_DEBIT_FAMILIES:
+        if len(legs) < 2 or any(str(leg.get("role") or "").strip().lower() != "long" for leg in legs):
+            return {
+                "ok": False,
+                "reason": "long_vol_legs_unavailable",
+                "message": "Open execution is blocked because the long-vol candidate is missing two long option legs.",
+                "profile": profile,
+            }
+        live_snapshot, error_text = build_structure_quote_snapshot(
+            legs=legs,
+            strategy_family=strategy_family,
+            client=client,
+        )
+        if live_snapshot is None:
+            return {
+                "ok": False,
+                "reason": "live_quotes_unavailable",
+                "message": "Open execution is blocked because a current live long-vol quote snapshot is unavailable.",
+                "profile": profile,
+                "quote_error": error_text,
+            }
+        return _validate_uncapped_debit_live_quality(
+            candidate_payload=candidate_payload,
+            execution_policy={} if execution_policy is None else execution_policy,
+            profile=profile,
+            live_snapshot=live_snapshot,
+        )
+
     minimum_return_on_risk = _coerce_float(thresholds.get("min_execution_return_on_risk"))
     if minimum_return_on_risk is None:
         return {
@@ -670,24 +772,12 @@ def _validate_live_deployment_quality(
             "profile": profile,
         }
 
-    strategy_family = _strategy_family_from_payload(candidate_payload)
-    premium_kind = net_premium_kind(strategy_family)
-    if strategy_family in {"long_straddle", "long_strangle"}:
-        return {
-            "ok": False,
-            "reason": "long_vol_live_execution_disabled",
-            "message": ("Open execution is blocked because long-vol earnings structures " "are still shadow-only in the live path."),
-            "profile": profile,
-        }
-    legs = candidate_legs(candidate_payload)
     span_value = _candidate_capped_structure_span(candidate_payload)
     if not legs or span_value is None or span_value <= 0:
         return {
             "ok": False,
             "reason": "live_deployment_quality_unavailable",
-            "message": (
-                "Open execution is blocked because the candidate is missing capped-risk " "structure geometry for live deployment validation."
-            ),
+            "message": ("Open execution is blocked because the candidate is missing capped-risk structure geometry for live deployment validation."),
             "profile": profile,
         }
 
@@ -700,7 +790,7 @@ def _validate_live_deployment_quality(
         return {
             "ok": False,
             "reason": "live_quotes_unavailable",
-            "message": ("Open execution is blocked because a current live multi-leg structure " "snapshot is unavailable."),
+            "message": ("Open execution is blocked because a current live multi-leg structure snapshot is unavailable."),
             "profile": profile,
             "quote_error": error_text,
         }
@@ -1228,7 +1318,7 @@ def refresh_live_session_execution(
         client_order_id = _as_text(attempt.get("client_order_id"))
         if client_order_id is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
-            message = "Execution submit outcome is uncertain and cannot be reconciled " "because the client order id is missing."
+            message = "Execution submit outcome is uncertain and cannot be reconciled because the client order id is missing."
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=payload,
@@ -1249,7 +1339,7 @@ def refresh_live_session_execution(
         )
         if reconciled_attempt is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
-            message = "Execution submit outcome is uncertain and no broker order has been " f"found yet for client_order_id {client_order_id}."
+            message = f"Execution submit outcome is uncertain and no broker order has been found yet for client_order_id {client_order_id}."
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=payload,
@@ -1262,7 +1352,7 @@ def refresh_live_session_execution(
                 "message": message,
                 "attempt": payload,
             }
-        message = f"Reconciled execution {execution_attempt_id} via client_order_id " f"{client_order_id}: {reconciled_attempt['status']}."
+        message = f"Reconciled execution {execution_attempt_id} via client_order_id {client_order_id}: {reconciled_attempt['status']}."
         _publish_execution_attempt_event(reconciled_attempt, message=message)
         _sync_linked_execution_intent(
             execution_store=execution_store,
@@ -1677,7 +1767,7 @@ def submit_equity_order(
             client=adapter.client,
             order_snapshot=submission.order_snapshot,
         )
-        message = f"Submitted equity {normalized_side} for " f"{resolved_quantity} {normalized_symbol}."
+        message = f"Submitted equity {normalized_side} for {resolved_quantity} {normalized_symbol}."
         _publish_execution_attempt_event(synced_attempt, message=message)
         return {
             "action": "submit",
@@ -1698,7 +1788,7 @@ def submit_equity_order(
             failed_attempt = _get_attempt_payload(execution_store, attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=("Equity execution failed before submission: " f"{classified_error['message']}"),
+                message=(f"Equity execution failed before submission: {classified_error['message']}"),
             )
             if bool(classified_error.get("terminal")):
                 return {
@@ -2014,7 +2104,7 @@ def submit_option_order(
             client=adapter.client,
             order_snapshot=submission.order_snapshot,
         )
-        message = f"Submitted option {normalized_side} for " f"{resolved_quantity} {normalized_symbol}."
+        message = f"Submitted option {normalized_side} for {resolved_quantity} {normalized_symbol}."
         _publish_execution_attempt_event(synced_attempt, message=message)
         return {
             "action": "submit",
@@ -2036,7 +2126,7 @@ def submit_option_order(
             failed_attempt = _get_attempt_payload(execution_store, attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=("Option execution failed before submission: " f"{classified_error['message']}"),
+                message=(f"Option execution failed before submission: {classified_error['message']}"),
             )
             if bool(classified_error.get("terminal")):
                 return {
@@ -2333,6 +2423,7 @@ def run_execution_submit(
         live_deployment_quality = _validate_live_deployment_quality(
             candidate_payload=dict(payload.get("candidate") or {}),
             deployment_mode=str(request_execution_policy.get("deployment_mode") or ""),
+            execution_policy=request_execution_policy,
             client=client,
         )
         if not live_deployment_quality["ok"]:
@@ -2346,14 +2437,14 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=("Execution failed before submission: " f"{live_deployment_quality['message']}"),
+                message=(f"Execution failed before submission: {live_deployment_quality['message']}"),
             )
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=failed_attempt,
                 state="failed",
                 event_type="failed",
-                message=("Execution failed before submission: " f"{live_deployment_quality['message']}"),
+                message=(f"Execution failed before submission: {live_deployment_quality['message']}"),
             )
             return {
                 "status": "blocked",
@@ -2379,14 +2470,14 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=("Execution failed before submission: " f"{account_capacity['message']}"),
+                message=(f"Execution failed before submission: {account_capacity['message']}"),
             )
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=failed_attempt,
                 state="failed",
                 event_type="failed",
-                message=("Execution failed before submission: " f"{account_capacity['message']}"),
+                message=(f"Execution failed before submission: {account_capacity['message']}"),
                 payload_updates={
                     "execution_admission": _execution_admission_payload_from_account_capacity(
                         attempt=payload,
@@ -2454,14 +2545,14 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=("Execution failed before submission: " f"{classified_error['message']}"),
+                message=(f"Execution failed before submission: {classified_error['message']}"),
             )
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=failed_attempt,
                 state="failed",
                 event_type="failed",
-                message=("Execution failed before submission: " f"{classified_error['message']}"),
+                message=(f"Execution failed before submission: {classified_error['message']}"),
                 payload_updates=(
                     {
                         "execution_admission": _execution_admission_payload_from_broker_rejection(
@@ -2497,13 +2588,13 @@ def run_execution_submit(
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
             failed_attempt,
-            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, but local execution sync failed: {exc}"),
         )
         _sync_linked_execution_intent(
             execution_store=execution_store,
             attempt=failed_attempt,
             event_type="submit_unknown",
-            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, but local execution sync failed: {exc}"),
         )
         raise
     except Exception as exc:
@@ -2544,12 +2635,12 @@ def run_execution_submit(
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
             failed_attempt,
-            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, but local execution sync failed: {exc}"),
         )
         _sync_linked_execution_intent(
             execution_store=execution_store,
             attempt=failed_attempt,
             event_type="submit_unknown",
-            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, but local execution sync failed: {exc}"),
         )
         raise

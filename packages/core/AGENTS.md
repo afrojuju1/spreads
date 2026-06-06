@@ -10,7 +10,7 @@
 - Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
 - Keep the recent package splits canonical. Do not reintroduce monolithic ownership around old scanner, execution, or fragmented ops-visibility mental models.
 - For multi-leg options work, keep `legs[]` canonical end to end. Do not add new 3+ leg special cases around `short_symbol` / `long_symbol`, and route quote/mark math through the shared structure snapshot path.
-- For long-vol families such as `long_straddle` and `long_strangle`, do not force them through vertical-only live validation or exposure math. If they remain shadow-only in live trading, document that explicitly in the plan/runbook and in seeded job policy instead of relying on implicit execution failure.
+- For long-vol families such as `long_straddle` and `long_strangle`, keep their two-long-leg `mleg` debit shape canonical. Do not force them through vertical-only live validation or exposure math. If a seeded strategy stays disabled or shadow-mode, that must be a config/operator-policy choice, not a hard-coded execution limitation.
 - Prefer small composable helpers when they remove duplication, but do not add abstraction layers with only one caller and no clear reuse value.
 - If a requested change pushes against a bad boundary, call it out and propose the boundary fix first. Unless the user explicitly wants the smallest patch only, prefer the boundary fix.
 - When changing architecture, explain the tradeoff in terms of:
