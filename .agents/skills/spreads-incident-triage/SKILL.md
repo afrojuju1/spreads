@@ -209,7 +209,7 @@ Typical split:
 
 - session healthy, alerts failed: delivery issue
 - session blocked with healthy capture and blocked risk note: policy issue
-- session healthy, selected opportunities present, and execution admission blocked: account-capacity or execution-policy issue
+- session healthy, selected signals present, and execution admission blocked: account-capacity or execution-policy issue
 - session degraded, alerts thin: upstream capture or selection issue
 - session healthy but current source/candidate/decision quality is weak: strategy issue
 

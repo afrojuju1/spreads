@@ -27,7 +27,7 @@ If another design or planning doc disagrees about current ownership, `docs/curre
 Use these only for the roles they now own:
 
 - [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
-  - target opportunity-selection architecture inside the broader system
+  - candidate, signal, decision, and admission ownership inside the broader system
 - [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)
   - supporting migration path that reuses the current backend
 - [docs/planning/README.md](../../../docs/planning/README.md)

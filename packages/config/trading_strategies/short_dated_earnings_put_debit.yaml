@@ -34,7 +34,7 @@ entry:
       start_et: "09:45"
       end_et: "14:30"
   selection:
-    min_opportunity_score: 72
+    min_signal_score: 72
 management:
   schedule:
     cadence_minutes: 1

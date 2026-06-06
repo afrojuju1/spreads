@@ -48,9 +48,7 @@ class ResearchFeature:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Probe Alpaca research-relevant APIs and summarize feature opportunities."
-    )
+    parser = argparse.ArgumentParser(description="Probe Alpaca research-relevant APIs and summarize feature gaps.")
     parser.add_argument(
         "--symbol",
         default="SPY",

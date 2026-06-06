@@ -470,7 +470,7 @@ class RoutineSchedule:
 
 @dataclass(frozen=True)
 class EntrySelectionPolicy:
-    min_opportunity_score: float | None = None
+    min_signal_score: float | None = None
 
     @classmethod
     def from_payload(
@@ -479,13 +479,13 @@ class EntrySelectionPolicy:
     ) -> EntrySelectionPolicy:
         mapping = _require_mapping(payload, field_name="triggers")
         return cls(
-            min_opportunity_score=_optional_float(mapping.get("min_opportunity_score")),
+            min_signal_score=_optional_float(mapping.get("min_signal_score")),
         )
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {}
-        if self.min_opportunity_score is not None:
-            payload["min_opportunity_score"] = self.min_opportunity_score
+        if self.min_signal_score is not None:
+            payload["min_signal_score"] = self.min_signal_score
         return payload
 
 

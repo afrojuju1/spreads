@@ -97,9 +97,7 @@ _RISK_HINT_FIELDS = (
 )
 
 
-def _candidate_slice(
-    candidate: Mapping[str, Any], *, fields: tuple[str, ...]
-) -> dict[str, Any]:
+def _candidate_slice(candidate: Mapping[str, Any], *, fields: tuple[str, ...]) -> dict[str, Any]:
     return {field: candidate.get(field) for field in fields}
 
 
@@ -132,9 +130,7 @@ def candidate_ranking_summary_row(
     short_symbol, long_symbol = primary_short_long_symbols(legs)
     display = payload_display_fields(candidate)
     return {
-        "underlying_symbol": str(
-            candidate.get("underlying_symbol") or default_symbol or "-"
-        ),
+        "underlying_symbol": str(candidate.get("underlying_symbol") or default_symbol or "-"),
         "strategy": str(candidate.get("strategy") or "unknown"),
         "expiration_date": candidate.get("expiration_date"),
         "short_symbol": display.get("short_symbol") or short_symbol,

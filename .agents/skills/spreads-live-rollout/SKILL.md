@@ -30,7 +30,7 @@ Do not start duplicate local API, worker, scheduler, or recorder processes if th
 
 Keep this boundary explicit while rolling changes out:
 
-- selection is account-agnostic opportunity state
+- candidate and signal selection are account-agnostic strategy state
 - execution admission belongs to execution/risk/account-capacity
 - alerts are downstream job-backed projections of stored state
 
@@ -132,7 +132,7 @@ Do not assume reseeding alone changes already-enqueued runs.
 - `capture_status=healthy` plus `risk_status=blocked` is a policy gate, not a collector outage.
 - `recovery_state=clear` means recovery is no longer the blocker.
 - recorder-backed quote rows are the canonical live stream path; a direct collector stream should be treated as fallback or a bug depending on current code.
-- selected opportunities with blocked execution-admission counters are not alert failures and not selection bugs by themselves; verify intent `execution_admission` state before changing scanners or alerting.
+- selected signals with blocked execution-admission counters are not alert failures and not selection bugs by themselves; verify intent `execution_admission` state before changing scanners or alerting.
 
 ## Rollout Close-Out
 

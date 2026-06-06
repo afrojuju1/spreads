@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from core.services.option_structures import candidate_legs, payload_structure_identity
-from core.services.opportunity_fields import candidate_economics, risk_hints
+from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_strategy_runtime import EntryRuntime
 
@@ -116,10 +116,10 @@ def _candidate_state(candidate: Mapping[str, Any]) -> str:
     return "buildable"
 
 
-def _signal_state(opportunity: Mapping[str, Any]) -> str:
-    if _blockers(opportunity):
+def _signal_state(signal_row: Mapping[str, Any]) -> str:
+    if _blockers(signal_row):
         return "blocked"
-    selection_state = str(opportunity.get("selection_state") or "").strip().lower()
+    selection_state = str(signal_row.get("selection_state") or "").strip().lower()
     if selection_state == "promotable":
         return "ready"
     if selection_state == "monitor":

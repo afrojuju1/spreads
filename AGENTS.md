@@ -20,7 +20,7 @@
 - Before implementing, check whether the change duplicates logic, creates a parallel path, or deepens a weak abstraction. If it does, prefer a small structural cleanup or shared helper/service extraction.
 - Extend one canonical path per behavior instead of maintaining near-duplicate flows.
 - Keep the current runtime boundary explicit:
-  - selection is account-agnostic opportunity truth
+  - candidate and signal selection are account-agnostic strategy truth
   - execution admission is a separate execution/risk concern
   - alerts are downstream job-backed projections, not source-of-truth state
 - Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, execution intent handoff, execution admission, and deterministic broker-reject handling under `account_capacity.py`, `risk_manager.py`, `services/execution_intents/`, and `services/execution/`, not back into the account snapshot layer.
@@ -93,9 +93,9 @@
 
 - For overall architecture, service-boundary, or ownership questions, start with `docs/current_system_state.md`.
 - If a planning document disagrees with `docs/current_system_state.md` about current ownership or runtime topology, `docs/current_system_state.md` wins.
-- Treat older planning-doc references to `replay`, `audit_replay`, `backtest`, `packages/core/cli/replay.py`, `packages/core/cli/backtest.py`, `services/opportunity_replay.py`, or `services/audit_snapshot.py` as historical context unless the document has been explicitly updated. There is no currently shipped historical-evaluation CLI.
+- Treat older planning-doc references to `replay`, `audit_replay`, `backtest`, `packages/core/cli/replay.py`, `packages/core/cli/backtest.py`, or `services/audit_snapshot.py` as historical context unless the document has been explicitly updated. There is no currently shipped historical-evaluation CLI.
 - If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
-- For target opportunity-selection architecture, start with `docs/planning/2026-04-11_fresh_spread_system_design.md`.
+- For current candidate, signal, decision, and admission ownership, start with `docs/current_system_state.md`.
 - For historical diagnosis of the older selection path, use `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.
 - For migration planning that reuses the existing backend, use `docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md`.
 - Treat older planning docs as historical context unless they are explicitly called out as the active source of truth.

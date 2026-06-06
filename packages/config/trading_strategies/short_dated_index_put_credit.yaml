@@ -33,7 +33,7 @@ entry:
       start_et: "09:45"
       end_et: "14:30"
   selection:
-    min_opportunity_score: 60
+    min_signal_score: 60
   recipes:
     - trend_support
 management:

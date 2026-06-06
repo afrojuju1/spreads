@@ -51,7 +51,7 @@ def plan_entry_selection(
             reason_codes = ["selection_state_not_entry_eligible"]
         elif selected is None and score_signal(signal) < min_score:
             state = "rejected"
-            reason_codes = ["score_below_min_opportunity_score"]
+            reason_codes = ["score_below_min_signal_score"]
         else:
             state = "selected" if selected is not None and signal_id == selected["trade_signal_id"] else "rejected"
             reason_codes = ["selected_for_entry" if state == "selected" else "lower_ranked_than_selected_signal"]

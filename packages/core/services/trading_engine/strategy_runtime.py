@@ -16,7 +16,7 @@ from core.services.execution_intents.shared import (
 from core.services.live_selection import select_live_signals
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import candidate_legs, payload_structure_identity
-from core.services.opportunity_fields import (
+from core.services.candidate_fields import (
     candidate_economics,
     candidate_evidence_metrics,
     candidate_policy_context,
@@ -795,7 +795,7 @@ def _run_trading_strategy_entry(
             "candidate_generation": candidate_generation,
         }
     signals = [dict(row) for row in list(candidate_generation.get("signals") or []) if isinstance(row, dict)]
-    min_score = float(runtime.trigger_policy.get("min_opportunity_score") or 0.0)
+    min_score = float(runtime.trigger_policy.get("min_signal_score") or 0.0)
     controls_allowed, controls_reason, strategy_metrics = evaluate_trading_strategy_entry_controls(
         storage=storage,
         strategy=runtime.strategy,
@@ -1003,11 +1003,7 @@ def _run_trading_strategy_entry(
         "signal_count": len(signals),
         "decision_count": len(decisions),
         "admission_count": len(admissions),
-        "trade_decision_ids": [
-            str(decision["trade_decision_id"])
-            for decision in decisions
-            if decision.get("trade_decision_id") not in (None, "")
-        ],
+        "trade_decision_ids": [str(decision["trade_decision_id"]) for decision in decisions if decision.get("trade_decision_id") not in (None, "")],
         "selected_decision_ids": [
             str(decision["trade_decision_id"])
             for decision in decisions

@@ -13,6 +13,6 @@
   - account overview routes -> `services/account_state.py`
   - control routes -> `services/control_plane.py`
   - execution runtime/manual order routes -> `services/execution/`
-- Pipeline, opportunities, discovery-run, and UOA routes are retired active surfaces. Do not re-add compatibility route wrappers around them.
+- Legacy pipeline, discovery-run, and UOA routes are retired active surfaces. Do not re-add compatibility route wrappers around them.
 - Fragmented internal ops routes are retired active surfaces. Do not re-add compatibility route wrappers around them.
 - For runtime and rollout guidance, also follow [packages/core/AGENTS.md](../../packages/core/AGENTS.md).

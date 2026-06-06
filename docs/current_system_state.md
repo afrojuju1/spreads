@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-05
+Last updated: 2026-06-06
 
 ## Top-Level Boundaries
 
@@ -25,7 +25,7 @@ Last updated: 2026-06-05
 
 ## Non-Negotiable Boundary Rules
 
-- `trading_strategy_id` is the canonical runtime owner for strategy-owned opportunities, decisions, intents, attempts, and positions.
+- `trading_strategy_id` is the canonical runtime owner for strategy-owned candidates, signals, decisions, intents, attempts, and positions.
 - Authored trading strategy config lives in `packages/config/trading_strategies`. Do not recreate legacy wrapper directories around it.
 - Strategy routines generate jobs named `trading_strategy:<strategy_id>:entry` and `trading_strategy:<strategy_id>:manage`.
 - `execution_intent_dispatch:global` owns the global pending-intent dispatch loop.
@@ -57,7 +57,7 @@ Last updated: 2026-06-05
 | Admission | Account/risk/policy answer to whether an approved idea can be carried now. | `services/risk_manager.py`, `services/execution/`, admission payloads | Account snapshots alone. |
 | Intent | Control-plane request to open, manage, or close. | `execution_intents`, `services/execution_intents/` | Broker order/fill persistence. |
 | Attempt | Broker-facing submission/refresh/cancel lifecycle for an intent. | `execution_attempts`, `services/execution/` | Session position attribution. |
-| Order | Broker order fact attached to an attempt. | `execution_orders`, broker refresh paths | Opportunity selection. |
+| Order | Broker order fact attached to an attempt. | `execution_orders`, broker refresh paths | Strategy selection. |
 | Fill | Broker fill fact attached to an order/attempt. | `execution_fills`, broker refresh paths | Strategy selection. |
 | Position | Day/session-local ownership and PnL projection. | `services/session_positions.py`, `portfolio_positions`, close records | Broker inventory as independent truth. |
 | Close | Decision, admission, intent, attempt, and fill path that reduces or exits a position. | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/exit_manager.py`, `services/execution_intents/`, `services/execution/` | Direct broker-submit bypasses from management jobs or dashboard-only close decisions. |

@@ -368,19 +368,11 @@ def evaluate_earnings_signal_gate(
             "blockers": blockers,
             "bundle": bundle,
             "thresholds": thresholds,
-            "coverage_count": sum(
-                1
-                for field in EARNINGS_SIGNAL_FIELDS
-                if bundle["signals"][field]["score"] is not None
-            ),
+            "coverage_count": sum(1 for field in EARNINGS_SIGNAL_FIELDS if bundle["signals"][field]["score"] is not None),
         }
 
     lead_signal = str(thresholds.get("lead_signal") or "")
-    lead_entry = (
-        bundle["signals"].get(lead_signal, {})
-        if isinstance(bundle.get("signals"), Mapping)
-        else {}
-    )
+    lead_entry = bundle["signals"].get(lead_signal, {}) if isinstance(bundle.get("signals"), Mapping) else {}
     lead_score = _as_float(lead_entry.get("score"))
     lead_subsignal_count = _as_int(lead_entry.get("subsignal_count"))
     pricing_entry = bundle["signals"].get("pricing_signal", {})
@@ -390,8 +382,7 @@ def evaluate_earnings_signal_gate(
     dte_min = _as_int(thresholds.get("dte_min"))
     dte_max = _as_int(thresholds.get("dte_max"))
     if days_to_expiration is not None and (
-        (dte_min is not None and days_to_expiration < dte_min)
-        or (dte_max is not None and days_to_expiration > dte_max)
+        (dte_min is not None and days_to_expiration < dte_min) or (dte_max is not None and days_to_expiration > dte_max)
     ):
         blockers.append("earnings_dte_out_of_range")
 
@@ -416,9 +407,7 @@ def evaluate_earnings_signal_gate(
         elif pricing_score < pricing_signal_min:
             blockers.append("pricing_signal_below_threshold")
 
-    pricing_signal_subsignal_min = _as_int(
-        thresholds.get("pricing_signal_subsignal_min")
-    )
+    pricing_signal_subsignal_min = _as_int(thresholds.get("pricing_signal_subsignal_min"))
     if pricing_signal_subsignal_min is not None:
         if pricing_subsignal_count is None:
             blockers.append("missing_pricing_signal_subsignal_count")
@@ -440,9 +429,7 @@ def evaluate_earnings_signal_gate(
         elif debit_width_ratio > debit_width_ratio_max:
             blockers.append("debit_width_ratio_too_high")
 
-    modeled_move_vs_implied_move_min = _as_float(
-        thresholds.get("modeled_move_vs_implied_move_min")
-    )
+    modeled_move_vs_implied_move_min = _as_float(thresholds.get("modeled_move_vs_implied_move_min"))
     if modeled_move_vs_implied_move_min is not None:
         metric = _as_float(bundle.get("modeled_move_vs_implied_move"))
         if metric is None:
@@ -450,9 +437,7 @@ def evaluate_earnings_signal_gate(
         elif metric < modeled_move_vs_implied_move_min:
             blockers.append("modeled_move_vs_implied_move_too_low")
 
-    modeled_move_vs_break_even_move_min = _as_float(
-        thresholds.get("modeled_move_vs_break_even_move_min")
-    )
+    modeled_move_vs_break_even_move_min = _as_float(thresholds.get("modeled_move_vs_break_even_move_min"))
     if modeled_move_vs_break_even_move_min is not None:
         metric = _as_float(bundle.get("modeled_move_vs_break_even_move"))
         if metric is None:
@@ -482,11 +467,7 @@ def evaluate_earnings_signal_gate(
         "blockers": blockers,
         "bundle": bundle,
         "thresholds": thresholds,
-        "coverage_count": sum(
-            1
-            for field in EARNINGS_SIGNAL_FIELDS
-            if bundle["signals"][field]["score"] is not None
-        ),
+        "coverage_count": sum(1 for field in EARNINGS_SIGNAL_FIELDS if bundle["signals"][field]["score"] is not None),
     }
 
 
@@ -543,18 +524,12 @@ def earnings_phase_policy_blockers(
     if earnings_phase == "pre_event_runup":
         if family == "iron_condor":
             blockers.append("pre_event_iron_condor_blocked")
-        elif (
-            product_class_value == "single_name_equity"
-            and family in SHORT_PREMIUM_FAMILIES
-        ):
+        elif product_class_value == "single_name_equity" and family in SHORT_PREMIUM_FAMILIES:
             blockers.append("pre_event_single_name_short_premium_blocked")
     elif earnings_phase == "through_event":
         if family == "iron_condor":
             blockers.append("through_event_iron_condor_blocked")
-        elif (
-            product_class_value == "single_name_equity"
-            and family in SHORT_PREMIUM_FAMILIES
-        ):
+        elif product_class_value == "single_name_equity" and family in SHORT_PREMIUM_FAMILIES:
             blockers.append("through_event_single_name_short_premium_blocked")
     elif earnings_phase == "post_event_fresh":
         if family == "iron_condor" and horizon_band_value not in {
@@ -733,9 +708,7 @@ def profile_specific_score_components(
             evidence["buffer_ratio"] = round(tactical_buffer_ratio, 4)
 
         if family in DEFINED_RISK_SHORT_PREMIUM_FAMILIES:
-            expected_value_dollars = _as_float(
-                candidate.get("expected_value_dollars")
-            )
+            expected_value_dollars = _as_float(candidate.get("expected_value_dollars"))
             if expected_value_dollars is not None:
                 evidence["expected_value_dollars"] = round(expected_value_dollars, 2)
                 if expected_value_dollars > 2.0:
@@ -761,9 +734,7 @@ def profile_specific_score_components(
                             3,
                         )
 
-            slippage_adjusted_ev = _as_float(
-                candidate.get("slippage_adjusted_expected_value_dollars")
-            )
+            slippage_adjusted_ev = _as_float(candidate.get("slippage_adjusted_expected_value_dollars"))
             if slippage_adjusted_ev is not None:
                 evidence["slippage_adjusted_expected_value_dollars"] = round(
                     slippage_adjusted_ev,
@@ -776,9 +747,7 @@ def profile_specific_score_components(
                         2.5,
                     )
                     if slippage_ev_delta > 0.0:
-                        components[
-                            "tactical_slippage_adjusted_ev_delta"
-                        ] = round(slippage_ev_delta, 3)
+                        components["tactical_slippage_adjusted_ev_delta"] = round(slippage_ev_delta, 3)
                 elif slippage_adjusted_ev < -1.0:
                     slippage_ev_penalty = _clamp(
                         (abs(slippage_adjusted_ev) - 1.0) * 0.28,
@@ -786,9 +755,7 @@ def profile_specific_score_components(
                         8.0,
                     )
                     if slippage_ev_penalty > 0.0:
-                        components[
-                            "tactical_slippage_adjusted_ev_penalty"
-                        ] = round(slippage_ev_penalty, 3)
+                        components["tactical_slippage_adjusted_ev_penalty"] = round(slippage_ev_penalty, 3)
 
         if family == "iron_condor":
             side_balance_score = _as_float(candidate.get("side_balance_score"))
@@ -806,11 +773,7 @@ def profile_specific_score_components(
                 evidence["side_balance_score"] = round(side_balance_score, 4)
 
             bundle = signal_bundle if isinstance(signal_bundle, Mapping) else {}
-            neutral_regime_signal = _as_float(
-                bundle.get("neutral_regime_signal")
-                if bundle
-                else candidate.get("neutral_regime_signal")
-            )
+            neutral_regime_signal = _as_float(bundle.get("neutral_regime_signal") if bundle else candidate.get("neutral_regime_signal"))
             if neutral_regime_signal is not None:
                 regime_delta = _clamp(
                     (neutral_regime_signal - 0.60) * 12.0,
@@ -827,11 +790,7 @@ def profile_specific_score_components(
                     4,
                 )
 
-            residual_iv_richness = _as_float(
-                bundle.get("residual_iv_richness")
-                if bundle
-                else candidate.get("residual_iv_richness")
-            )
+            residual_iv_richness = _as_float(bundle.get("residual_iv_richness") if bundle else candidate.get("residual_iv_richness"))
             if residual_iv_richness is not None:
                 iv_delta = _clamp(
                     (residual_iv_richness - 0.60) * 10.0,
@@ -846,9 +805,7 @@ def profile_specific_score_components(
                 )
 
         if str(candidate.get("calendar_status") or "").strip().lower() == "penalized":
-            days_to_event = int(
-                _as_float(candidate.get("calendar_days_to_nearest_event")) or 0
-            )
+            days_to_event = int(_as_float(candidate.get("calendar_days_to_nearest_event")) or 0)
             if days_to_event <= 1:
                 components["tactical_event_proximity_penalty"] = 4.0
             elif days_to_event == 2:
@@ -946,11 +903,7 @@ def dimension_adjustment(
 ) -> tuple[float, dict[str, Any] | None]:
     if group_value is None or not isinstance(dimension_lookup, Mapping):
         return 0.0, None
-    row = (
-        dimension_lookup.get(dimension, {}).get(group_value)
-        if isinstance(dimension_lookup.get(dimension), Mapping)
-        else None
-    )
+    row = dimension_lookup.get(dimension, {}).get(group_value) if isinstance(dimension_lookup.get(dimension), Mapping) else None
     if row is None:
         return 0.0, None
     average_estimated_pnl = _as_float(row.get("average_estimated_pnl")) or 0.0
@@ -977,18 +930,14 @@ def product_policy_blockers(
         "top_tier_etf",
     }:
         blockers.append("product_policy_condor_blocked")
-    if (
-        style_profile == "reactive"
-        and family in SHORT_PREMIUM_FAMILIES
-        and product_class_value not in {"cash_settled_index", "top_tier_etf"}
-    ):
+    if style_profile == "reactive" and family in SHORT_PREMIUM_FAMILIES and product_class_value not in {"cash_settled_index", "top_tier_etf"}:
         blockers.append("reactive_short_premium_product_blocked")
     if family == "iron_condor" and horizon_band_value == "same_day":
         blockers.append("same_day_iron_condor_blocked")
     return blockers
 
 
-def build_candidate_opportunity_score(
+def build_candidate_selection_score(
     candidate: Mapping[str, Any],
     *,
     cycle: Mapping[str, Any] | None = None,
@@ -1038,11 +987,7 @@ def build_candidate_opportunity_score(
                 earnings_phase=earnings_phase,
                 product_class_value=product_class_value,
                 horizon_band_value=horizon_band_value,
-                earnings_timing_confidence=str(
-                    candidate.get("earnings_timing_confidence") or "unknown"
-                )
-                .strip()
-                .lower(),
+                earnings_timing_confidence=str(candidate.get("earnings_timing_confidence") or "unknown").strip().lower(),
             )
         )
         resolved_blockers.extend(list(signal_gate["blockers"]))
@@ -1064,14 +1009,10 @@ def build_candidate_opportunity_score(
     resolved_policy_state = (
         str(policy_state or "").strip().lower()
         if _as_text(policy_state) is not None
-        else (
-            "blocked"
-            if resolved_blockers
-            else ("preferred" if phase_policy_preference == "preferred" else "allowed")
-        )
+        else ("blocked" if resolved_blockers else ("preferred" if phase_policy_preference == "preferred" else "allowed"))
     )
 
-    discovery_score = round(_as_float(candidate.get("quality_score")) or 0.0, 1)
+    base_quality_score = round(_as_float(candidate.get("quality_score")) or 0.0, 1)
     calibration_breakdown: list[dict[str, Any]] = []
     calibration_delta = 0.0
     for dimension, _, weight in calibration_dimensions(resolved_style):
@@ -1104,14 +1045,8 @@ def build_candidate_opportunity_score(
         cycle=cycle,
         signal_bundle=signal_gate["bundle"],
     )
-    component_boost = sum(
-        value
-        for key, value in profile_components.items()
-        if not key.endswith("_penalty")
-    )
-    component_penalty = sum(
-        value for key, value in profile_components.items() if key.endswith("_penalty")
-    )
+    component_boost = sum(value for key, value in profile_components.items() if not key.endswith("_penalty"))
+    component_penalty = sum(value for key, value in profile_components.items() if key.endswith("_penalty"))
     penalty = 0.0
     if str(candidate.get("data_status") or "") != "clean":
         penalty += 8.0
@@ -1122,15 +1057,7 @@ def build_candidate_opportunity_score(
     if resolved_policy_state == "blocked":
         penalty += 20.0
 
-    raw_promotion_score = (
-        discovery_score
-        + setup_delta
-        + fill_ratio_delta
-        + calibration_delta
-        + component_boost
-        - penalty
-        - component_penalty
-    )
+    raw_promotion_score = base_quality_score + setup_delta + fill_ratio_delta + calibration_delta + component_boost - penalty - component_penalty
     promotion_score = round(_clamp(raw_promotion_score, 0.0, 100.0), 1)
     execution_score = promotion_score
     thresholds = family_score_thresholds(
@@ -1180,7 +1107,7 @@ def build_candidate_opportunity_score(
         },
         "policy_state": resolved_policy_state,
         "blockers": resolved_blockers,
-        "discovery_score": discovery_score,
+        "base_quality_score": base_quality_score,
         "promotion_score": promotion_score,
         "execution_score": execution_score,
         "confidence": confidence,
@@ -1198,7 +1125,7 @@ def build_candidate_opportunity_score(
     }
 
 
-def score_candidate_opportunity(
+def score_candidate_selection(
     candidate: Mapping[str, Any],
     *,
     cycle: Mapping[str, Any] | None = None,
@@ -1208,7 +1135,7 @@ def score_candidate_opportunity(
     baseline_selection_state: str | None = None,
     dimension_lookup: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    return build_candidate_opportunity_score(
+    return build_candidate_selection_score(
         candidate,
         cycle=cycle,
         style_profile=style_profile,
@@ -1220,7 +1147,7 @@ def score_candidate_opportunity(
 
 
 __all__ = [
-    "build_candidate_opportunity_score",
+    "build_candidate_selection_score",
     "build_earnings_signal_bundle",
     "candidate_earnings_phase",
     "candidate_event_state",
@@ -1231,7 +1158,7 @@ __all__ = [
     "earnings_phase_policy_preference",
     "product_class",
     "resolve_style_profile",
-    "score_candidate_opportunity",
+    "score_candidate_selection",
     "strategy_family",
     "style_score_thresholds",
 ]

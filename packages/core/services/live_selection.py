@@ -13,7 +13,7 @@ from core.services.option_structures import (
     legs_identity_key,
     payload_display_fields,
 )
-from core.services.opportunity_scoring import build_candidate_opportunity_score
+from core.services.candidate_scoring import build_candidate_selection_score
 
 DEFAULT_SELECTION_THRESHOLDS = {
     "promotable_score_floor": 65.0,
@@ -65,7 +65,7 @@ def candidate_identity(candidate: dict[str, Any]) -> str:
 def summarize_candidate(candidate: dict[str, Any]) -> str:
     display_fields = payload_display_fields(candidate)
     strike_path = str(candidate.get("strike_path") or "").strip() or str(display_fields.get("strike_path") or "n/a")
-    return f"{candidate['strategy']} {strike_path} " f"score {_selection_score(candidate):.1f}"
+    return f"{candidate['strategy']} {strike_path} score {_selection_score(candidate):.1f}"
 
 
 def _selection_score(candidate: dict[str, Any]) -> float:
@@ -97,7 +97,7 @@ def _scored_candidate(
     generated_at: str,
     signal_cycle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    scorecard = build_candidate_opportunity_score(
+    scorecard = build_candidate_selection_score(
         candidate,
         cycle={
             "generated_at": generated_at,
@@ -135,7 +135,7 @@ def _scored_candidate(
     )
     return {
         **dict(candidate),
-        "discovery_score": scorecard["discovery_score"],
+        "base_quality_score": scorecard["base_quality_score"],
         "promotion_score": scorecard["promotion_score"],
         "execution_score": execution_score,
         "confidence": confidence,
@@ -251,7 +251,7 @@ def _sort_candidates(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda candidate: (
             _selection_score(candidate),
             float(candidate.get("execution_score") or 0.0),
-            float(candidate.get("discovery_score") or candidate.get("quality_score") or 0.0),
+            float(candidate.get("base_quality_score") or candidate.get("quality_score") or 0.0),
             float(candidate.get("return_on_risk") or 0.0),
             float(candidate.get("midpoint_credit") or 0.0),
             min(
@@ -508,10 +508,10 @@ def build_selection_events(
         current_identity = candidate_identity(current)
         if previous["strategy"] != current["strategy"]:
             event_type = "promotable_side_flip"
-            message = f"{symbol} promotable side flipped: " f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
+            message = f"{symbol} promotable side flipped: {summarize_candidate(previous)} -> {summarize_candidate(current)}"
         elif previous_identity != current_identity:
             event_type = "promotable_replaced"
-            message = f"{symbol} promotable idea replaced: " f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
+            message = f"{symbol} promotable idea replaced: {summarize_candidate(previous)} -> {summarize_candidate(current)}"
         else:
             score_change = _selection_score(current) - _selection_score(previous)
             if abs(score_change) < score_delta_threshold:
