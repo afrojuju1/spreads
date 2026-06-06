@@ -120,6 +120,26 @@ Optional offline job types, disabled by default:
 
 The valuation and research lanes are disabled by default in job config and deploy target config. `worker-valuation` and `worker-research` are compose profiles with zero replicas unless intentionally enabled. The live `TradingOpsState` health path should stay focused on trading/data/runtime lanes; optional offline lanes should appear as idle or disabled, not blocked live trading dependencies.
 
+## Runtime Resource Policy
+
+Always-on runtime:
+
+- Postgres, Redis, API, web, scheduler, and the logging/metrics stack stay up so operator reads, dashboards, leases, queues, and storage maintenance remain available.
+- Runtime workers stay up for broker/account sync, intent dispatch, alert reconciliation, and strategy routines, but market-only jobs are expressed in their job schedules instead of waking and skipping all night.
+- `alert_reconcile` is intentionally allowed off-hours so pending notifications can recover without waiting for the next session.
+
+Market-window runtime:
+
+- Ticker sources with `allow_off_hours: false`, including `ticker_source:finviz_momentum`, refresh only inside the configured market calendar window.
+- Trading strategy entry and manage routines compile `market_hours_only: true` into generated job payloads with `allow_off_hours: false`.
+- Broker sync and execution dispatch remain schedule-gated with a short close grace period where configured.
+- `market_recorder.py` stays deployed as the sole option-stream owner, but it idles outside regular market hours. It checks the market calendar cheaply, throttles idle logs, and does not refresh capture targets, open the Alpaca option websocket, or write capture summaries while closed unless explicitly run with `--no-market-hours-only`.
+
+Scale defaults:
+
+- The active live deploy target runs one data worker by default. The current data lane only owns ticker-source jobs, so extra always-warm data workers add memory pressure without improving the normal live path.
+- Optional valuation and research workers remain profile-gated with zero replicas until intentionally enabled.
+
 ## Trading Strategy Ownership
 
 Trading strategies are authored as one file per strategy in `packages/config/trading_strategies`.

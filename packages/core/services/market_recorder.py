@@ -7,6 +7,7 @@ import os
 import socket
 from collections import defaultdict
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.jobs.orchestration import market_recorder_runtime_lease_key
 from core.observability.logging import configure_logging, log_event
 from core.runtime.config import default_database_url
+from core.services.market_dates import NEW_YORK, market_session_window
 from core.services.option_quote_records import build_quote_records
 from core.services.option_stream_broker import (
     AlpacaOptionStreamBroker,
@@ -25,6 +27,8 @@ from core.services.trading_engine.capture_targets import refresh_engine_capture_
 from core.storage.factory import build_storage_context
 
 DEFAULT_POLL_SECONDS = 25.0
+DEFAULT_OFF_HOURS_POLL_SECONDS = 30.0
+DEFAULT_IDLE_LOG_SECONDS = 300.0
 DEFAULT_QUOTE_DURATION_SECONDS = 20.0
 DEFAULT_TRADE_DURATION_SECONDS = 20.0
 DEFAULT_TARGET_LIMIT = 1000
@@ -39,6 +43,16 @@ def _as_text(value: Any) -> str | None:
         return None
     rendered = str(value).strip()
     return rendered or None
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = _as_text(os.environ.get(name))
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 def _current_deploy_env() -> str | None:
@@ -80,6 +94,39 @@ def _owner_mismatch_payload() -> dict[str, Any] | None:
         "deploy_env": current_env,
         "configured_owner_env": configured_owner_env,
         "message": (f"Market recorder ownership is assigned to {configured_owner_env}; " f"{current_env or 'unknown'} is read-only."),
+    }
+
+
+def _market_session_payload(*, now: datetime, calendar_name: str = "NYSE") -> dict[str, Any]:
+    local_now = now.astimezone(NEW_YORK)
+    market_window = market_session_window(calendar_name, local_now.date())
+    if market_window is None:
+        return {
+            "calendar": calendar_name,
+            "status": "closed",
+            "is_open": False,
+            "market_open_at": None,
+            "market_close_at": None,
+        }
+    market_open, market_close = market_window
+    is_open = market_open <= local_now < market_close
+    return {
+        "calendar": calendar_name,
+        "status": "open" if is_open else "closed",
+        "is_open": is_open,
+        "market_open_at": market_open.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "market_close_at": market_close.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
+def _closed_market_idle_summary(*, calendar_name: str = "NYSE") -> dict[str, Any] | None:
+    market_session = _market_session_payload(now=datetime.now(UTC), calendar_name=calendar_name)
+    if bool(market_session.get("is_open")):
+        return None
+    return {
+        "status": "idle",
+        "reason": "market_closed",
+        "market_session": market_session,
     }
 
 
@@ -514,8 +561,28 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
     broker = AlpacaOptionStreamBroker()
     lease_key = market_recorder_runtime_lease_key(MARKET_RECORDER_LEASE_SCOPE)
     lease_owner = _market_recorder_owner_id()
+    last_idle_log_at = 0.0
     try:
         while True:
+            if args.market_hours_only:
+                idle_summary = _closed_market_idle_summary(calendar_name=args.market_calendar)
+                if idle_summary is not None:
+                    loop_now = asyncio.get_running_loop().time()
+                    should_log = args.once or last_idle_log_at <= 0.0 or loop_now - last_idle_log_at >= float(args.idle_log_seconds)
+                    if should_log:
+                        log_event(
+                            logger,
+                            logging.INFO,
+                            "market_recorder_idle",
+                            **idle_summary,
+                            next_check_seconds=float(args.off_hours_poll_seconds),
+                        )
+                        last_idle_log_at = loop_now
+                    if args.once:
+                        return 0
+                    await asyncio.sleep(max(float(args.off_hours_poll_seconds), 1.0))
+                    continue
+
             iteration_started_at = asyncio.get_running_loop().time()
             summary = await run_market_recorder_iteration(
                 db_target=args.db,
@@ -560,6 +627,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_POLL_SECONDS,
         help="Seconds between recorder iterations. Default: 25",
+    )
+    parser.add_argument(
+        "--market-hours-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Only open Alpaca option-stream capture during regular market hours. Default: true",
+    )
+    parser.add_argument(
+        "--market-calendar",
+        default="NYSE",
+        help="Market calendar used for recorder market-hours gating. Default: NYSE",
+    )
+    parser.add_argument(
+        "--off-hours-poll-seconds",
+        type=float,
+        default=_env_float("SPREADS_MARKET_RECORDER_OFF_HOURS_POLL_SECONDS", DEFAULT_OFF_HOURS_POLL_SECONDS),
+        help="Seconds between market-hours checks while the market is closed. Default: 30",
+    )
+    parser.add_argument(
+        "--idle-log-seconds",
+        type=float,
+        default=_env_float("SPREADS_MARKET_RECORDER_IDLE_LOG_SECONDS", DEFAULT_IDLE_LOG_SECONDS),
+        help="Minimum seconds between closed-market idle log events. Default: 300",
     )
     parser.add_argument(
         "--quote-duration-seconds",

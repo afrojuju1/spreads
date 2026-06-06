@@ -104,7 +104,7 @@ services:
       context: .
     restart: unless-stopped
     deploy:
-      replicas: 4
+      replicas: 1
     depends_on:
       runtime-init:
         condition: service_completed_successfully
