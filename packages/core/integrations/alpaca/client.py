@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import json
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any
 
 from core.common import format_stream_timestamp, parse_float, parse_int, pick
@@ -16,10 +12,11 @@ from core.domain.models import (
     OptionTrade,
     OptionSnapshot,
 )
+from core.integrations.http_client import VendorHttpClient, VendorHttpError
 
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
-RETRYABLE_GET_STATUS_CODES = {429, 500, 502, 503, 504}
+ALPACA_USER_AGENT = "spreads-alpaca/1.0"
 
 
 class AlpacaRequestError(RuntimeError):
@@ -66,8 +63,15 @@ class AlpacaClient:
             "APCA-API-KEY-ID": key_id,
             "APCA-API-SECRET-KEY": secret_key,
             "Accept": "application/json",
-            "User-Agent": "call-credit-spread-scanner/1.0",
+            "User-Agent": ALPACA_USER_AGENT,
         }
+        self.http = VendorHttpClient(
+            default_headers=self.headers,
+            timeout_seconds=self.request_timeout_seconds,
+            retry_count=self.request_retry_count,
+            retry_backoff_seconds=self.request_retry_backoff_seconds,
+            user_agent=ALPACA_USER_AGENT,
+        )
 
     @staticmethod
     def _symbol_batches(
@@ -76,26 +80,7 @@ class AlpacaClient:
         batch_size: int = 100,
     ) -> list[list[str]]:
         normalized = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
-        return [
-            normalized[index : index + batch_size]
-            for index in range(0, len(normalized), batch_size)
-        ]
-
-    def _max_attempts_for(self, method: str) -> int:
-        if method.upper() != "GET":
-            return 1
-        return self.request_retry_count + 1
-
-    def _sleep_before_retry(self, attempt_index: int) -> None:
-        delay_seconds = self.request_retry_backoff_seconds * (2 ** max(attempt_index - 1, 0))
-        if delay_seconds > 0:
-            time.sleep(delay_seconds)
-
-    @staticmethod
-    def _attempt_note(attempt_count: int) -> str:
-        if attempt_count <= 1:
-            return ""
-        return f" after {attempt_count} attempts"
+        return [normalized[index : index + batch_size] for index in range(0, len(normalized), batch_size)]
 
     def request_json(
         self,
@@ -105,63 +90,17 @@ class AlpacaClient:
         params: dict[str, Any] | None = None,
         body: Any | None = None,
     ) -> Any:
-        query = ""
-        if params:
-            filtered = {k: v for k, v in params.items() if v not in (None, "")}
-            query = "?" + urllib.parse.urlencode(filtered)
-        url = f"{base_url}{path}{query}"
-        request_headers = dict(self.headers)
-        request_data = None
-        if body is not None:
-            request_headers["Content-Type"] = "application/json"
-            request_data = json.dumps(body).encode("utf-8")
-        method_upper = method.upper()
-        request = urllib.request.Request(
-            url,
-            headers=request_headers,
-            data=request_data,
-            method=method_upper,
-        )
-        max_attempts = self._max_attempts_for(method_upper)
-        for attempt_index in range(1, max_attempts + 1):
-            try:
-                with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                    body_bytes = response.read()
-                    if not body_bytes:
-                        return None
-                    return json.loads(body_bytes.decode("utf-8"))
-            except urllib.error.HTTPError as exc:
-                response_body = exc.read().decode("utf-8", errors="replace")
-                if exc.code in RETRYABLE_GET_STATUS_CODES and attempt_index < max_attempts:
-                    self._sleep_before_retry(attempt_index)
-                    continue
-                raise AlpacaRequestError(
-                    f"Alpaca request failed{self._attempt_note(attempt_index)}: {exc.code} {exc.reason} for {url}\n{response_body}",
-                    status_code=exc.code,
-                    url=url,
-                    response_body=response_body,
-                ) from exc
-            except urllib.error.URLError as exc:
-                if attempt_index < max_attempts:
-                    self._sleep_before_retry(attempt_index)
-                    continue
-                raise AlpacaRequestError(
-                    f"Failed to reach Alpaca for {url}{self._attempt_note(attempt_index)}: {exc.reason}",
-                    url=url,
-                ) from exc
-            except (TimeoutError, ConnectionError) as exc:
-                if attempt_index < max_attempts:
-                    self._sleep_before_retry(attempt_index)
-                    continue
-                raise AlpacaRequestError(
-                    f"Failed to reach Alpaca for {url}{self._attempt_note(attempt_index)}: {exc}",
-                    url=url,
-                ) from exc
-        raise AlpacaRequestError(f"Failed to reach Alpaca for {url}", url=url)
+        try:
+            return self.http.request_json(method, base_url, path, params=params, body=body)
+        except VendorHttpError as exc:
+            raise AlpacaRequestError(
+                str(exc).replace("Vendor HTTP", "Alpaca").replace("vendor", "Alpaca"),
+                status_code=exc.status_code,
+                url=exc.url,
+                response_body=exc.response_body,
+            ) from exc
 
-    def get_json(
-        self, base_url: str, path: str, params: dict[str, Any] | None = None
-    ) -> Any:
+    def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> Any:
         return self.request_json("GET", base_url, path, params=params)
 
     def post_json(
@@ -314,11 +253,7 @@ class AlpacaClient:
         items = payload.get("most_actives")
         if not isinstance(items, list):
             return []
-        return [
-            dict(item)
-            for item in items
-            if isinstance(item, dict) and str(item.get("symbol") or "").strip()
-        ]
+        return [dict(item) for item in items if isinstance(item, dict) and str(item.get("symbol") or "").strip()]
 
     def get_stock_movers(
         self,
@@ -338,11 +273,7 @@ class AlpacaClient:
             value = payload.get(key)
             if not isinstance(value, list):
                 return []
-            return [
-                dict(item)
-                for item in value
-                if isinstance(item, dict) and str(item.get("symbol") or "").strip()
-            ]
+            return [dict(item) for item in value if isinstance(item, dict) and str(item.get("symbol") or "").strip()]
 
         return {
             "gainers": _items("gainers"),
@@ -369,11 +300,7 @@ class AlpacaClient:
             )
             if not isinstance(payload, dict):
                 continue
-            raw_snapshots = (
-                payload.get("snapshots")
-                if isinstance(payload.get("snapshots"), dict)
-                else payload
-            )
+            raw_snapshots = payload.get("snapshots") if isinstance(payload.get("snapshots"), dict) else payload
             if not isinstance(raw_snapshots, dict):
                 continue
             for symbol, snapshot in raw_snapshots.items():
@@ -429,9 +356,7 @@ class AlpacaClient:
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {}
-        normalized_symbols = [
-            str(symbol).upper() for symbol in list(symbols or []) if str(symbol).strip()
-        ]
+        normalized_symbols = [str(symbol).upper() for symbol in list(symbols or []) if str(symbol).strip()]
         if normalized_symbols:
             params["symbols"] = ",".join(normalized_symbols)
         if limit is not None:
@@ -454,9 +379,7 @@ class AlpacaClient:
             "/v2/stocks/quotes/latest",
             {"symbols": symbol, "feed": stock_feed},
         )
-        quote = self._extract_symbol_payload(
-            quote_payload, symbol, plural_key="quotes", singular_key="quote"
-        )
+        quote = self._extract_symbol_payload(quote_payload, symbol, plural_key="quotes", singular_key="quote")
         bid = parse_float(pick(quote, "bp", "bid_price"))
         ask = parse_float(pick(quote, "ap", "ask_price"))
         if bid and ask and bid > 0 and ask > 0:
@@ -467,9 +390,7 @@ class AlpacaClient:
             "/v2/stocks/trades/latest",
             {"symbols": symbol, "feed": stock_feed},
         )
-        trade = self._extract_symbol_payload(
-            trade_payload, symbol, plural_key="trades", singular_key="trade"
-        )
+        trade = self._extract_symbol_payload(trade_payload, symbol, plural_key="trades", singular_key="trade")
         price = parse_float(pick(trade, "p", "price"))
         if price and price > 0:
             return price
@@ -544,10 +465,7 @@ class AlpacaClient:
             close_price = parse_float(pick(item, "c", "close"))
             volume = parse_int(pick(item, "v", "volume"))
             timestamp = pick(item, "t", "timestamp")
-            if (
-                None in (open_price, high_price, low_price, close_price, volume)
-                or not timestamp
-            ):
+            if None in (open_price, high_price, low_price, close_price, volume) or not timestamp:
                 continue
             bars.append(
                 DailyBar(
@@ -592,10 +510,7 @@ class AlpacaClient:
             close_price = parse_float(pick(item, "c", "close"))
             volume = parse_int(pick(item, "v", "volume"))
             timestamp = pick(item, "t", "timestamp")
-            if (
-                None in (open_price, high_price, low_price, close_price, volume)
-                or not timestamp
-            ):
+            if None in (open_price, high_price, low_price, close_price, volume) or not timestamp:
                 continue
             bars.append(
                 IntradayBar(
@@ -724,11 +639,7 @@ class AlpacaClient:
                             close_price = parse_float(pick(item, "c", "close"))
                             volume = parse_int(pick(item, "v", "volume")) or 0
                             timestamp = pick(item, "t", "timestamp")
-                            if (
-                                None
-                                in (open_price, high_price, low_price, close_price)
-                                or not timestamp
-                            ):
+                            if None in (open_price, high_price, low_price, close_price) or not timestamp:
                                 continue
                             bars_by_symbol.setdefault(symbol, []).append(
                                 DailyBar(
@@ -740,9 +651,7 @@ class AlpacaClient:
                                     volume=volume,
                                 )
                             )
-                page_token = payload.get("next_page_token") or payload.get(
-                    "page_token"
-                )
+                page_token = payload.get("next_page_token") or payload.get("page_token")
                 if not page_token:
                     break
         for symbol in list(bars_by_symbol):
@@ -762,9 +671,7 @@ class AlpacaClient:
         if not symbols:
             return {}
 
-        trades_by_symbol: dict[str, list[OptionTrade]] = {
-            symbol: [] for symbol in symbols
-        }
+        trades_by_symbol: dict[str, list[OptionTrade]] = {symbol: [] for symbol in symbols}
         for symbol_batch in self._symbol_batches(symbols):
             page_token: str | None = None
             while True:
@@ -796,9 +703,7 @@ class AlpacaClient:
                                     timestamp=str(timestamp),
                                 )
                             )
-                page_token = payload.get("next_page_token") or payload.get(
-                    "page_token"
-                )
+                page_token = payload.get("next_page_token") or payload.get("page_token")
                 if not page_token:
                     break
         for symbol in list(trades_by_symbol):
@@ -821,14 +726,10 @@ class AlpacaClient:
                 return payload[plural_key][symbol]
         if singular_key in payload and isinstance(payload[singular_key], dict):
             return payload[singular_key]
-        raise RuntimeError(
-            f"Unexpected Alpaca response shape while looking up {symbol}"
-        )
+        raise RuntimeError(f"Unexpected Alpaca response shape while looking up {symbol}")
 
     @staticmethod
-    def _parse_option_snapshot(
-        symbol: str, snapshot: dict[str, Any]
-    ) -> OptionSnapshot | None:
+    def _parse_option_snapshot(symbol: str, snapshot: dict[str, Any]) -> OptionSnapshot | None:
         latest_quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
         greeks = snapshot.get("greeks") or {}
         latest_trade = snapshot.get("latestTrade") or snapshot.get("latest_trade") or {}
@@ -859,9 +760,7 @@ class AlpacaClient:
             gamma=parse_float(pick(greeks, "gamma", "g")),
             theta=parse_float(pick(greeks, "theta", "t")),
             vega=parse_float(pick(greeks, "vega", "v")),
-            implied_volatility=parse_float(
-                pick(snapshot, "impliedVolatility", "implied_volatility", "iv")
-            ),
+            implied_volatility=parse_float(pick(snapshot, "impliedVolatility", "implied_volatility", "iv")),
             last_trade_price=parse_float(pick(latest_trade, "p", "price")),
             daily_volume=parse_int(pick(daily_bar, "v", "volume")),
             greeks_source="alpaca" if delta_value is not None else None,
