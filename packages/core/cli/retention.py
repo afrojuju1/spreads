@@ -7,7 +7,8 @@ import typer
 from rich.panel import Panel
 from rich.table import Table
 
-from core.cli.ops_render import build_console, render_json_payload
+from core.cli.command_harness import run_payload_command
+from core.cli.ops_render import build_console
 from core.services.retention import (
     build_retention_status,
     prune_retained_data,
@@ -119,19 +120,16 @@ def status_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
-    try:
-        payload = build_retention_status(
+    run_payload_command(
+        builder=lambda: build_retention_status(
             db_target=db,
             include_pending_counts=include_pending_counts,
-        )
-    except Exception as exc:
-        typer.secho(f"Retention status failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-
-    if json_output:
-        render_json_payload(build_console(no_color=True), payload)
-    else:
-        _render_status(payload, no_color=no_color)
+        ),
+        renderer=lambda payload: _render_status(payload, no_color=no_color),
+        json_output=json_output,
+        no_color=no_color,
+        error_prefix="Retention status failed",
+    )
 
 
 @retention_app.command("prune", help="Create future tick partitions and drop expired tick partitions.")
@@ -165,19 +163,16 @@ def prune_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     defaults = retention_defaults()
-    try:
-        payload = prune_retained_data(
+    run_payload_command(
+        builder=lambda: prune_retained_data(
             db_target=db,
             dry_run=not execute,
             option_quote_tick_days=option_quote_tick_days or defaults["option_quote_tick_days"],
             option_trade_tick_days=option_trade_tick_days or defaults["option_trade_tick_days"],
             future_partition_days=future_partition_days or defaults["future_partition_days"],
-        )
-    except Exception as exc:
-        typer.secho(f"Retention prune failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-
-    if json_output:
-        render_json_payload(build_console(no_color=True), payload)
-    else:
-        _render_prune_summary(payload)
+        ),
+        renderer=_render_prune_summary,
+        json_output=json_output,
+        no_color=True,
+        error_prefix="Retention prune failed",
+    )

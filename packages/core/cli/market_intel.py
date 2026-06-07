@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from typing import cast
 
 import typer
 
+from core.cli.command_harness import run_passthrough
 from core.services.alpaca_research import main as research_alpaca_main
 from core.services.market_intel import (
     MarketIntelRequest,
@@ -20,7 +20,6 @@ from core.services.market_intel.eval_harness import (
     run_market_intel_eval,
 )
 
-
 PASSTHROUGH_CONTEXT_SETTINGS = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
@@ -33,31 +32,13 @@ market_intel_app = typer.Typer(
 )
 
 
-def _run_passthrough(
-    *,
-    ctx: typer.Context,
-    entrypoint: Callable[[list[str] | None], int],
-) -> None:
-    try:
-        code = entrypoint(list(ctx.args))
-    except SystemExit as exc:
-        raw_code = exc.code
-        if raw_code in (None, 0):
-            code = 0
-        elif isinstance(raw_code, int):
-            code = raw_code
-        else:
-            code = 1
-    raise typer.Exit(code)
-
-
 @market_intel_app.command(
     "alpaca",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
     help="Inspect Alpaca capability coverage for spreads.",
 )
 def market_intel_alpaca_command(ctx: typer.Context) -> None:
-    _run_passthrough(ctx=ctx, entrypoint=research_alpaca_main)
+    run_passthrough(ctx=ctx, entrypoint=research_alpaca_main)
 
 
 @market_intel_app.command("thesis", help="Create a file-backed market intel run.")
@@ -180,11 +161,7 @@ def market_intel_eval_command(
 
 
 def _parse_tickers(value: str) -> tuple[str, ...]:
-    parsed = tuple(
-        ticker.strip().upper()
-        for ticker in str(value or "").split(",")
-        if ticker.strip()
-    )
+    parsed = tuple(ticker.strip().upper() for ticker in str(value or "").split(",") if ticker.strip())
     if not parsed:
         raise ValueError("At least one ticker is required")
     return parsed
@@ -199,11 +176,7 @@ def _parse_sources(value: str) -> tuple[SourceType, ...]:
         "calendar",
         "valuation_context",
     }
-    parsed = tuple(
-        source.strip()
-        for source in str(value or "").split(",")
-        if source.strip()
-    )
+    parsed = tuple(source.strip() for source in str(value or "").split(",") if source.strip())
     if not parsed:
         return ("sec", "market")
     unsupported = sorted(set(parsed) - allowed)

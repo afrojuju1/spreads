@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 import typer
 
+from core.cli.command_harness import run_passthrough
 from core.cli.company_valuation import company_valuation_app
 from core.cli.config import config_app
 from core.cli.deploy import deploy_app
@@ -95,24 +96,6 @@ def _maybe_run_target_command(argv: list[str]) -> int | None:
         return None
     target = get_deploy_target(environment)
     return run_target_spreads_command(target, filtered)
-
-
-def _run_passthrough(
-    *,
-    ctx: typer.Context,
-    entrypoint: Callable[[list[str] | None], int],
-) -> None:
-    try:
-        code = entrypoint(list(ctx.args))
-    except SystemExit as exc:
-        raw_code = exc.code
-        if raw_code in (None, 0):
-            code = 0
-        elif isinstance(raw_code, int):
-            code = raw_code
-        else:
-            code = 1
-    raise typer.Exit(code)
 
 
 def _targeted_args(
@@ -273,7 +256,7 @@ app.add_typer(retention_app, name="retention")
 def scan_command(ctx: typer.Context) -> None:
     from core.services.scanners.service import main as scan_main
 
-    _run_passthrough(ctx=ctx, entrypoint=scan_main)
+    run_passthrough(ctx=ctx, entrypoint=scan_main)
 
 
 app.add_typer(market_intel_app, name="market-intel")
@@ -330,7 +313,7 @@ def logs_command(
 def scheduler_command(ctx: typer.Context) -> None:
     from core.jobs.scheduler import main as scheduler_main
 
-    _run_passthrough(ctx=ctx, entrypoint=scheduler_main)
+    run_passthrough(ctx=ctx, entrypoint=scheduler_main)
 
 
 @app.command(
@@ -341,7 +324,7 @@ def scheduler_command(ctx: typer.Context) -> None:
 def market_recorder_command(ctx: typer.Context) -> None:
     from core.services.market_recorder import main as market_recorder_main
 
-    _run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
+    run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
 
 
 def main() -> None:
