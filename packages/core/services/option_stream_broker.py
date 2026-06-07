@@ -5,7 +5,6 @@ import json
 import os
 import urllib.parse
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 import msgpack
@@ -15,6 +14,7 @@ from core.common import env_or_die, format_stream_timestamp, parse_float, parse_
 from core.domain.models import LiveOptionQuote
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.services.option_trade_records import normalize_trade_conditions
+from core.services.value_coercion import utc_now_iso
 
 DEFAULT_OPTION_STREAM_IDLE_TIMEOUT_SECONDS = 2.0
 OPTION_STREAM_SHUTDOWN_MESSAGE = "Option stream capture cancelled during API shutdown"
@@ -47,7 +47,7 @@ def normalize_option_symbols(symbols: list[str]) -> list[str]:
 
 
 def render_option_capture_timestamp() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 class OptionStreamCaptureError(RuntimeError):
@@ -484,26 +484,13 @@ class AlpacaOptionStreamBroker:
             "generated_at": render_option_capture_timestamp(),
             "broker_count": len(broker_snapshots),
             "active_capture_count": sum(int(snapshot.get("active_capture_count") or 0) for snapshot in broker_snapshots),
-            "desired_quote_symbol_count": sum(
-                int(snapshot.get("desired_quote_symbol_count") or 0) for snapshot in broker_snapshots
-            ),
-            "desired_trade_symbol_count": sum(
-                int(snapshot.get("desired_trade_symbol_count") or 0) for snapshot in broker_snapshots
-            ),
+            "desired_quote_symbol_count": sum(int(snapshot.get("desired_quote_symbol_count") or 0) for snapshot in broker_snapshots),
+            "desired_trade_symbol_count": sum(int(snapshot.get("desired_trade_symbol_count") or 0) for snapshot in broker_snapshots),
             "metrics": {
-                "connect_count": sum(
-                    int((snapshot.get("metrics") or {}).get("connect_count") or 0) for snapshot in broker_snapshots
-                ),
-                "reconnect_count": sum(
-                    int((snapshot.get("metrics") or {}).get("reconnect_count") or 0) for snapshot in broker_snapshots
-                ),
-                "auth_406_count": sum(
-                    int((snapshot.get("metrics") or {}).get("auth_406_count") or 0) for snapshot in broker_snapshots
-                ),
-                "shutdown_cancel_count": sum(
-                    int((snapshot.get("metrics") or {}).get("shutdown_cancel_count") or 0)
-                    for snapshot in broker_snapshots
-                ),
+                "connect_count": sum(int((snapshot.get("metrics") or {}).get("connect_count") or 0) for snapshot in broker_snapshots),
+                "reconnect_count": sum(int((snapshot.get("metrics") or {}).get("reconnect_count") or 0) for snapshot in broker_snapshots),
+                "auth_406_count": sum(int((snapshot.get("metrics") or {}).get("auth_406_count") or 0) for snapshot in broker_snapshots),
+                "shutdown_cancel_count": sum(int((snapshot.get("metrics") or {}).get("shutdown_cancel_count") or 0) for snapshot in broker_snapshots),
             },
             "brokers": broker_snapshots,
         }

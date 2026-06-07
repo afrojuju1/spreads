@@ -6,6 +6,7 @@ from typing import Any
 
 from core.services.execution_intents.shared import OPEN_POSITION_STATES
 from core.services.trading_strategies import TradingStrategyConfig
+from core.services.value_coercion import coerce_float
 from core.storage.serializers import parse_datetime
 
 
@@ -19,13 +20,6 @@ def _window_bounds(market_date: str | None) -> tuple[str, datetime, datetime]:
 def _in_window(value: Any, *, start: datetime, end: datetime) -> bool:
     parsed = parse_datetime(value)
     return parsed is not None and start <= parsed < end
-
-
-def _as_float(value: Any) -> float:
-    try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def build_trading_strategy_metrics(
@@ -77,8 +71,8 @@ def build_trading_strategy_metrics(
     daily_positions = [
         row for row in positions if row.get("market_date_opened") == resolved_market_date or row.get("market_date_closed") == resolved_market_date
     ]
-    daily_realized_pnl = sum(_as_float(row.get("realized_pnl")) for row in daily_positions)
-    open_unrealized_pnl = sum(_as_float(row.get("unrealized_pnl")) for row in open_positions)
+    daily_realized_pnl = sum(coerce_float(row.get("realized_pnl")) or 0.0 for row in daily_positions)
+    open_unrealized_pnl = sum(coerce_float(row.get("unrealized_pnl")) or 0.0 for row in open_positions)
 
     return {
         "trading_strategy_id": trading_strategy_id,

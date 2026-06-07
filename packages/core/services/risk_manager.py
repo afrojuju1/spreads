@@ -38,6 +38,7 @@ from core.services.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,
+    utc_now_iso,
 )
 from core.storage.serializers import parse_datetime
 
@@ -102,10 +103,6 @@ def _coerce_bool(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return False
-
-
-def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:

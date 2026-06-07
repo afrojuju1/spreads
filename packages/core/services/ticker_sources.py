@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping
-from datetime import UTC, datetime
 import html
 import math
 import os
@@ -15,13 +14,10 @@ from core.integrations.alpaca.client import AlpacaRequestError
 from core.integrations.http_client import VendorHttpClient
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.trading_strategies import build_entry_strategy_symbols, load_universe_symbols
+from core.services.value_coercion import utc_now_iso as _iso_now
 
 VALID_TICKER_SOURCE_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter"})
 FINVIZ_HTTP = VendorHttpClient(timeout_seconds=30, user_agent="spreads-finviz-feed/1.0")
-
-
-def _iso_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _as_optional_text(value: Any) -> str | None:

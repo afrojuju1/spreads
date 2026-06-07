@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from core.services.value_coercion import as_text as _as_text, coerce_float as _coerce_float
 
 DEFAULT_DEPLOYMENT_QUALITY_THRESHOLDS = {
     "min_promotable_return_on_risk": None,
@@ -24,22 +25,6 @@ PROFILE_DEPLOYMENT_QUALITY_THRESHOLDS = {
         "min_minutes_to_force_close": 120.0,
     },
 }
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _candidate_nested_payload(candidate: Mapping[str, Any]) -> Mapping[str, Any] | None:

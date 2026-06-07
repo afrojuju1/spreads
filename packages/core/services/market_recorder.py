@@ -24,6 +24,7 @@ from core.services.option_stream_broker import (
 )
 from core.services.option_trade_records import build_trade_records
 from core.services.trading_engine.capture_targets import refresh_engine_capture_targets
+from core.services.value_coercion import as_text as _as_text
 from core.storage.factory import build_storage_context
 
 DEFAULT_POLL_SECONDS = 25.0
@@ -36,13 +37,6 @@ MARKET_RECORDER_SOURCE = "market_recorder"
 MARKET_RECORDER_LEASE_SCOPE = "alpaca_options"
 
 logger = logging.getLogger(__name__)
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
 
 
 def _env_float(name: str, default: float) -> float:

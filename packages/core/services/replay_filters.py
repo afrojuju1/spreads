@@ -2,23 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from core.services.value_coercion import coerce_float as _coerce_float, coerce_int as _coerce_int
 from core.services.entry_recipes import evaluate_entry_recipes
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
 from core.services.strategy_registry import resolve_strategy_definition
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    numeric = _coerce_float(value)
-    return None if numeric is None else int(numeric)
 
 
 def build_candidate_filter(
@@ -41,13 +28,7 @@ def build_candidate_filter(
     if normalized_strategy_id:
         payload["strategy_id"] = normalized_strategy_id
 
-    normalized_symbols = sorted(
-        {
-            str(symbol).upper()
-            for symbol in list(symbols or [])
-            if str(symbol or "").strip()
-        }
-    )
+    normalized_symbols = sorted({str(symbol).upper() for symbol in list(symbols or []) if str(symbol or "").strip()})
     if normalized_symbols:
         payload["symbols"] = normalized_symbols
 
@@ -60,13 +41,7 @@ def build_candidate_filter(
     if short_delta_max is not None:
         payload["short_delta_max"] = float(short_delta_max)
 
-    normalized_widths = sorted(
-        {
-            round(float(value), 4)
-            for value in list(allowed_widths or [])
-            if value not in (None, "")
-        }
-    )
+    normalized_widths = sorted({round(float(value), 4) for value in list(allowed_widths or []) if value not in (None, "")})
     if normalized_widths:
         payload["allowed_widths"] = normalized_widths
 
@@ -81,11 +56,7 @@ def build_candidate_filter(
     if normalized_ranking_policy:
         payload["ranking_policy"] = normalized_ranking_policy
 
-    normalized_entry_recipe_refs = [
-        str(recipe_ref)
-        for recipe_ref in list(entry_recipe_refs or [])
-        if str(recipe_ref or "").strip()
-    ]
+    normalized_entry_recipe_refs = [str(recipe_ref) for recipe_ref in list(entry_recipe_refs or []) if str(recipe_ref or "").strip()]
     if normalized_entry_recipe_refs:
         payload["entry_recipe_refs"] = normalized_entry_recipe_refs
 
@@ -105,11 +76,7 @@ def candidate_filter_reasons(
         if not strategy.matches_candidate(dict(candidate)):
             reasons.append("strategy_family_mismatch")
 
-    symbols = {
-        str(symbol).upper()
-        for symbol in list(payload.get("symbols") or [])
-        if str(symbol or "").strip()
-    }
+    symbols = {str(symbol).upper() for symbol in list(payload.get("symbols") or []) if str(symbol or "").strip()}
     if symbols:
         underlying_symbol = str(candidate.get("underlying_symbol") or "").upper()
         if underlying_symbol not in symbols:
@@ -135,11 +102,7 @@ def candidate_filter_reasons(
         if short_delta_max is not None and short_delta > short_delta_max:
             reasons.append("short_delta_above_max")
 
-    allowed_widths = {
-        round(float(value), 4)
-        for value in list(payload.get("allowed_widths") or [])
-        if value not in (None, "")
-    }
+    allowed_widths = {round(float(value), 4) for value in list(payload.get("allowed_widths") or []) if value not in (None, "")}
     if allowed_widths:
         width = candidate.get("width")
         if width in (None, ""):
@@ -155,9 +118,7 @@ def candidate_filter_reasons(
             reasons.append("open_interest_below_floor")
 
     spread_ceiling = _coerce_float(
-        payload.get("max_leg_spread_pct_mid")
-        if payload.get("max_leg_spread_pct_mid") is not None
-        else payload.get("max_relative_spread")
+        payload.get("max_leg_spread_pct_mid") if payload.get("max_leg_spread_pct_mid") is not None else payload.get("max_relative_spread")
     )
     if spread_ceiling is not None:
         short_spread = _coerce_float(candidate.get("short_relative_spread")) or 0.0
@@ -179,11 +140,7 @@ def candidate_filter_reasons(
         )
         reasons.extend(list(ranking_evaluation["blockers"]))
 
-    entry_recipe_refs = tuple(
-        str(recipe_ref)
-        for recipe_ref in list(payload.get("entry_recipe_refs") or [])
-        if str(recipe_ref or "").strip()
-    )
+    entry_recipe_refs = tuple(str(recipe_ref) for recipe_ref in list(payload.get("entry_recipe_refs") or []) if str(recipe_ref or "").strip())
     if entry_recipe_refs:
         recipe_result = evaluate_entry_recipes(dict(candidate), entry_recipe_refs)
         if not recipe_result.passed:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import Iterable
 
 from core.services.company_valuation.ids import (
@@ -22,6 +22,7 @@ from core.services.company_valuation.sec_client import SecEdgarClient
 from core.services.company_valuation.templates import (
     resolve_company_valuation_template_assignment,
 )
+from core.services.value_coercion import utc_now as _utc_now
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
@@ -44,10 +45,6 @@ class SecurityResolution:
     issuer_payload: dict[str, object] | None = None
     identifier_history_payloads: tuple[dict[str, object], ...] = ()
     security_payload: dict[str, object] | None = None
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _quarter_number(value: date) -> int:
@@ -193,11 +190,7 @@ def _issuer_name_candidates(
     repository: CompanyValuationRepository,
     name_candidates: Iterable[str],
 ) -> list[dict[str, object]]:
-    normalized_targets = {
-        normalize_name(value)
-        for value in name_candidates
-        if str(value or "").strip()
-    }
+    normalized_targets = {normalize_name(value) for value in name_candidates if str(value or "").strip()}
     if not normalized_targets:
         return []
     matches: list[dict[str, object]] = []
@@ -267,9 +260,7 @@ def _seed_openfigi_issuer_resolution(
         cik=synthetic_cik,
         company_name=best_mapping.name or issuer_name_reported or str(best_mapping.ticker),
     )
-    limited_coverage_flag = bool(assignment.limited_coverage_flag) or _is_limited_coverage_openfigi_mapping(
-        best_mapping
-    )
+    limited_coverage_flag = bool(assignment.limited_coverage_flag) or _is_limited_coverage_openfigi_mapping(best_mapping)
     assignment_reason = f"openfigi_seed:{best_mapping.ticker}"
     if limited_coverage_flag:
         assignment_reason = f"{assignment_reason}:limited_coverage"
@@ -358,9 +349,7 @@ def _resolution_from_known_issuer(
     source_ref: str | None,
     update_security_cusip: bool = False,
 ) -> SecurityResolution | None:
-    primary_security = repository.get_primary_security(
-        issuer_id=str(issuer_row["issuer_id"])
-    )
+    primary_security = repository.get_primary_security(issuer_id=str(issuer_row["issuer_id"]))
     if primary_security is None:
         return None
     created_at = _utc_now()
@@ -488,16 +477,13 @@ def resolve_cusip_to_security(
             issuer_row=issuer_matches[0],
             cusip=normalized_cusip,
             figi=figi,
-            issuer_name_reported=issuer_name_reported
-            or (official_entry.issuer_name if official_entry else None),
+            issuer_name_reported=issuer_name_reported or (official_entry.issuer_name if official_entry else None),
             title_of_class=title_of_class or (official_entry.title_of_class if official_entry else None),
             report_period=report_period,
             resolution_source="sec_13f_list_name_match",
             resolution_confidence=0.93,
             source_ref=official_entry.source_url if official_entry else None,
-            update_security_cusip=_is_primary_security_cusip(
-                title_of_class or (official_entry.title_of_class if official_entry else None)
-            ),
+            update_security_cusip=_is_primary_security_cusip(title_of_class or (official_entry.title_of_class if official_entry else None)),
         )
 
     if str(figi or "").strip():

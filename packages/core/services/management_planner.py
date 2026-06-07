@@ -5,15 +5,7 @@ from typing import Any
 
 from core.services.trading_strategy_runtime import ManagementRuntime
 from core.services.management_recipes import evaluate_management_recipes
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+from core.services.value_coercion import coerce_float as _coerce_float
 
 
 def _resolve_management_limit_price(

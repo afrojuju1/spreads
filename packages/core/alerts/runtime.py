@@ -4,24 +4,9 @@ from typing import Any, Mapping
 
 from core.services.alert_delivery import plan_alert_delivery
 from core.services.runtime_identity import build_live_run_scope_id
+from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 RUNTIME_ENTRY_SELECTED_ALERT_TYPE = "runtime_entry_selected"
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _as_float(value: Any) -> float | None:
-    try:
-        if value not in (None, ""):
-            return float(value)
-    except (TypeError, ValueError):
-        return None
-    return None
 
 
 def runtime_entry_selected_key(

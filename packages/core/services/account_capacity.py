@@ -10,6 +10,7 @@ from core.services.option_structures import (
     structure_barrier_strike,
     structure_width,
 )
+from core.services.value_coercion import coerce_float as _coerce_float
 
 BUYING_POWER_SOURCE_FIELDS = (
     "options_buying_power",
@@ -18,22 +19,6 @@ BUYING_POWER_SOURCE_FIELDS = (
     "cash",
     "equity",
 )
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _candidate_payload(candidate: Mapping[str, Any] | dict[str, Any]) -> dict[str, Any]:
@@ -138,11 +123,7 @@ def estimate_buying_power_requirement(
         }
 
     payload = _candidate_payload(candidate)
-    strategy_family = normalize_strategy_family(
-        payload.get("strategy")
-        or candidate.get("strategy")
-        or candidate.get("strategy_family")
-    )
+    strategy_family = normalize_strategy_family(payload.get("strategy") or candidate.get("strategy") or candidate.get("strategy_family"))
     premium_kind = net_premium_kind(strategy_family)
     entry_price = _resolve_entry_price(
         payload,
@@ -160,16 +141,8 @@ def estimate_buying_power_requirement(
             candidate_legs(payload),
             strategy=strategy_family,
         )
-        secured_requirement = (
-            None
-            if barrier_strike is None or barrier_strike <= 0
-            else round(barrier_strike * 100.0 * resolved_quantity, 2)
-        )
-        max_loss_requirement = (
-            None
-            if max_loss_per_contract is None
-            else round(max_loss_per_contract * resolved_quantity, 2)
-        )
+        secured_requirement = None if barrier_strike is None or barrier_strike <= 0 else round(barrier_strike * 100.0 * resolved_quantity, 2)
+        max_loss_requirement = None if max_loss_per_contract is None else round(max_loss_per_contract * resolved_quantity, 2)
         requirement = None
         if secured_requirement is not None:
             requirement = secured_requirement
@@ -200,11 +173,7 @@ def estimate_buying_power_requirement(
             reference_price or 0.0,
             barrier_strike or 0.0,
         )
-        requirement = (
-            None
-            if collateral_price <= 0
-            else round(collateral_price * 100.0 * resolved_quantity, 2)
-        )
+        requirement = None if collateral_price <= 0 else round(collateral_price * 100.0 * resolved_quantity, 2)
         return {
             "required_buying_power": requirement,
             "basis": "short_call_conservative",
@@ -216,11 +185,7 @@ def estimate_buying_power_requirement(
         "put_credit_spread",
         "iron_condor",
     }:
-        requirement = (
-            None
-            if max_loss_per_contract is None
-            else round(max_loss_per_contract * resolved_quantity, 2)
-        )
+        requirement = None if max_loss_per_contract is None else round(max_loss_per_contract * resolved_quantity, 2)
         return {
             "required_buying_power": requirement,
             "basis": "defined_risk_max_loss",
@@ -244,11 +209,7 @@ def estimate_buying_power_requirement(
                 "basis": "net_debit",
                 "strategy_family": strategy_family,
             }
-        requirement = (
-            None
-            if max_loss_per_contract is None
-            else round(max_loss_per_contract * resolved_quantity, 2)
-        )
+        requirement = None if max_loss_per_contract is None else round(max_loss_per_contract * resolved_quantity, 2)
         return {
             "required_buying_power": requirement,
             "basis": "max_loss",

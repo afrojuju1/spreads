@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from core.services.option_structures import candidate_legs, leg_role
+from core.services.value_coercion import coerce_float as _coerce_float
 
 
 def _strategy_option_type(strategy: Any) -> str | None:
@@ -16,15 +17,6 @@ def _strategy_option_type(strategy: Any) -> str | None:
     if match:
         return "call" if match.group(1) == "c" else "put"
     return None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _coerce_int(value: Any) -> int | None:

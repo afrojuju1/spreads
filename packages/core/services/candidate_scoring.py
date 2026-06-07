@@ -12,6 +12,7 @@ from core.services.earnings_signal_features import (
     EARNINGS_SIGNAL_FIELDS,
     build_earnings_signal_bundle,
 )
+from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
 BROAD_ETF_SYMBOLS = {"XLF", "XLE", "XLI", "XLV"}
@@ -67,29 +68,6 @@ SUPPORTED_EARNINGS_HORIZONS = {"next_daily", "near_term", "post_event"}
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _as_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_int(value: Any) -> int | None:
-    parsed = _as_float(value)
-    if parsed is None:
-        return None
-    return int(parsed)
 
 
 def _normalize_score(value: Any, *, default: float = 0.0) -> float:

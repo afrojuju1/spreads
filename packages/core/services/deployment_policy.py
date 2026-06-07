@@ -4,6 +4,8 @@ from collections.abc import Mapping
 import os
 from typing import Any
 
+from core.services.value_coercion import as_text as _as_text
+
 DEPLOYMENT_MODE_SHADOW = "shadow"
 DEPLOYMENT_MODE_PAPER_AUTO = "paper_auto"
 DEPLOYMENT_MODE_LIVE_AUTO = "live_auto"
@@ -12,13 +14,6 @@ DEPLOYMENT_MODES = {
     DEPLOYMENT_MODE_PAPER_AUTO,
     DEPLOYMENT_MODE_LIVE_AUTO,
 }
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
 
 
 def coerce_bool(value: Any) -> bool:
@@ -46,9 +41,7 @@ def resolve_execution_deployment_mode(
     *,
     risk_policy: Mapping[str, Any] | None = None,
 ) -> str:
-    explicit_mode = normalize_deployment_mode(
-        None if execution_policy is None else execution_policy.get("deployment_mode")
-    )
+    explicit_mode = normalize_deployment_mode(None if execution_policy is None else execution_policy.get("deployment_mode"))
     if explicit_mode is not None:
         return explicit_mode
 
@@ -79,11 +72,7 @@ def live_deployment_block_reason(
 ) -> str | None:
     if environment != "live":
         return None
-    live_flag_enabled = (
-        coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING"))
-        if allow_live_env is None
-        else bool(allow_live_env)
-    )
+    live_flag_enabled = coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING")) if allow_live_env is None else bool(allow_live_env)
     if deployment_mode_allows_live_trading(deployment_mode) and live_flag_enabled:
         return None
     return (

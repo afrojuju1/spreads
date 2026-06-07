@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -13,33 +12,17 @@ from zoneinfo import ZoneInfo
 
 from core.services.alert_delivery import plan_alert_delivery
 from core.services.ticker_sources import get_latest_ticker_source_snapshot
+from core.services.value_coercion import as_text as _as_text, utc_now as _utc_now, utc_now_iso as _utc_now_text
 from core.storage.serializers import parse_datetime
-
 
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_TRADINGAGENTS_DIR = "/home/ade/Projects/spreads/external/TradingAgents"
 DEFAULT_ACTIONABLE_SIGNALS = ("Buy", "Overweight", "Sell", "Underweight")
 RESEARCH_SOURCE = "research.tradingagents_scan"
 QUALITY_MESSAGE_VALUE_RE = re.compile(
-    r"\b(?:value|level)\s+(?P<value>-?\$-?\d+(?:,\d{3})*(?:\.\d+)?"
-    r"(?:(?:\s*(?:trillion|billion|million|thousand))|(?:[TBMK]\+?))?)",
+    r"\b(?:value|level)\s+(?P<value>-?\$-?\d+(?:,\d{3})*(?:\.\d+)?" r"(?:(?:\s*(?:trillion|billion|million|thousand))|(?:[TBMK]\+?))?)",
     re.I,
 )
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _utc_now_text() -> str:
-    return _utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
 
 
 def _as_int(value: Any, default: int) -> int:
@@ -88,13 +71,7 @@ def _safe_component(value: Any) -> str:
 def _unique_symbols(values: Any) -> tuple[str, ...]:
     if not isinstance(values, list):
         return ()
-    return tuple(
-        dict.fromkeys(
-            str(value or "").upper().strip()
-            for value in values
-            if str(value or "").strip()
-        )
-    )
+    return tuple(dict.fromkeys(str(value or "").upper().strip() for value in values if str(value or "").strip()))
 
 
 def _session_date(payload: Mapping[str, Any]) -> str:
@@ -221,21 +198,11 @@ def _dedupe_quality_issues(value: Any) -> list[dict[str, Any]]:
 
 
 def _metadata_result_fields(metadata: Mapping[str, Any]) -> dict[str, Any]:
-    quality = (
-        metadata.get("quality") if isinstance(metadata.get("quality"), Mapping) else {}
-    )
+    quality = metadata.get("quality") if isinstance(metadata.get("quality"), Mapping) else {}
     quality_issues = _dedupe_quality_issues(metadata.get("quality_issues"))
     if quality_issues:
-        quality_error_count = sum(
-            1
-            for issue in quality_issues
-            if str(issue.get("severity") or "").strip().lower() == "error"
-        )
-        quality_warning_count = sum(
-            1
-            for issue in quality_issues
-            if str(issue.get("severity") or "").strip().lower() == "warning"
-        )
+        quality_error_count = sum(1 for issue in quality_issues if str(issue.get("severity") or "").strip().lower() == "error")
+        quality_warning_count = sum(1 for issue in quality_issues if str(issue.get("severity") or "").strip().lower() == "warning")
     else:
         quality_error_count = quality.get("errors")
         quality_warning_count = quality.get("warnings")
@@ -285,9 +252,7 @@ def _build_command(
         if value is not None:
             command.extend([flag, value])
     if payload.get("prefetch") is not None:
-        command.append(
-            "--prefetch" if _as_bool(payload.get("prefetch")) else "--no-prefetch"
-        )
+        command.append("--prefetch" if _as_bool(payload.get("prefetch")) else "--no-prefetch")
     if _as_bool(payload.get("require_sec"), False):
         command.append("--require-sec")
     return command
@@ -295,10 +260,7 @@ def _build_command(
 
 def _tradingagents_env(payload: Mapping[str, Any]) -> dict[str, str]:
     env = dict(os.environ)
-    uv_environment = (
-        _as_text(payload.get("uv_project_environment"))
-        or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_UV_ENVIRONMENT"))
-    )
+    uv_environment = _as_text(payload.get("uv_project_environment")) or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_UV_ENVIRONMENT"))
     if uv_environment is not None:
         env["UV_PROJECT_ENVIRONMENT"] = str(Path(uv_environment).expanduser())
     return env
@@ -331,10 +293,13 @@ def _run_tradingagents_ticker(
     )
     heartbeat()
     timed_out = False
-    with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
-        "w",
-        encoding="utf-8",
-    ) as stderr_file:
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout_file,
+        stderr_path.open(
+            "w",
+            encoding="utf-8",
+        ) as stderr_file,
+    ):
         process = subprocess.Popen(
             command,
             cwd=tradingagents_dir,
@@ -369,11 +334,7 @@ def _run_tradingagents_ticker(
         ticker=ticker,
         started_epoch=started_epoch,
     )
-    metadata = (
-        _load_metadata_from_path(metadata_path)
-        if metadata_path is not None
-        else _load_metadata_from_stdout(stdout_path)
-    )
+    metadata = _load_metadata_from_path(metadata_path) if metadata_path is not None else _load_metadata_from_stdout(stdout_path)
     status = "timed_out" if timed_out else "failed"
     if metadata is not None and returncode in {0, 1}:
         status = "completed"
@@ -434,10 +395,7 @@ def _plan_actionable_alert(
         "alert_type": "research_tradingagents_actionable",
         "strategy_mode": "research",
         "profile": str(result.get("run_profile") or "fast"),
-        "description": (
-            f"TradingAgents {signal} on {ticker}; "
-            f"quality {quality_status}; source Finviz {source_id}."
-        ),
+        "description": (f"TradingAgents {signal} on {ticker}; " f"quality {quality_status}; source Finviz {source_id}."),
         "details": {
             "source": "finviz",
             "source_id": source_id,
@@ -445,10 +403,7 @@ def _plan_actionable_alert(
             "tradingagents": dict(result),
         },
     }
-    dedupe_key = (
-        "research_tradingagents_actionable|"
-        f"{session_date}|{source_id}|{ticker}|{signal}"
-    )
+    dedupe_key = "research_tradingagents_actionable|" f"{session_date}|{source_id}|{ticker}|{signal}"
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
         job_store=job_store,
@@ -487,15 +442,9 @@ def _plan_batch_alert(
     ticker_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
     actionable_count = sum(1 for result in ticker_results if result.get("actionable"))
-    completed_count = sum(
-        1 for result in ticker_results if result.get("status") == "completed"
-    )
-    failed_count = sum(
-        1 for result in ticker_results if result.get("status") == "failed"
-    )
-    timed_out_count = sum(
-        1 for result in ticker_results if result.get("status") == "timed_out"
-    )
+    completed_count = sum(1 for result in ticker_results if result.get("status") == "completed")
+    failed_count = sum(1 for result in ticker_results if result.get("status") == "failed")
+    timed_out_count = sum(1 for result in ticker_results if result.get("status") == "timed_out")
     payload = {
         "created_at": _utc_now_text(),
         "session_date": session_date,
@@ -506,8 +455,7 @@ def _plan_batch_alert(
         "strategy_mode": "research",
         "profile": "batch",
         "description": (
-            f"Finviz TradingAgents scan: {actionable_count} actionable, "
-            f"{completed_count} completed, {failed_count + timed_out_count} incomplete."
+            f"Finviz TradingAgents scan: {actionable_count} actionable, " f"{completed_count} completed, {failed_count + timed_out_count} incomplete."
         ),
         "details": {
             "source": "finviz",
@@ -520,18 +468,11 @@ def _plan_batch_alert(
             "failed_count": failed_count,
             "timed_out_count": timed_out_count,
             "actionable_count": actionable_count,
-            "ticker_results": [
-                _result_summary_line(result) for result in ticker_results
-            ],
+            "ticker_results": [_result_summary_line(result) for result in ticker_results],
         },
     }
-    ticker_scope = "_".join(
-        _safe_component(str(ticker).upper()) for ticker in selected_tickers
-    ) or "none"
-    dedupe_key = (
-        "research_tradingagents_batch_summary|"
-        f"{session_date}|{source_id}|{ticker_scope}"
-    )
+    ticker_scope = "_".join(_safe_component(str(ticker).upper()) for ticker in selected_tickers) or "none"
+    dedupe_key = "research_tradingagents_batch_summary|" f"{session_date}|{source_id}|{ticker_scope}"
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
         job_store=job_store,
@@ -577,9 +518,7 @@ def run_tradingagents_scan(
     snapshot_status = str(snapshot.get("status") or "").strip().lower()
     session_date = _session_date(payload)
     label = _as_text(payload.get("label")) or "finviz_tradingagents"
-    session_id = (
-        _as_text(payload.get("session_id")) or f"research:{label}:{session_date}"
-    )
+    session_id = _as_text(payload.get("session_id")) or f"research:{label}:{session_date}"
     if snapshot_status not in {"ready", "empty"}:
         return {
             "status": "skipped",
@@ -602,25 +541,16 @@ def run_tradingagents_scan(
         or "outputs/tradingagents/finviz_momentum",
     )
     output_root.mkdir(parents=True, exist_ok=True)
-    log_root = (
-        output_root
-        / "_spreads_logs"
-        / session_date
-        / _safe_component(job_run_id)
-    )
+    log_root = output_root / "_spreads_logs" / session_date / _safe_component(job_run_id)
 
     ticker_results: list[dict[str, Any]] = []
     alert_results: list[dict[str, Any]] = []
     tradingagents_dir = _resolve_path(
-        _as_text(payload.get("tradingagents_dir"))
-        or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_DIR"))
-        or DEFAULT_TRADINGAGENTS_DIR,
+        _as_text(payload.get("tradingagents_dir")) or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_DIR")) or DEFAULT_TRADINGAGENTS_DIR,
     )
     benchmark_script = tradingagents_dir / "scripts" / "benchmark_run.py"
     if selected_tickers and not benchmark_script.exists():
-        raise RuntimeError(
-            f"TradingAgents benchmark entrypoint not found: {benchmark_script}"
-        )
+        raise RuntimeError(f"TradingAgents benchmark entrypoint not found: {benchmark_script}")
     for ticker in selected_tickers:
         heartbeat()
         result = _run_tradingagents_ticker(
@@ -660,15 +590,9 @@ def run_tradingagents_scan(
         snapshot=snapshot,
         ticker_results=ticker_results,
     )
-    completed_count = sum(
-        1 for result in ticker_results if result.get("status") == "completed"
-    )
-    failed_count = sum(
-        1 for result in ticker_results if result.get("status") == "failed"
-    )
-    timed_out_count = sum(
-        1 for result in ticker_results if result.get("status") == "timed_out"
-    )
+    completed_count = sum(1 for result in ticker_results if result.get("status") == "completed")
+    failed_count = sum(1 for result in ticker_results if result.get("status") == "failed")
+    timed_out_count = sum(1 for result in ticker_results if result.get("status") == "timed_out")
     actionable_count = sum(1 for result in ticker_results if result.get("actionable"))
     return {
         "status": "completed",

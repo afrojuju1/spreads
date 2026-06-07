@@ -1,22 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 import re
 from typing import Any
 
 from core.services.trading_lifecycle import AdmissionState, LifecycleObject
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
+from core.services.value_coercion import as_text as _as_text, utc_now_iso as _utc_now
 
 
 def _safe_component(value: Any) -> str:

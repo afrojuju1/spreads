@@ -4,6 +4,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
+
 NET_CREDIT_FAMILIES = {
     "call_credit_spread",
     "put_credit_spread",
@@ -33,22 +35,6 @@ SIDE_BY_INTENT = {
     "buy_to_close": "buy",
     "sell_to_close": "sell",
 }
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _as_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def normalize_strategy_family(value: Any) -> str:

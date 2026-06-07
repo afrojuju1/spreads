@@ -9,22 +9,7 @@ from core.services.option_structures import (
     payload_display_fields,
     payload_structure_identity,
 )
-
-
-def _as_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
+from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -66,11 +51,7 @@ def _serialize_recovered_candidate(
     run_payload: Mapping[str, Any],
     candidate: Mapping[str, Any],
 ) -> dict[str, Any]:
-    setup = (
-        dict(run_payload.get("setup") or {})
-        if isinstance(run_payload.get("setup"), Mapping)
-        else {}
-    )
+    setup = dict(run_payload.get("setup") or {}) if isinstance(run_payload.get("setup"), Mapping) else {}
     intraday_minutes = int(_as_float(setup.get("source_window_minutes")) or 0)
     expiration_date = str(candidate["expiration_date"])
     days_to_expiration = max(
@@ -110,19 +91,13 @@ def _serialize_recovered_candidate(
         "fill_ratio": _fill_ratio(candidate),
         "data_status": "clean",
         "days_to_expiration": days_to_expiration,
-        "setup_has_intraday_context": bool(
-            setup.get("intraday_score") is not None or intraday_minutes > 0
-        ),
+        "setup_has_intraday_context": bool(setup.get("intraday_score") is not None or intraday_minutes > 0),
         "setup_intraday_score": _as_float(setup.get("intraday_score")),
         "setup_intraday_minutes": intraday_minutes,
         "setup_spot_vs_vwap_pct": _as_float(setup.get("spot_vs_vwap_pct")),
         "setup_intraday_return_pct": _as_float(setup.get("intraday_return_pct")),
-        "setup_distance_to_session_extreme_pct": _as_float(
-            setup.get("distance_to_session_extreme_pct")
-        ),
-        "setup_opening_range_break_pct": _as_float(
-            setup.get("opening_range_break_pct")
-        ),
+        "setup_distance_to_session_extreme_pct": _as_float(setup.get("distance_to_session_extreme_pct")),
+        "setup_opening_range_break_pct": _as_float(setup.get("opening_range_break_pct")),
         "setup_latest_close": _as_float(setup.get("latest_close")),
         "setup_vwap": _as_float(setup.get("vwap")),
         "setup_opening_range_high": _as_float(setup.get("opening_range_high")),

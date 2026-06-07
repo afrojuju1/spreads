@@ -43,21 +43,18 @@ from core.services.trading_engine.kernel import EngineComponentRole, EngineConte
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
 from core.services.trading_strategies import routine_should_run_now
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_runtime
+from core.services.value_coercion import utc_now, utc_now_iso as _utc_now
 
 ENTRY_INTENT_TTL_MINUTES = 5
 ENTRY_MONITOR_LIMIT = 12
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
 def _expires_in(minutes: int) -> str:
-    return (datetime.now(UTC) + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (utc_now() + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _market_date_today() -> str:
-    return datetime.now(UTC).date().isoformat()
+    return utc_now().date().isoformat()
 
 
 def _trade_decision_id(run_key: str, trade_signal_id: str) -> str:

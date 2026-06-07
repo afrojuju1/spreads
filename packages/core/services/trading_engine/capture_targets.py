@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from core.services.option_structures import normalize_legs, position_legs
 from core.services.positions import enrich_position_row
-from core.services.value_coercion import as_text
+from core.services.value_coercion import as_text, utc_now
 
 CAPTURE_OWNER_POSITION = "position"
 CAPTURE_OWNER_WORKING_INTENT = "working_intent"
@@ -40,10 +40,6 @@ SELECTED_CANDIDATE_TTL_SECONDS = 5 * 60
 WATCH_CANDIDATE_TTL_SECONDS = 2 * 60
 DEFAULT_SELECTED_LIMIT = 50
 DEFAULT_WATCH_LIMIT = 100
-
-
-def utc_now_iso() -> datetime:
-    return datetime.now(UTC)
 
 
 def _expires_at(now: datetime, ttl_seconds: int) -> str:
@@ -256,7 +252,7 @@ def refresh_engine_capture_targets(
     if not capture_store.target_schema_ready():
         return {"status": "skipped", "reason": "capture_schema_unavailable"}
 
-    resolved_now = now or utc_now_iso()
+    resolved_now = now or utc_now()
     execution_store = storage.execution
     engine_facts = storage.engine_facts
 

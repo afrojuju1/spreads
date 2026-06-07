@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from core.services.earnings_signal_evidence import build_earnings_signal_evidence
+from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
 
 EARNINGS_SIGNAL_FIELDS = (
     "direction_signal",
@@ -62,29 +63,6 @@ SETUP_FIELD_ALIASES = {
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _as_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_int(value: Any) -> int | None:
-    parsed = _as_float(value)
-    if parsed is None:
-        return None
-    return int(parsed)
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -273,12 +251,7 @@ def _opening_range_alignment_score(
     opening_range_high = _setup_metric(candidate, "opening_range_high")
     opening_range_low = _setup_metric(candidate, "opening_range_low")
     direction = _family_direction(family)
-    if (
-        breakout_pct is None
-        and latest_close is None
-        and opening_range_high is None
-        and opening_range_low is None
-    ):
+    if breakout_pct is None and latest_close is None and opening_range_high is None and opening_range_low is None:
         return None
     if direction == "neutral":
         if breakout_pct is not None and abs(breakout_pct) <= 0.001:
@@ -294,18 +267,10 @@ def _opening_range_alignment_score(
     if breakout_pct is not None and breakout_pct > 0.001:
         return 1.0
     if direction == "bullish":
-        if (
-            latest_close is not None
-            and opening_range_low is not None
-            and latest_close < opening_range_low
-        ):
+        if latest_close is not None and opening_range_low is not None and latest_close < opening_range_low:
             return 0.0
     elif direction == "bearish":
-        if (
-            latest_close is not None
-            and opening_range_high is not None
-            and latest_close > opening_range_high
-        ):
+        if latest_close is not None and opening_range_high is not None and latest_close > opening_range_high:
             return 0.0
     return 0.55
 
@@ -365,9 +330,7 @@ def _candidate_quote_quality(evidence: Mapping[str, Any] | None) -> Mapping[str,
 
 
 def _evidence_quote_quality_score(evidence: Mapping[str, Any] | None) -> float | None:
-    candidate_quality = _normalize_unit_score(
-        _candidate_quote_quality(evidence).get("quality_score")
-    )
+    candidate_quality = _normalize_unit_score(_candidate_quote_quality(evidence).get("quality_score"))
     if candidate_quality is not None:
         return candidate_quality
     return None
@@ -382,13 +345,7 @@ def _resolve_options_bias_alignment(
     explicit = _as_bool(candidate.get("options_bias_alignment"))
     if explicit is not None:
         return explicit, "explicit"
-    evidence_components = [
-        value
-        for value in (
-            _evidence_quote_quality_score(evidence),
-        )
-        if value is not None
-    ]
+    evidence_components = [value for value in (_evidence_quote_quality_score(evidence),) if value is not None]
     if evidence_components:
         score = _mean_score(evidence_components)
         if score is not None:
@@ -510,9 +467,7 @@ def _derived_direction_signal(
     evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
-    for item in (
-        _evidence_quote_quality_score(evidence),
-    ):
+    for item in (_evidence_quote_quality_score(evidence),):
         if item is not None:
             components.append(item)
     for item in (
@@ -540,9 +495,7 @@ def _derived_jump_risk_signal(
     evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
-    for item in (
-        _evidence_quote_quality_score(evidence),
-    ):
+    for item in (_evidence_quote_quality_score(evidence),):
         if item is not None:
             components.append(item)
     expected_move_pct = _as_float(candidate.get("expected_move_pct"))
@@ -583,9 +536,7 @@ def _derived_pricing_signal(
         components.append(_clamp((modeled_move_vs_implied_move - 0.9) / 0.3, 0.0, 1.0))
     modeled_move_vs_break_even_move = _resolve_modeled_move_vs_break_even_move(candidate)
     if modeled_move_vs_break_even_move is not None:
-        components.append(
-            _clamp((modeled_move_vs_break_even_move - 0.9) / 0.25, 0.0, 1.0)
-        )
+        components.append(_clamp((modeled_move_vs_break_even_move - 0.9) / 0.25, 0.0, 1.0))
     score = _mean_score(components)
     if score is None:
         return None, None
@@ -601,9 +552,7 @@ def _derived_post_event_confirmation_signal(
     evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
-    for item in (
-        _evidence_quote_quality_score(evidence),
-    ):
+    for item in (_evidence_quote_quality_score(evidence),):
         if item is not None:
             components.append(item)
     for item in (
@@ -673,21 +622,13 @@ def build_earnings_signal_bundle(
         family=resolved_family,
         evidence=signal_evidence,
     )
-    neutral_regime_signal, neutral_regime_components, neutral_regime_source = (
-        _resolve_neutral_regime_signal(candidate, evidence=signal_evidence)
-    )
-    residual_iv_richness, residual_iv_components, residual_iv_source = (
-        _resolve_residual_iv_richness(candidate, evidence=signal_evidence)
-    )
+    neutral_regime_signal, neutral_regime_components, neutral_regime_source = _resolve_neutral_regime_signal(candidate, evidence=signal_evidence)
+    residual_iv_richness, residual_iv_components, residual_iv_source = _resolve_residual_iv_richness(candidate, evidence=signal_evidence)
 
     signals: dict[str, dict[str, Any]] = {}
     for field in EARNINGS_SIGNAL_FIELDS:
-        explicit_score = _normalize_unit_score(
-            _first_present_value(candidate, SIGNAL_SCORE_ALIASES[field])
-        )
-        explicit_subsignal_count = _as_int(
-            _first_present_value(candidate, SIGNAL_SUBSIGNAL_COUNT_ALIASES[field])
-        )
+        explicit_score = _normalize_unit_score(_first_present_value(candidate, SIGNAL_SCORE_ALIASES[field]))
+        explicit_subsignal_count = _as_int(_first_present_value(candidate, SIGNAL_SUBSIGNAL_COUNT_ALIASES[field]))
         derived_score, derived_subsignal_count = _derived_signal(
             field,
             candidate,
@@ -698,18 +639,13 @@ def build_earnings_signal_bundle(
         )
         signals[field] = {
             "score": explicit_score if explicit_score is not None else derived_score,
-            "subsignal_count": (
-                explicit_subsignal_count
-                if explicit_subsignal_count is not None
-                else derived_subsignal_count
-            ),
+            "subsignal_count": (explicit_subsignal_count if explicit_subsignal_count is not None else derived_subsignal_count),
             "source": (
                 "explicit"
                 if explicit_score is not None
                 else (
                     "evidence"
-                    if derived_score is not None
-                    and _evidence_quote_quality_score(signal_evidence) is not None
+                    if derived_score is not None and _evidence_quote_quality_score(signal_evidence) is not None
                     else ("fallback" if derived_score is not None else "missing")
                 )
             ),
@@ -722,9 +658,7 @@ def build_earnings_signal_bundle(
         "options_bias_alignment_source": options_bias_source,
         "debit_width_ratio": _as_float(candidate.get("debit_width_ratio")),
         "modeled_move_vs_implied_move": _resolve_modeled_move_vs_implied_move(candidate),
-        "modeled_move_vs_break_even_move": _resolve_modeled_move_vs_break_even_move(
-            candidate
-        ),
+        "modeled_move_vs_break_even_move": _resolve_modeled_move_vs_break_even_move(candidate),
         "neutral_regime_signal": neutral_regime_signal,
         "neutral_regime_signal_components": neutral_regime_components,
         "neutral_regime_signal_source": neutral_regime_source,

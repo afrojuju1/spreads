@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 from core.alerts.discord import build_discord_payload, send_discord_webhook
@@ -20,6 +20,7 @@ from core.storage.alert_repository import (
     AlertRepository,
 )
 from core.storage.job_repository import JobRepository
+from core.services.value_coercion import as_text as _as_text, utc_now as _utc_now
 
 DISCORD_DELIVERY_TARGET = "discord_webhook"
 ALERT_DELIVERY_MAX_ATTEMPTS = 5
@@ -27,21 +28,6 @@ ALERT_DELIVERY_RETRY_BASE_SECONDS = 60
 ALERT_DELIVERY_STALE_SECONDS = 5 * 60
 
 logger = logging.getLogger(__name__)
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _utc_now_text() -> str:
-    return _utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def resolve_deploy_env() -> str:

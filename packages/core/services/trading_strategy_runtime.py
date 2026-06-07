@@ -18,6 +18,7 @@ from core.services.trading_strategy_models import (
     StrategyLiquidityRules,
     StrategyRiskDefaults,
 )
+from core.services.value_coercion import as_text as _as_text
 
 
 def _optional_int(value: Any) -> int | None:
@@ -36,13 +37,6 @@ def _float_tuple(values: Any) -> tuple[float, ...]:
     if not isinstance(values, list):
         return ()
     return tuple(float(value) for value in values if value not in (None, ""))
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
 
 
 RANKING_POLICY_ARG_KEYS = (

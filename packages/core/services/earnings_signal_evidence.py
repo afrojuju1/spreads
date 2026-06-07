@@ -4,20 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.services.option_structures import candidate_legs, leg_role
-
-
-def _as_text(value: Any) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
-
-
-def _as_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -69,16 +56,12 @@ def _candidate_quote_quality(candidate: Mapping[str, Any]) -> dict[str, Any]:
         bid = _as_float(_leg_value(normalized, role_name=role_name, key="bid"))
         ask = _as_float(_leg_value(normalized, role_name=role_name, key="ask"))
         midpoint = _as_float(_leg_value(normalized, role_name=role_name, key="midpoint"))
-        relative_spread = _as_float(
-            _leg_value(normalized, role_name=role_name, key="relative_spread")
-        )
+        relative_spread = _as_float(_leg_value(normalized, role_name=role_name, key="relative_spread"))
         if relative_spread is None and bid is not None and ask is not None and midpoint not in (None, 0.0):
             relative_spread = max(ask - bid, 0.0) / midpoint
         bid_size = _as_float(_leg_value(normalized, role_name=role_name, key="bid_size"))
         ask_size = _as_float(_leg_value(normalized, role_name=role_name, key="ask_size"))
-        open_interest = _as_float(
-            _leg_value(normalized, role_name=role_name, key="open_interest")
-        )
+        open_interest = _as_float(_leg_value(normalized, role_name=role_name, key="open_interest"))
         volume = _as_float(_leg_value(normalized, role_name=role_name, key="volume"))
         if midpoint not in (None, 0.0):
             quoted_leg_count += 1
@@ -87,30 +70,18 @@ def _candidate_quote_quality(candidate: Mapping[str, Any]) -> dict[str, Any]:
             quality_components.append(_clamp((0.18 - relative_spread) / 0.18, 0.0, 1.0))
         if bid_size is not None and ask_size is not None:
             leg_min_size = min(bid_size, ask_size)
-            min_quote_size = (
-                leg_min_size
-                if min_quote_size is None
-                else min(min_quote_size, leg_min_size)
-            )
+            min_quote_size = leg_min_size if min_quote_size is None else min(min_quote_size, leg_min_size)
             quality_components.append(_clamp(leg_min_size / 10.0, 0.0, 1.0))
             if leg_min_size >= 1.0:
                 liquid_leg_count += 1
         if open_interest is not None:
-            min_open_interest = (
-                open_interest
-                if min_open_interest is None
-                else min(min_open_interest, open_interest)
-            )
+            min_open_interest = open_interest if min_open_interest is None else min(min_open_interest, open_interest)
             quality_components.append(_clamp(open_interest / 500.0, 0.0, 1.0))
         if volume is not None:
             min_volume = volume if min_volume is None else min(min_volume, volume)
             quality_components.append(_clamp(volume / 100.0, 0.0, 1.0))
 
-    quality_score = (
-        round(sum(quality_components) / float(len(quality_components)), 4)
-        if quality_components
-        else None
-    )
+    quality_score = round(sum(quality_components) / float(len(quality_components)), 4) if quality_components else None
     average_relative_spread = (
         round(
             sum(average_relative_spread_values) / float(len(average_relative_spread_values)),

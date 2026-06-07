@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 import hashlib
 import json
 from typing import Any
@@ -11,10 +10,7 @@ from core.services.option_structures import candidate_legs, payload_structure_id
 from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_strategy_runtime import EntryRuntime
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+from core.services.value_coercion import utc_now_iso as _utc_now
 
 
 def _stable_id(prefix: str, *parts: Any) -> str:
