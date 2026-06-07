@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
 from typing import Any
 
+from core.integrations.http_client import VendorHttpClient, VendorHttpError
 from core.services.option_structures import (
     candidate_legs,
     net_premium_kind,
@@ -16,6 +14,7 @@ SUCCESS_GREEN = 0x2ECC71
 BEARISH_RED = 0xE74C3C
 NEUTRAL_YELLOW = 0xF1C40F
 INFO_BLUE = 0x3498DB
+DISCORD_HTTP = VendorHttpClient(timeout_seconds=10, user_agent="spreads-alerts/1.0")
 _RUNTIME_READY_ALERTS = frozenset({"runtime_entry_selected"})
 _NON_SIGNAL_STATUS_VALUES = frozenset({"", "clean", "none", "n/a", "unknown"})
 _ALERT_STATUS_TITLES = {
@@ -919,24 +918,19 @@ def build_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
 
 
 def send_discord_webhook(webhook_url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        webhook_url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "spreads-alerts/1.0",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            response_body = response.read().decode("utf-8", errors="replace")
-            return {
-                "status_code": response.status,
-                "body": response_body[:1000],
-            }
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Discord webhook error {exc.code}: {error_body[:500]}") from exc
+        response = DISCORD_HTTP.request(
+            "POST",
+            webhook_url,
+            "",
+            body=payload,
+            headers={
+                "Accept": "application/json",
+            },
+        )
+        return {
+            "status_code": response.status_code,
+            "body": response.text[:1000],
+        }
+    except VendorHttpError as exc:
+        raise RuntimeError(f"Discord webhook error {exc.status_code or 'transport'}: {(exc.response_body or str(exc))[:500]}") from exc

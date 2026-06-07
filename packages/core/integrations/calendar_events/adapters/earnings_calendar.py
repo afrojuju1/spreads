@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import json
-import urllib.parse
-import urllib.request
 from dataclasses import replace
 from datetime import UTC, date, datetime, time
 from datetime import timedelta
 from zoneinfo import ZoneInfo
+
+from core.integrations.http_client import VendorHttpClient
 
 from .base import BaseCalendarEventAdapter
 from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
+DOLT_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
 
 
 def _utc_now_iso() -> str:
@@ -71,10 +72,7 @@ class EarningsCalendarAdapter(BaseCalendarEventAdapter):
             f"and date <= '{end_date}' "
             "order by date asc"
         )
-        url = self.base_url + "?" + urllib.parse.urlencode({"q": sql})
-        request = urllib.request.Request(url, headers={"User-Agent": "calendar-events/1.0"})
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.load(response)
+        payload = DOLT_EARNINGS_HTTP.request_json("GET", self.base_url, "", params={"q": sql})
 
         rows = payload.get("rows", [])
         fetched_at = _utc_now_iso()

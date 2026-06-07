@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import urllib.parse
-import urllib.request
 from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
+
+from core.integrations.http_client import VendorHttpClient
 
 from .base import BaseCalendarEventAdapter
 from ..config import ALPACA_CORPORATE_ACTION_TYPES
@@ -31,12 +31,7 @@ def _scheduled_at_for_action(event_type: str, payload: dict[str, object]) -> str
     if event_type in {"cash_dividend", "stock_dividend"}:
         date_value = payload.get("ex_date") or payload.get("record_date") or payload.get("process_date")
     else:
-        date_value = (
-            payload.get("ex_date")
-            or payload.get("process_date")
-            or payload.get("record_date")
-            or payload.get("payable_date")
-        )
+        date_value = payload.get("ex_date") or payload.get("process_date") or payload.get("record_date") or payload.get("payable_date")
     if not isinstance(date_value, str):
         return None
     local_dt = datetime.combine(date.fromisoformat(date_value), local_time, tzinfo=NEW_YORK)
@@ -55,6 +50,7 @@ class AlpacaCorporateActionsAdapter(BaseCalendarEventAdapter):
             "Accept": "application/json",
             "User-Agent": "calendar-events/1.0",
         }
+        self.http = VendorHttpClient(default_headers=self.headers, timeout_seconds=20, user_agent="calendar-events/1.0")
 
     def applies_to(self, query: CalendarEventQuery) -> bool:
         return True
@@ -76,10 +72,7 @@ class AlpacaCorporateActionsAdapter(BaseCalendarEventAdapter):
             }
             if page_token:
                 params["page_token"] = page_token
-            url = f"{self.base_url}/v1/corporate-actions?{urllib.parse.urlencode(params)}"
-            request = urllib.request.Request(url, headers=self.headers)
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = json.load(response)
+            payload = self.http.request_json("GET", self.base_url, "/v1/corporate-actions", params=params)
 
             grouped = payload.get("corporate_actions", {})
             if isinstance(grouped, dict):

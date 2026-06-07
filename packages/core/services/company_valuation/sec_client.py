@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import re
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from core.integrations.http_client import VendorHttpClient, VendorHttpError
 from core.runtime.config import (
     default_sec_request_interval_seconds,
     default_sec_user_agent,
@@ -61,6 +60,11 @@ class SecEdgarClient:
         self.headers = {
             "User-Agent": self.user_agent,
         }
+        self.http = VendorHttpClient(
+            default_headers=self.headers,
+            timeout_seconds=self.request_timeout_seconds,
+            user_agent=self.user_agent,
+        )
 
     def _throttle(self) -> None:
         now = time.monotonic()
@@ -75,25 +79,14 @@ class SecEdgarClient:
         headers: dict[str, str] | None = None,
     ) -> bytes:
         self._throttle()
-        request_headers = dict(self.headers)
-        if headers:
-            request_headers.update(headers)
-        request = urllib.request.Request(url, headers=request_headers)
         try:
-            with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", errors="replace")
+            return self.http.request_bytes("GET", url, "", headers=headers)
+        except VendorHttpError as exc:
             raise SecRequestError(
-                f"SEC request failed: {exc.code} {exc.reason} for {url}\n{response_body}",
-                status_code=exc.code,
+                f"SEC request failed: {exc.status_code or 'transport'} {exc.reason or ''} for {url}\n{exc.response_body or ''}".rstrip(),
+                status_code=exc.status_code,
                 url=url,
-                response_body=response_body,
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise SecRequestError(
-                f"Failed to reach SEC for {url}: {exc.reason}",
-                url=url,
+                response_body=exc.response_body,
             ) from exc
 
     def get_bytes_url(

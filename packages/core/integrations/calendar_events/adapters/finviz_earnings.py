@@ -2,30 +2,28 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.parse
-import urllib.request
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from html import unescape
-from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
+
+from core.integrations.http_client import VendorHttpClient, VendorHttpError
 
 from .base import BaseCalendarEventAdapter
 from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
+FINVIZ_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
 _ROUTE_INIT_DATA_PATTERN = re.compile(
     r'<script id="route-init-data" type="application/json">(.*?)</script>',
     re.S,
 )
 _PROFILE_LINK_PATTERN = re.compile(
-    r'<a href="screener\.ashx\?v=111&f=(sec_[^"]+|ind_[^"]+|geo_[^"]+|cap_[^"]+|exch_[^"]+)"'
-    r'[^>]*?(?:title="([^"]+)")?[^>]*>([^<]+)</a>'
+    r'<a href="screener\.ashx\?v=111&f=(sec_[^"]+|ind_[^"]+|geo_[^"]+|cap_[^"]+|exch_[^"]+)"' r'[^>]*?(?:title="([^"]+)")?[^>]*>([^<]+)</a>'
 )
 _MARKET_CAP_PATTERN = re.compile(
-    r'<div class="snapshot-td-label">Market Cap</div></td>'
-    r'<td[^>]*><div class="snapshot-td-content"><b>([^<]+)</b></div>',
+    r'<div class="snapshot-td-label">Market Cap</div></td>' r'<td[^>]*><div class="snapshot-td-content"><b>([^<]+)</b></div>',
     re.S,
 )
 
@@ -71,11 +69,7 @@ def _coerce_text(value: object) -> str | None:
 
 
 def _compact_dict(payload: dict[str, object]) -> dict[str, object]:
-    return {
-        key: value
-        for key, value in payload.items()
-        if value not in (None, "", (), [], {})
-    }
+    return {key: value for key, value in payload.items() if value not in (None, "", (), [], {})}
 
 
 def _price_reactions_by_report_date(
@@ -119,14 +113,8 @@ def _company_profile(html: str) -> dict[str, object]:
 
 def _browser_headers() -> dict[str, str]:
     return {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
-        ),
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,*/*;q=0.8"
-        ),
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"),
+        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9," "image/avif,image/webp,*/*;q=0.8"),
         "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
@@ -153,11 +141,7 @@ def _build_record_payload(
     session_timing: str,
 ) -> dict[str, object]:
     reactions = reaction_row.get("reactions") if isinstance(reaction_row, dict) else None
-    one_day_reaction = (
-        reactions.get("plus_1_day")
-        if isinstance(reactions, dict)
-        else None
-    )
+    one_day_reaction = reactions.get("plus_1_day") if isinstance(reactions, dict) else None
     return _compact_dict(
         {
             "ticker": _coerce_text(row.get("ticker")),
@@ -177,16 +161,8 @@ def _build_record_payload(
             "sourcePageEarningsDate": source_page_earnings_date,
             "companyProfile": profile,
             "priceReaction": _compact_dict(dict(reaction_row or {})),
-            "oneDayPriceReaction": (
-                None
-                if not isinstance(one_day_reaction, dict)
-                else one_day_reaction.get("priceDiff")
-            ),
-            "oneDayPriceReactionVsSpy": (
-                None
-                if not isinstance(one_day_reaction, dict)
-                else one_day_reaction.get("spyPriceDiff")
-            ),
+            "oneDayPriceReaction": (None if not isinstance(one_day_reaction, dict) else one_day_reaction.get("priceDiff")),
+            "oneDayPriceReactionVsSpy": (None if not isinstance(one_day_reaction, dict) else one_day_reaction.get("spyPriceDiff")),
         }
     )
 
@@ -217,13 +193,10 @@ class FinvizEarningsAdapter(BaseCalendarEventAdapter):
 
     def fetch(self, query: CalendarEventQuery) -> list[CalendarEventRecord]:
         params = {"t": query.symbol.upper(), "ty": "ea"}
-        url = self.base_url + "?" + urllib.parse.urlencode(params)
-        request = urllib.request.Request(url, headers=_browser_headers())
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                html = response.read().decode("utf-8", "replace")
-        except HTTPError as exc:
-            if exc.code in {403, 404, 429}:
+            html = FINVIZ_EARNINGS_HTTP.request_text("GET", self.base_url, "", params=params, headers=_browser_headers())
+        except VendorHttpError as exc:
+            if exc.status_code in {403, 404, 429}:
                 return []
             raise
 
@@ -259,8 +232,7 @@ class FinvizEarningsAdapter(BaseCalendarEventAdapter):
             records.append(
                 CalendarEventRecord(
                     event_id=(
-                        f"{self.source_name}:{query.symbol.upper()}:"
-                        f"{row_earnings_date}:{_coerce_text(row.get('fiscalPeriod')) or 'unknown'}"
+                        f"{self.source_name}:{query.symbol.upper()}:" f"{row_earnings_date}:{_coerce_text(row.get('fiscalPeriod')) or 'unknown'}"
                     ),
                     event_type="earnings",
                     symbol=query.symbol.upper(),

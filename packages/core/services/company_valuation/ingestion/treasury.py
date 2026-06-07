@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import csv
 import io
-import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time
 
+from core.integrations.http_client import VendorHttpClient
 from core.services.company_valuation.ids import build_treasury_curve_snapshot_id
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
-TREASURY_DAILY_RATES_BASE_URL = (
-    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates"
-)
+TREASURY_DAILY_RATES_BASE_URL = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates"
+TREASURY_HTTP = VendorHttpClient(timeout_seconds=30, user_agent="Spreads Company Valuation Engine/1.0")
 CURVE_COLUMN_MAP = {
     "1 Mo": "1m",
     "1.5 Mo": "1_5m",
@@ -85,9 +84,7 @@ def ingest_treasury_curve(
         "Accept": "text/csv",
         "User-Agent": "Spreads Company Valuation Engine/1.0",
     }
-    request_obj = urllib.request.Request(source_url, headers=request_headers)
-    with urllib.request.urlopen(request_obj, timeout=30) as response:
-        csv_text = response.read().decode("utf-8", errors="replace")
+    csv_text = TREASURY_HTTP.request_text("GET", source_url, "", headers=request_headers)
     reader = csv.DictReader(io.StringIO(csv_text))
     selected_date: date | None = None
     selected_curve_points: dict[str, float] | None = None
@@ -95,9 +92,7 @@ def ingest_treasury_curve(
         if not row.get("Date"):
             continue
         row_date, curve_points = _parse_curve_row(row)
-        if row_date <= target_date and (
-            selected_date is None or row_date > selected_date
-        ):
+        if row_date <= target_date and (selected_date is None or row_date > selected_date):
             selected_date = row_date
             selected_curve_points = curve_points
     completed_at = datetime.now(UTC)

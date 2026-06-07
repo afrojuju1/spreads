@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from core.integrations.http_client import VendorHttpClient, VendorHttpError
 from core.services.market_intel.artifact_store import MarketIntelArtifactStore
 from core.services.market_intel.config import MarketIntelModelConfig
 from core.services.market_intel.contracts import (
@@ -31,6 +29,10 @@ class OllamaModelClient:
     def __init__(self, config: MarketIntelModelConfig) -> None:
         self.config = config
         self.base_url = config.ollama_base_url.rstrip("/")
+        self.http = VendorHttpClient(
+            timeout_seconds=self.config.ollama_request_timeout_seconds,
+            user_agent="spreads-market-intel/1.0",
+        )
 
     def invoke(
         self,
@@ -50,32 +52,20 @@ class OllamaModelClient:
             "keep_alive": (options or {}).get("keep_alive", "0s"),
             "think": (options or {}).get("think", False),
         }
-        ollama_options = {
-            key: value
-            for key, value in (options or {}).items()
-            if key not in {"keep_alive", "think"} and value is not None
-        }
+        ollama_options = {key: value for key, value in (options or {}).items() if key not in {"keep_alive", "think"} and value is not None}
         if ollama_options:
             payload["options"] = ollama_options
         if schema is not None:
             payload["format"] = schema
 
-        request = urllib.request.Request(
-            f"{self.base_url}/api/chat",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.config.ollama_request_timeout_seconds,
-            ) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
+            raw = self.http.request_json("POST", self.base_url, "/api/chat", body=payload)
+        except VendorHttpError as exc:
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
         elapsed = time.monotonic() - started
+        if not isinstance(raw, dict):
+            raise RuntimeError("Ollama response was not a JSON object")
         message = dict(raw.get("message") or {})
         return ModelResponse(
             content=str(message.get("content") or ""),
@@ -209,8 +199,7 @@ class MarketIntelModelRouter:
                 completed_at=utc_now(),
                 elapsed_seconds=round(response.elapsed_seconds, 6),
                 status="completed",
-                token_estimate=sum(len(row.get("content", "")) for row in messages)
-                // 4,
+                token_estimate=sum(len(row.get("content", "")) for row in messages) // 4,
             )
         )
         return response

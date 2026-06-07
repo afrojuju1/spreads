@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from core.integrations.http_client import VendorHttpClient
 from core.services.alpaca import create_alpaca_client_from_env
 
 NEW_YORK = ZoneInfo("America/New_York")
 MARKET_DATA_OPENAPI_URL = "https://docs.alpaca.markets/openapi/market-data-api.json"
 TRADING_OPENAPI_URL = "https://docs.alpaca.markets/openapi/trading-api.json"
+ALPACA_RESEARCH_HTTP = VendorHttpClient(timeout_seconds=30, user_agent="alpaca-research/1.0")
 
 
 @dataclass
@@ -79,9 +80,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _fetch_json(url: str) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "alpaca-research/1.0"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.load(response)
+    payload = ALPACA_RESEARCH_HTTP.request_json("GET", url, "")
     if not isinstance(payload, dict):
         raise RuntimeError(f"Unexpected JSON shape from {url}")
     return payload

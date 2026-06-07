@@ -3,17 +3,18 @@ from __future__ import annotations
 import csv
 import io
 import json
-import urllib.parse
-import urllib.request
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
+
+from core.integrations.http_client import VendorHttpClient
 
 from .base import BaseCalendarEventAdapter
 from ..config import EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
+ALPHA_VANTAGE_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
 
 
 def _utc_now_iso() -> str:
@@ -92,13 +93,7 @@ class AlphaVantageEarningsCalendarAdapter(BaseCalendarEventAdapter):
             "horizon": _horizon_label(start_dt, end_dt),
             "apikey": self.api_key,
         }
-        url = self.base_url + "?" + urllib.parse.urlencode(params)
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "calendar-events/1.0"},
-        )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = response.read().decode("utf-8")
+        payload = ALPHA_VANTAGE_EARNINGS_HTTP.request_text("GET", self.base_url, "", params=params, headers={"Accept": "text/csv,*/*"})
 
         rows = list(csv.DictReader(io.StringIO(payload)))
         fetched_at = _utc_now_iso()

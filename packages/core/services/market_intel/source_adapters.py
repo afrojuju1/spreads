@@ -3,13 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
 from core.common import parse_float, pick
+from core.integrations.http_client import VendorHttpClient
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.market_intel.artifact_store import MarketIntelArtifactStore
 from core.services.market_intel.contracts import (
@@ -22,10 +22,10 @@ from core.services.market_intel.contracts import (
 )
 from core.services.market_intel.ids import build_artifact_id
 
-
 SEC_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik}.json"
 DEFAULT_SEC_USER_AGENT = "spreads-market-intel/0.1 contact=ops@example.invalid"
+SEC_HTTP = VendorHttpClient(timeout_seconds=30, user_agent=DEFAULT_SEC_USER_AGENT)
 
 
 @dataclass(frozen=True)
@@ -318,18 +318,15 @@ def _collect_market_source(
 
 
 def _fetch_sec_json(url: str) -> Any:
-    request = urllib.request.Request(
+    return SEC_HTTP.request_json(
+        "GET",
         url,
+        "",
         headers={
             "Accept": "application/json",
-            "User-Agent": os.environ.get("MARKET_INTEL_SEC_USER_AGENT")
-            or os.environ.get("SEC_USER_AGENT")
-            or DEFAULT_SEC_USER_AGENT,
+            "User-Agent": os.environ.get("MARKET_INTEL_SEC_USER_AGENT") or os.environ.get("SEC_USER_AGENT") or DEFAULT_SEC_USER_AGENT,
         },
-        method="GET",
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def _find_sec_ticker_record(payload: Any, ticker: str) -> dict[str, Any] | None:

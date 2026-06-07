@@ -37,6 +37,19 @@ class _RetryableVendorHttpError(VendorHttpError):
 
 
 @dataclass(frozen=True)
+class VendorHttpResponse:
+    method: str
+    url: str
+    status_code: int
+    headers: Mapping[str, str]
+    content: bytes
+
+    @property
+    def text(self) -> str:
+        return self.content.decode("utf-8", errors="replace")
+
+
+@dataclass(frozen=True)
 class VendorHttpClient:
     default_headers: Mapping[str, str] | None = None
     timeout_seconds: float = 30.0
@@ -55,6 +68,61 @@ class VendorHttpClient:
         body: Any | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Any:
+        response = self.request(method, base_url, path, params=params, body=body, headers=headers)
+        if not response.content:
+            return None
+        try:
+            return json.loads(response.text)
+        except json.JSONDecodeError as exc:
+            raise VendorHttpError(
+                f"Vendor HTTP response was not valid JSON for {response.method} {response.url}: {exc}",
+                method=response.method,
+                url=response.url,
+                status_code=response.status_code,
+                response_body=response.text,
+                reason=str(exc),
+            ) from exc
+
+    def request_text(
+        self,
+        method: str,
+        base_url: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Any | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
+        request_headers = {"Accept": "text/plain, text/html, text/csv, application/xml;q=0.9, */*;q=0.8"}
+        if headers:
+            request_headers.update(headers)
+        return self.request(method, base_url, path, params=params, body=body, headers=request_headers).text
+
+    def request_bytes(
+        self,
+        method: str,
+        base_url: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Any | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> bytes:
+        request_headers = {"Accept": "*/*"}
+        if headers:
+            request_headers.update(headers)
+        return self.request(method, base_url, path, params=params, body=body, headers=request_headers).content
+
+    def request(
+        self,
+        method: str,
+        base_url: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Any | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> VendorHttpResponse:
         method_upper = str(method or "GET").upper()
         url = self._url(base_url, path)
         request_headers = self._headers(headers)
@@ -69,7 +137,7 @@ class VendorHttpClient:
         )
         for attempt in retrying:
             with attempt:
-                return self._request_json_once(
+                return self._request_once(
                     method_upper,
                     url,
                     params=request_params,
@@ -82,7 +150,7 @@ class VendorHttpClient:
             url=url,
         )
 
-    def _request_json_once(
+    def _request_once(
         self,
         method: str,
         url: str,
@@ -90,7 +158,7 @@ class VendorHttpClient:
         params: Mapping[str, Any] | None,
         body: Any | None,
         headers: Mapping[str, str],
-    ) -> Any:
+    ) -> VendorHttpResponse:
         request_kwargs: dict[str, Any] = {
             "headers": headers,
             "params": params,
@@ -106,18 +174,13 @@ class VendorHttpClient:
                 **request_kwargs,
             )
             response.raise_for_status()
-            if not response.content:
-                return None
-            try:
-                return response.json()
-            except json.JSONDecodeError as exc:
-                raise VendorHttpError(
-                    f"Vendor HTTP response was not valid JSON for {method} {response.request.url}: {exc}",
-                    method=method,
-                    url=str(response.request.url),
-                    response_body=response.text,
-                    reason=str(exc),
-                ) from exc
+            return VendorHttpResponse(
+                method=method,
+                url=str(response.request.url),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                content=response.content,
+            )
         except httpx.HTTPStatusError as exc:
             response_body = exc.response.text
             error_cls = _RetryableVendorHttpError if self._is_retryable_status(method, exc.response.status_code) else VendorHttpError
@@ -179,4 +242,5 @@ __all__ = [
     "SAFE_RETRY_METHODS",
     "VendorHttpClient",
     "VendorHttpError",
+    "VendorHttpResponse",
 ]
