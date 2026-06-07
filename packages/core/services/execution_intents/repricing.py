@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.execution import refresh_execution_attempt
+from core.services.execution.sync import refresh_execution_attempt
 
 from .maintenance import _position_is_active_for_intent
 from .shared import (

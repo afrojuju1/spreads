@@ -34,7 +34,7 @@ from core.services.company_valuation.unresolved import (
     ResolveUnresolvedInstitutionalPositionsRequest,
     resolve_unresolved_institutional_positions,
 )
-from core.services.execution import run_execution_submit
+from core.services.execution.submit import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.exit_manager import run_position_exit_manager
 from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source

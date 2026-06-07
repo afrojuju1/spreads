@@ -60,20 +60,14 @@ def _attach_attempt_details(
     fills_by_attempt: dict[str, list[dict[str, Any]]] = {}
 
     for order in orders:
-        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(
-            dict(order)
-        )
+        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(dict(order))
     for fill in fills:
-        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(
-            dict(fill)
-        )
+        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(dict(fill))
 
     payloads: list[dict[str, Any]] = []
     now = datetime.now(UTC)
     for attempt in attempts:
-        attempt_context = _normalize_attempt_context(
-            attempt.get("attempt_context", attempt.get("bucket"))
-        )
+        attempt_context = _normalize_attempt_context(attempt.get("attempt_context", attempt.get("bucket")))
         attempt_payload = {
             **attempt,
             "orders": orders_by_attempt.get(str(attempt["execution_attempt_id"]), []),
@@ -89,9 +83,7 @@ def _attach_attempt_details(
                 "attempt_context": attempt_context,
                 "bucket": _deprecated_bucket(attempt_context),
                 "order_intent_id": str(attempt["execution_attempt_id"]),
-                "order_intent_key": _order_intent_key(
-                    str(attempt["execution_attempt_id"])
-                ),
+                "order_intent_key": _order_intent_key(str(attempt["execution_attempt_id"])),
                 "execution_attempt_lifecycle": lifecycle,
                 "lifecycle_state": lifecycle.get("lifecycle_state"),
                 "lifecycle_phase": lifecycle.get("phase"),
@@ -112,28 +104,18 @@ def list_session_execution_attempts(
     execution_store: Any | None = None,
     storage: Any | None = None,
 ) -> list[dict[str, Any]]:
-    resolved_execution_store = (
-        execution_store if execution_store is not None else storage.execution
-    )
+    resolved_execution_store = execution_store if execution_store is not None else storage.execution
     if not resolved_execution_store.schema_ready():
         return []
-    attempts = list(
-        resolved_execution_store.list_attempts(session_id=session_id, limit=limit)
-    )
-    return _attach_attempt_details(
-        execution_store=resolved_execution_store, attempts=attempts
-    )
+    attempts = list(resolved_execution_store.list_attempts(session_id=session_id, limit=limit))
+    return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
 
 
-def _get_attempt_payload(
-    execution_store: Any, execution_attempt_id: str
-) -> dict[str, Any]:
+def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any]:
     attempt = execution_store.get_attempt(execution_attempt_id)
     if attempt is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
-    return _attach_attempt_details(
-        execution_store=execution_store, attempts=[dict(attempt)]
-    )[0]
+    return _attach_attempt_details(execution_store=execution_store, attempts=[dict(attempt)])[0]
 
 
 def _flatten_order_snapshot(
@@ -144,12 +126,7 @@ def _flatten_order_snapshot(
     broker_order_id = _as_text(order.get("id"))
     if broker_order_id is None:
         raise ValueError("Broker order payload is missing an id")
-    updated_at = (
-        _as_text(order.get("updated_at"))
-        or _as_text(order.get("filled_at"))
-        or _as_text(order.get("submitted_at"))
-        or _utc_now()
-    )
+    updated_at = _as_text(order.get("updated_at")) or _as_text(order.get("filled_at")) or _as_text(order.get("submitted_at")) or _utc_now()
     symbol = _as_text(order.get("symbol"))
     side = _as_text(order.get("side"))
     rows = [
@@ -178,9 +155,7 @@ def _flatten_order_snapshot(
     ]
     for leg in order.get("legs") or []:
         if isinstance(leg, dict):
-            rows.extend(
-                _flatten_order_snapshot(leg, parent_broker_order_id=broker_order_id)
-            )
+            rows.extend(_flatten_order_snapshot(leg, parent_broker_order_id=broker_order_id))
     return rows
 
 
@@ -214,9 +189,7 @@ def _sync_fill_rows(
         matching_order = order_lookup.get(broker_order_id)
         rows.append(
             {
-                "execution_order_id": None
-                if matching_order is None
-                else matching_order.get("execution_order_id"),
+                "execution_order_id": None if matching_order is None else matching_order.get("execution_order_id"),
                 "broker": BROKER_NAME,
                 "broker_fill_id": broker_fill_id,
                 "broker_order_id": broker_order_id,
@@ -263,30 +236,79 @@ def _sync_attempt_state(
             rows=fill_rows,
         )
 
-    status = str(
-        order_snapshot.get("status") or attempt.get("status") or "unknown"
-    ).lower()
-    completed_at = (
-        _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
-    )
+    status = str(order_snapshot.get("status") or attempt.get("status") or "unknown").lower()
+    completed_at = _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
         broker_order_id=_as_text(order_snapshot.get("id")),
         client_order_id=_as_text(order_snapshot.get("client_order_id")),
-        submitted_at=_as_text(order_snapshot.get("submitted_at"))
-        or str(attempt["requested_at"]),
+        submitted_at=_as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
         completed_at=completed_at,
         error_text=None,
     )
-    payload = _get_attempt_payload(
-        execution_store, str(attempt["execution_attempt_id"])
-    )
+    payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
     sync_session_position_from_attempt(
         execution_store=execution_store,
         attempt=payload,
     )
     return _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+
+
+def _sync_equity_attempt_state(
+    *,
+    execution_store: Any,
+    attempt: Mapping[str, Any],
+    client: Any,
+    order_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    order_rows = _flatten_order_snapshot(order_snapshot)
+    persisted_orders = [
+        dict(row)
+        for row in execution_store.upsert_orders(
+            execution_attempt_id=str(attempt["execution_attempt_id"]),
+            rows=order_rows,
+        )
+    ]
+    try:
+        fill_rows = _sync_fill_rows(
+            client=client,
+            session_date=str(attempt["session_date"]),
+            persisted_orders=persisted_orders,
+        )
+    except Exception:
+        fill_rows = []
+    if fill_rows:
+        execution_store.upsert_fills(
+            execution_attempt_id=str(attempt["execution_attempt_id"]),
+            rows=fill_rows,
+        )
+
+    status = str(order_snapshot.get("status") or attempt.get("status") or "unknown").lower()
+    completed_at = _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
+    execution_store.update_attempt(
+        execution_attempt_id=str(attempt["execution_attempt_id"]),
+        status=status,
+        broker_order_id=_as_text(order_snapshot.get("id")),
+        client_order_id=_as_text(order_snapshot.get("client_order_id")),
+        submitted_at=_as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
+        completed_at=completed_at,
+        error_text=None,
+    )
+    payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+    request = dict(payload.get("request") or {})
+    should_sync_position = str(request.get("trade_intent") or "") == OPEN_TRADE_INTENT
+    should_sync_position = should_sync_position or _as_text(request.get("position_id")) is not None
+    if should_sync_position:
+        try:
+            sync_session_position_from_attempt(
+                execution_store=execution_store,
+                attempt=payload,
+            )
+            payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+        except Exception:
+            pass
+    return payload
 
 
 def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -> None:
@@ -300,10 +322,7 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
                 **attempt,
                 "message": message,
             },
-            timestamp=attempt.get("completed_at")
-            or attempt.get("submitted_at")
-            or attempt.get("requested_at")
-            or _utc_now(),
+            timestamp=attempt.get("completed_at") or attempt.get("submitted_at") or attempt.get("requested_at") or _utc_now(),
             source="execution",
             session_date=_as_text(attempt.get("session_date")),
             correlation_id=_as_text(attempt.get("session_id")),
@@ -357,9 +376,7 @@ def _sync_linked_execution_intent(
     intent = execution_store.get_execution_intent(execution_intent_id)
     if intent is None:
         return
-    resolved_state = state or _intent_state_from_attempt_status(
-        str(attempt.get("status") or "")
-    )
+    resolved_state = state or _intent_state_from_attempt_status(str(attempt.get("status") or ""))
     transition = validate_execution_intent_transition(
         intent.get("state"),
         resolved_state,

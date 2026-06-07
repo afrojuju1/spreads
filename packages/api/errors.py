@@ -6,7 +6,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from core.services.control_plane import CONTROL_SCHEMA_MESSAGE
-from core.services.execution import EXECUTION_SCHEMA_MESSAGE
+from core.services.execution.shared import EXECUTION_SCHEMA_MESSAGE
 
 
 class ApiError(Exception):

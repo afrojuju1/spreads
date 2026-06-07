@@ -292,7 +292,7 @@ def refresh_engine_capture_targets(
 
     working_owner_keys: list[str] = []
     if execution_store.schema_ready():
-        from core.services.execution import OPEN_STATUSES
+        from core.services.execution.shared import OPEN_STATUSES
 
         for attempt in execution_store.list_attempts_by_status(statuses=sorted(OPEN_STATUSES), limit=500):
             owner_key = str(attempt["execution_attempt_id"])

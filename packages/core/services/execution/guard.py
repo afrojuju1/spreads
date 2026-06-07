@@ -34,25 +34,17 @@ from .policy import _attempt_exit_policy, _validate_open_timing_window
 from .shared import OPEN_STATUSES, _is_terminal_status
 
 
-def _execution_submit_job_run(
-    storage: Any, execution_attempt_id: str
-) -> Mapping[str, Any] | None:
+def _execution_submit_job_run(storage: Any, execution_attempt_id: str) -> Mapping[str, Any] | None:
     job_store = getattr(storage, "jobs", None)
-    if job_store is None or (
-        hasattr(job_store, "schema_ready") and not job_store.schema_ready()
-    ):
+    if job_store is None or (hasattr(job_store, "schema_ready") and not job_store.schema_ready()):
         return None
     try:
-        return job_store.get_job_run(
-            resolve_execution_submit_job_run_id(execution_attempt_id)
-        )
+        return job_store.get_job_run(resolve_execution_submit_job_run_id(execution_attempt_id))
     except Exception:
         return None
 
 
-def _source_job_definition(
-    storage: Any, attempt: Mapping[str, Any]
-) -> Mapping[str, Any] | None:
+def _source_job_definition(storage: Any, attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
     source_job = resolve_execution_attempt_source_job(attempt)
     source_job_key = _as_text(source_job.get("job_key"))
     if source_job_key is None:
@@ -74,19 +66,13 @@ def _evaluate_open_attempt_guard(
     lifecycle = classify_open_execution_attempt(
         attempt,
         now=current_time,
-        submit_job=_execution_submit_job_run(
-            storage, str(attempt.get("execution_attempt_id") or "")
-        ),
+        submit_job=_execution_submit_job_run(storage, str(attempt.get("execution_attempt_id") or "")),
         source_job_definition=_source_job_definition(storage, attempt),
         submission_grace_seconds=PENDING_SUBMISSION_GRACE_SECONDS,
         running_submit_stale_after_seconds=PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
     )
     request = _attempt_request(attempt)
-    execution_policy = (
-        request.get("execution_policy")
-        if isinstance(request.get("execution_policy"), Mapping)
-        else {}
-    )
+    execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), Mapping) else {}
     timing_gate = _validate_open_timing_window(
         exit_policy=_attempt_exit_policy(attempt),
         current_time=current_time,
@@ -104,9 +90,7 @@ def _evaluate_open_attempt_guard(
         return {
             **dict(timing_gate),
             "lifecycle": lifecycle,
-            "intervention": "cancel_order"
-            if _as_text(attempt.get("broker_order_id"))
-            else "fail_unsubmitted",
+            "intervention": "cancel_order" if _as_text(attempt.get("broker_order_id")) else "fail_unsubmitted",
         }
 
     intervention = _as_text(lifecycle.get("intervention"))
@@ -121,11 +105,7 @@ def _evaluate_open_attempt_guard(
     reason = (
         "stale_auto_open_attempt"
         if intervention == "cancel_order"
-        else (
-            "submit_outcome_uncertain"
-            if intervention == "mark_submit_unknown"
-            else "stale_pending_submission"
-        )
+        else ("submit_outcome_uncertain" if intervention == "mark_submit_unknown" else "stale_pending_submission")
     )
     return {
         "allowed": False,
@@ -153,57 +133,25 @@ def _guard_intervention_message(
     if reason == "stale_auto_open_attempt":
         age_seconds = _coerce_float(guard_decision.get("age_seconds"))
         stale_after_seconds = _coerce_int(guard_decision.get("stale_after_seconds"))
-        age_fragment = (
-            "" if age_seconds is None else f" after {int(round(age_seconds))}s"
-        )
-        threshold_fragment = (
-            ""
-            if stale_after_seconds is None
-            else f" (stale threshold {stale_after_seconds}s)"
-        )
+        age_fragment = "" if age_seconds is None else f" after {int(round(age_seconds))}s"
+        threshold_fragment = "" if stale_after_seconds is None else f" (stale threshold {stale_after_seconds}s)"
         if submitted:
-            return (
-                "Canceled automatic open execution because the order remained pending"
-                f"{age_fragment}{threshold_fragment}."
-            )
-        return (
-            "Automatic open execution expired before broker submission because it remained pending"
-            f"{age_fragment}{threshold_fragment}."
-        )
+            return "Canceled automatic open execution because the order remained pending" f"{age_fragment}{threshold_fragment}."
+        return "Automatic open execution expired before broker submission because it remained pending" f"{age_fragment}{threshold_fragment}."
     if reason == "insufficient_time_to_force_close":
-        minimum_minutes = _coerce_float(
-            guard_decision.get("minimum_minutes_to_force_close")
-        )
+        minimum_minutes = _coerce_float(guard_decision.get("minimum_minutes_to_force_close"))
         minutes_remaining = _coerce_float(guard_decision.get("minutes_to_force_close"))
-        threshold_fragment = (
-            ""
-            if minimum_minutes is None
-            else f" below the {minimum_minutes:.1f}-minute threshold"
-        )
-        remaining_fragment = (
-            ""
-            if minutes_remaining is None
-            else f" with {minutes_remaining:.1f} minutes remaining"
-        )
+        threshold_fragment = "" if minimum_minutes is None else f" below the {minimum_minutes:.1f}-minute threshold"
+        remaining_fragment = "" if minutes_remaining is None else f" with {minutes_remaining:.1f} minutes remaining"
         if submitted:
-            return (
-                "Canceled open execution because remaining time to force-close fell"
-                f"{threshold_fragment}{remaining_fragment}."
-            )
+            return "Canceled open execution because remaining time to force-close fell" f"{threshold_fragment}{remaining_fragment}."
         return (
-            "Open execution expired before broker submission because remaining time to"
-            f" force-close fell{threshold_fragment}{remaining_fragment}."
+            "Open execution expired before broker submission because remaining time to" f" force-close fell{threshold_fragment}{remaining_fragment}."
         )
 
     if submitted:
-        return (
-            "Canceled open execution because the exit force-close window "
-            "started before the order completed."
-        )
-    return (
-        "Open execution expired because the exit force-close window started "
-        "before broker submission."
-    )
+        return "Canceled open execution because the exit force-close window " "started before the order completed."
+    return "Open execution expired because the exit force-close window started " "before broker submission."
 
 
 @with_storage()
@@ -279,9 +227,7 @@ def run_open_execution_guard(
                 error_text=message,
                 position_id=position_id,
             )
-            uncertain_attempt = _get_attempt_payload(
-                execution_store, execution_attempt_id
-            )
+            uncertain_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 uncertain_attempt,
                 message=message,
@@ -374,9 +320,7 @@ def run_open_execution_guard(
                         "status": current_status,
                         "reason": str(guard_decision["reason"] or ""),
                         "age_seconds": guard_decision.get("age_seconds"),
-                        "stale_after_seconds": guard_decision.get(
-                            "stale_after_seconds"
-                        ),
+                        "stale_after_seconds": guard_decision.get("stale_after_seconds"),
                     }
                 )
                 continue
@@ -396,9 +340,7 @@ def run_open_execution_guard(
                         status="pending_cancel",
                         position_id=position_id,
                     )
-                    synced_attempt = _get_attempt_payload(
-                        execution_store, execution_attempt_id
-                    )
+                    synced_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
                 canceled += 1
                 _publish_execution_attempt_event(
                     synced_attempt,
@@ -424,9 +366,7 @@ def run_open_execution_guard(
                         "status": str(synced_attempt.get("status") or ""),
                         "reason": str(guard_decision["reason"] or ""),
                         "age_seconds": guard_decision.get("age_seconds"),
-                        "stale_after_seconds": guard_decision.get(
-                            "stale_after_seconds"
-                        ),
+                        "stale_after_seconds": guard_decision.get("stale_after_seconds"),
                     }
                 )
                 continue

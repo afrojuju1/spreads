@@ -358,7 +358,7 @@ def run_position_exit_manager(
         }
 
     try:
-        from core.services.execution import run_open_execution_guard
+        from core.services.execution.guard import run_open_execution_guard
 
         open_attempt_guard = run_open_execution_guard(
             db_target=db_target,

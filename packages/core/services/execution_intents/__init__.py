@@ -14,12 +14,9 @@ from core.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
 )
-from core.services.execution import (
-    ExecutionAdmissionError,
-    submit_equity_order,
-    submit_option_order,
-    submit_position_close_by_id,
-)
+from core.services.execution.admission import ExecutionAdmissionError
+from core.services.execution.direct_orders import submit_equity_order, submit_option_order
+from core.services.execution.position_close import submit_position_close_by_id
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
 from core.storage.serializers import parse_datetime
 

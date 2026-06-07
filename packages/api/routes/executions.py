@@ -5,12 +5,9 @@ from fastapi import APIRouter
 from api.errors import bad_request_error, execution_runtime_error
 from api.schemas.executions import EquityOrderRequest
 from core.runtime.config import default_database_url
-from core.services.execution import (
-    cancel_execution_attempt,
-    refresh_execution_attempt,
-    submit_equity_order,
-)
+from core.services.execution.direct_orders import submit_equity_order
 from core.services.execution.runtimes import resolve_execution_runtime_capabilities
+from core.services.execution.sync import cancel_execution_attempt, refresh_execution_attempt
 
 router = APIRouter()
 

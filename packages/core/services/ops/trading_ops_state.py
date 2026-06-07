@@ -15,7 +15,7 @@ from core.services.control_plane import (
     get_control_state_snapshot,
     resolve_execution_kill_switch_reason,
 )
-from core.services.execution import OPEN_STATUSES
+from core.services.execution.shared import OPEN_STATUSES
 from core.services.execution.runtimes import resolve_execution_runtime_capabilities
 from core.services.execution_intents.shared import ACTIVE_INTENT_STATES, OPEN_POSITION_STATES
 from core.services.execution_lifecycle import (

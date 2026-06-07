@@ -87,7 +87,7 @@ def _normalize_rollout_policy(family: str, payload: dict[str, Any] | None) -> di
     if family == "exit_policy":
         return normalize_exit_policy(payload)
     if family == "execution_policy":
-        from core.services.execution import normalize_execution_policy
+        from core.services.execution.policy import normalize_execution_policy
 
         return normalize_execution_policy(payload)
     raise ValueError(f"Unsupported policy family: {family}")

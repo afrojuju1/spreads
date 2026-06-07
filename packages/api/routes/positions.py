@@ -6,7 +6,7 @@ from api.errors import bad_request_error, execution_runtime_error, not_found_err
 from api.schemas.positions import PositionCloseRequest
 from core.runtime.config import default_database_url
 from core.services.market_dates import resolve_market_date
-from core.services.execution import submit_position_close_by_id
+from core.services.execution.position_close import submit_position_close_by_id
 from core.services.positions import get_position_detail, list_positions
 
 router = APIRouter()

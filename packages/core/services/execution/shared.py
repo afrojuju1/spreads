@@ -24,9 +24,7 @@ from core.services.value_coercion import (
 )
 
 BROKER_NAME = "alpaca"
-EXECUTION_SCHEMA_MESSAGE = (
-    "Execution tables are not available yet. Run the latest Alembic migrations."
-)
+EXECUTION_SCHEMA_MESSAGE = "Execution tables are not available yet. Run the latest Alembic migrations."
 OPEN_STATUSES = OPEN_ATTEMPT_STATUSES
 TERMINAL_STATUSES = TERMINAL_ATTEMPT_STATUSES
 DEFAULT_ENTRY_PRICING_MODE = "adaptive_credit"
@@ -115,27 +113,17 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strategy_family_from_payload(payload: Mapping[str, Any]) -> str:
-    return normalize_strategy_family(
-        _as_text(payload.get("strategy_family")) or _as_text(payload.get("strategy"))
-    )
+    return normalize_strategy_family(_as_text(payload.get("strategy_family")) or _as_text(payload.get("strategy")))
 
 
 def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
     request = attempt.get("request")
-    request_order = (
-        dict(request.get("order") or {}) if isinstance(request, Mapping) else {}
-    )
-    candidate_payload = (
-        dict(attempt.get("candidate") or {})
-        if isinstance(attempt.get("candidate"), Mapping)
-        else {}
-    )
+    request_order = dict(request.get("order") or {}) if isinstance(request, Mapping) else {}
+    candidate_payload = dict(attempt.get("candidate") or {}) if isinstance(attempt.get("candidate"), Mapping) else {}
     legs = order_payload_legs(
         request_order,
         expiration_date=_as_text(attempt.get("expiration_date")),
-    ) or candidate_legs(
-        candidate_payload
-    )
+    ) or candidate_legs(candidate_payload)
     if not legs:
         return None
     strategy = (
@@ -147,9 +135,7 @@ def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
     return legs_identity_key(strategy=strategy, legs=legs)
 
 
-def _clamp_fraction(
-    value: float, *, minimum: float = 0.0, maximum: float = 1.0
-) -> float:
+def _clamp_fraction(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
     return max(minimum, min(maximum, float(value)))
 
 
