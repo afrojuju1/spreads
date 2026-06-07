@@ -31,6 +31,7 @@ from core.storage.records import (
     PortfolioPositionRecord,
     PositionCloseRecord,
 )
+from core.storage.read_models import ExecutionAttemptActivityRead
 from core.storage.serializers import parse_date, parse_datetime
 
 
@@ -194,6 +195,33 @@ class ExecutionRepository(RepositoryBase):
         if row is None:
             return None
         return self._attempt_row(row)
+
+    def get_attempt_activity(self, execution_attempt_id: str) -> ExecutionAttemptActivityRead | None:
+        with self.session_factory() as session:
+            row = session.get(ExecutionAttemptModel, execution_attempt_id)
+            if row is None:
+                return None
+            orders = session.scalars(
+                select(ExecutionOrderModel)
+                .where(ExecutionOrderModel.execution_attempt_id == execution_attempt_id)
+                .order_by(
+                    ExecutionOrderModel.updated_at.desc(),
+                    ExecutionOrderModel.execution_order_id.desc(),
+                )
+            ).all()
+            fills = session.scalars(
+                select(ExecutionFillModel)
+                .where(ExecutionFillModel.execution_attempt_id == execution_attempt_id)
+                .order_by(
+                    ExecutionFillModel.filled_at.desc(),
+                    ExecutionFillModel.execution_fill_id.desc(),
+                )
+            ).all()
+            return ExecutionAttemptActivityRead.from_rows(
+                attempt=self._attempt_row(row),
+                orders=self.rows(orders),
+                fills=self.rows(fills),
+            )
 
     def list_attempts(
         self,

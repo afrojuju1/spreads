@@ -86,35 +86,42 @@ def _attach_attempt_details(
     for fill in fills:
         fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(dict(fill))
 
-    payloads: list[dict[str, Any]] = []
     now = datetime.now(UTC)
+    payloads: list[dict[str, Any]] = []
     for attempt in attempts:
-        attempt_context = _normalize_attempt_context(attempt.get("attempt_context", attempt.get("bucket")))
         attempt_payload = {
             **attempt,
             "orders": orders_by_attempt.get(str(attempt["execution_attempt_id"]), []),
             "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
         }
-        lifecycle = project_execution_attempt_lifecycle(
-            attempt_payload,
-            now=now,
-        )
-        payloads.append(
-            {
-                **attempt_payload,
-                "attempt_context": attempt_context,
-                "bucket": _deprecated_bucket(attempt_context),
-                "order_intent_id": str(attempt["execution_attempt_id"]),
-                "order_intent_key": _order_intent_key(str(attempt["execution_attempt_id"])),
-                "execution_attempt_lifecycle": lifecycle,
-                "lifecycle_state": lifecycle.get("lifecycle_state"),
-                "lifecycle_phase": lifecycle.get("phase"),
-                "broker_order_state": lifecycle.get("broker_order_state"),
-                "next_action": lifecycle.get("next_action"),
-                "stale": bool(lifecycle.get("stale")),
-            }
-        )
+        payloads.append(_attempt_payload_with_lifecycle(attempt_payload, now=now))
     return payloads
+
+
+def _attempt_payload_with_lifecycle(
+    attempt_payload: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    attempt_context = _normalize_attempt_context(attempt_payload.get("attempt_context", attempt_payload.get("bucket")))
+    lifecycle = project_execution_attempt_lifecycle(
+        attempt_payload,
+        now=now,
+    )
+    execution_attempt_id = str(attempt_payload["execution_attempt_id"])
+    return {
+        **attempt_payload,
+        "attempt_context": attempt_context,
+        "bucket": _deprecated_bucket(attempt_context),
+        "order_intent_id": execution_attempt_id,
+        "order_intent_key": _order_intent_key(execution_attempt_id),
+        "execution_attempt_lifecycle": lifecycle,
+        "lifecycle_state": lifecycle.get("lifecycle_state"),
+        "lifecycle_phase": lifecycle.get("phase"),
+        "broker_order_state": lifecycle.get("broker_order_state"),
+        "next_action": lifecycle.get("next_action"),
+        "stale": bool(lifecycle.get("stale")),
+    }
 
 
 @with_storage()
@@ -134,10 +141,13 @@ def list_session_execution_attempts(
 
 
 def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any]:
-    attempt = execution_store.get_attempt(execution_attempt_id)
-    if attempt is None:
+    activity = execution_store.get_attempt_activity(execution_attempt_id)
+    if activity is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
-    return _attach_attempt_details(execution_store=execution_store, attempts=[dict(attempt)])[0]
+    return _attempt_payload_with_lifecycle(
+        activity.to_payload(),
+        now=datetime.now(UTC),
+    )
 
 
 def _flatten_order_snapshot(

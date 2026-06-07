@@ -21,6 +21,7 @@ from core.services.execution.position_close import submit_position_close_by_id
 from core.observability.logging import log_event
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
 from core.services.value_coercion import as_text, utc_now_iso
+from core.storage.read_models import TradeDecisionSignalRead
 from core.storage.serializers import parse_datetime
 
 from .maintenance import (
@@ -113,6 +114,16 @@ def _repricing_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _get_trade_decision_signal(
+    *,
+    engine_facts: Any,
+    trade_decision_id: str,
+) -> TradeDecisionSignalRead | None:
+    if engine_facts is None or not engine_facts.schema_ready():
+        return None
+    return engine_facts.get_trade_decision_with_signal(trade_decision_id)
+
+
 def _trade_decision_is_active_for_intent(
     engine_facts: Any,
     intent: dict[str, Any],
@@ -122,18 +133,17 @@ def _trade_decision_is_active_for_intent(
         return False, "trade_decision_missing"
     if engine_facts is None or not engine_facts.schema_ready():
         return False, "engine_fact_schema_unavailable"
-    decision = engine_facts.get_trade_decision(trade_decision_id)
-    if decision is None:
+    decision_signal = _get_trade_decision_signal(
+        engine_facts=engine_facts,
+        trade_decision_id=trade_decision_id,
+    )
+    if decision_signal is None:
         return False, "trade_decision_missing"
-    if str(decision.get("decision_state") or "").strip().lower() != "selected":
+    if decision_signal.decision_state != "selected":
         return False, "trade_decision_not_selected"
-    signal = engine_facts.get_trade_signal(str(decision["trade_signal_id"]))
-    if signal is None:
-        return False, "trade_signal_missing"
-    if str(signal.get("signal_state") or "").strip().lower() not in {"ready"}:
+    if decision_signal.signal_state not in {"ready"}:
         return False, "trade_signal_not_ready"
-    expires_at = parse_datetime(as_text(signal.get("expires_at")))
-    if expires_at is not None and expires_at <= datetime.now(UTC):
+    if decision_signal.signal_is_expired(now=datetime.now(UTC)):
         return False, "trade_signal_expired"
     return True, None
 
@@ -149,18 +159,19 @@ def _trade_decision_option_payload(
         raise ValueError("Execution intent is missing trade_decision_id")
     if engine_facts is None or not engine_facts.schema_ready():
         raise ValueError("Engine fact tables are not available for trade-decision dispatch.")
-    decision = engine_facts.get_trade_decision(trade_decision_id)
-    if decision is None:
+    decision_signal = _get_trade_decision_signal(
+        engine_facts=engine_facts,
+        trade_decision_id=trade_decision_id,
+    )
+    if decision_signal is None:
         raise ValueError(f"Unknown trade_decision_id: {trade_decision_id}")
-    signal = engine_facts.get_trade_signal(str(decision["trade_signal_id"]))
-    if signal is None:
-        raise ValueError(f"Missing trade signal for trade_decision_id: {trade_decision_id}")
-    if str(decision.get("decision_state") or "").strip().lower() != "selected":
+    if decision_signal.decision_state != "selected":
         raise ValueError(f"Trade decision is not selected: {trade_decision_id}")
 
-    execution_shape = dict(decision.get("selected_execution_shape") or signal.get("execution_shape") or {})
-    order_payload = dict(execution_shape.get("order_payload") or {})
-    legs = order_payload_legs(order_payload) or list(execution_shape.get("legs") or signal.get("legs") or [])
+    signal = decision_signal.signal
+    execution_shape = decision_signal.execution_shape
+    order_payload = decision_signal.order_payload
+    legs = order_payload_legs(order_payload) or decision_signal.execution_shape_legs or decision_signal.signal_legs
     if len(legs) != 1:
         raise ValueError("Trade-decision dispatch currently requires a single-leg option execution shape.")
     leg = dict(legs[0])
@@ -171,7 +182,7 @@ def _trade_decision_option_payload(
     admission = payload.get("execution_admission") if isinstance(payload.get("execution_admission"), dict) else {}
     quantity = (
         as_text(payload.get("quantity"))
-        or as_text(decision.get("selected_quantity"))
+        or as_text(decision_signal.selected_quantity)
         or as_text(admission.get("admissible_quantity"))
         or as_text(order_payload.get("qty"))
         or "1"
@@ -179,18 +190,18 @@ def _trade_decision_option_payload(
     limit_price = payload.get("limit_price")
     if limit_price in (None, ""):
         limit_price = order_payload.get("limit_price")
-    economics = dict(signal.get("economics") or {})
+    economics = decision_signal.economics
     if limit_price in (None, ""):
         limit_price = economics.get("midpoint_credit") or economics.get("midpoint_value")
     if limit_price in (None, ""):
         raise ValueError("Trade-decision option shape is missing a limit price.")
 
-    trade_structure = as_text(signal.get("trade_structure")) or as_text(decision.get("trade_structure")) or "long_call"
+    trade_structure = decision_signal.trade_structure or "long_call"
     strategy_family = normalize_strategy_family(trade_structure)
     option_selection = {
         "source": "trade_decision",
         "trade_decision_id": trade_decision_id,
-        "trade_signal_id": signal["trade_signal_id"],
+        "trade_signal_id": decision_signal.trade_signal_id,
         "trade_candidate_id": signal.get("trade_candidate_id"),
         "quote_metrics": {
             "timestamp": signal.get("observed_at"),
@@ -219,7 +230,7 @@ def _trade_decision_option_payload(
         "source": {
             "kind": "trade_decision",
             "id": trade_decision_id,
-            "trade_signal_id": signal["trade_signal_id"],
+            "trade_signal_id": decision_signal.trade_signal_id,
         },
     }
 

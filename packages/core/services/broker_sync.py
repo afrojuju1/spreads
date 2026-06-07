@@ -23,13 +23,10 @@ OPEN_POSITION_STATUSES = ["open", "partial_close"]
 
 
 def _hydrate_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any] | None:
-    attempt = execution_store.get_attempt(execution_attempt_id)
-    if attempt is None:
+    activity = execution_store.get_attempt_activity(execution_attempt_id)
+    if activity is None:
         return None
-    payload = dict(attempt)
-    payload["orders"] = [dict(order) for order in execution_store.list_orders(execution_attempt_id=execution_attempt_id)]
-    payload["fills"] = [dict(fill) for fill in execution_store.list_fills(execution_attempt_id=execution_attempt_id)]
-    return payload
+    return activity.to_payload()
 
 
 def _parse_activity_timestamp(activity: dict[str, Any]) -> datetime | None:

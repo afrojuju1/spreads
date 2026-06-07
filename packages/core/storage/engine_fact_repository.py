@@ -16,6 +16,7 @@ from core.storage.engine_models import (
     TradeCandidateModel,
 )
 from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionModel, TradeExecutionIntentModel, TradeSignalModel
+from core.storage.read_models import TradeDecisionSignalRead
 from core.storage.records import StorageRow
 from core.storage.serializers import parse_date, parse_datetime, render_value
 
@@ -721,6 +722,23 @@ class EngineFactRepository(RepositoryBase):
         if row is None:
             return None
         return self.row(row)
+
+    def get_trade_decision_with_signal(self, trade_decision_id: str) -> TradeDecisionSignalRead | None:
+        statement = (
+            select(TradeDecisionModel, TradeSignalModel)
+            .join(TradeSignalModel, TradeDecisionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+            .where(TradeDecisionModel.trade_decision_id == trade_decision_id)
+            .limit(1)
+        )
+        with self.session_factory() as session:
+            row = session.execute(statement).first()
+        if row is None:
+            return None
+        decision, signal = row
+        return TradeDecisionSignalRead.from_rows(
+            decision=self.row(decision),
+            signal=self.row(signal),
+        )
 
     def list_trade_signals(
         self,
