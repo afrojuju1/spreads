@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .kernel import EngineRunRef
+from .kernel import EnginePayload, EngineRunRef
 
 
 @dataclass(frozen=True)
@@ -13,7 +12,7 @@ class PositionSnapshot:
     trading_strategy_id: str
     underlying_symbol: str
     state: str
-    payload: Mapping[str, object] = field(default_factory=dict)
+    payload: EnginePayload = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,7 @@ class CloseDecisionResult:
     position_id: str
     state: str
     reason_codes: tuple[str, ...] = ()
-    payload: Mapping[str, object] = field(default_factory=dict)
+    payload: EnginePayload = field(default_factory=dict)
 
 
 class PortfolioEngine(Protocol):
@@ -31,13 +30,11 @@ class PortfolioEngine(Protocol):
         self,
         *,
         trading_strategy_id: str | None = None,
-    ) -> tuple[PositionSnapshot, ...]:
-        ...
+    ) -> tuple[PositionSnapshot, ...]: ...
 
     def evaluate_close(
         self,
         *,
         run_ref: EngineRunRef,
         position: PositionSnapshot,
-    ) -> CloseDecisionResult:
-        ...
+    ) -> CloseDecisionResult: ...

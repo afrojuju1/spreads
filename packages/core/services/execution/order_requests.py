@@ -18,9 +18,9 @@ from core.services.session_positions import (
     OPEN_TRADE_INTENT,
 )
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    coerce_int as _coerce_int,
+    as_text,
+    coerce_float,
+    coerce_int,
 )
 from .shared import (
     DEFAULT_ENTRY_PRICING_MODE,
@@ -82,11 +82,11 @@ def _capped_structure_return_on_risk(
 def _candidate_capped_structure_span(
     candidate_payload: Mapping[str, Any],
 ) -> float | None:
-    width = _coerce_float(candidate_payload.get("width"))
+    width = coerce_float(candidate_payload.get("width"))
     if width is not None and width > 0:
         return width
-    max_profit = _coerce_float(candidate_payload.get("max_profit"))
-    max_loss = _coerce_float(candidate_payload.get("max_loss"))
+    max_profit = coerce_float(candidate_payload.get("max_profit"))
+    max_loss = coerce_float(candidate_payload.get("max_loss"))
     if max_profit is None or max_loss is None:
         return None
     span_dollars = max_profit + max_loss
@@ -115,7 +115,7 @@ def _validate_uncapped_debit_live_quality(
 
     scanned_midpoint_value, _ = _resolve_candidate_entry_prices(dict(candidate_payload))
     min_retention_pct = _clamp_fraction(
-        _coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
+        coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
         minimum=0.5,
         maximum=1.0,
     )
@@ -202,7 +202,7 @@ def _validate_live_deployment_quality(
             live_snapshot=live_snapshot,
         )
 
-    minimum_return_on_risk = _coerce_float(thresholds.get("min_execution_return_on_risk"))
+    minimum_return_on_risk = coerce_float(thresholds.get("min_execution_return_on_risk"))
     if minimum_return_on_risk is None:
         return {
             "ok": True,
@@ -299,14 +299,14 @@ def _resolve_open_limit_price(
     if pricing_mode == "midpoint" or natural_value is None or natural_value <= 0:
         return round(max(midpoint_value, 0.01), 2)
 
-    fill_ratio = _clamp_fraction(_coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
+    fill_ratio = _clamp_fraction(coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
     min_credit_retention_pct = _clamp_fraction(
-        _coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
+        coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
         minimum=0.5,
         maximum=1.0,
     )
     max_credit_concession = max(
-        _coerce_float(execution_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION,
+        coerce_float(execution_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION,
         0.0,
     )
     if premium_kind == "debit":
@@ -341,7 +341,7 @@ def _build_close_order_request(
     limit_price: float | None,
     client_order_id: str,
 ) -> tuple[dict[str, Any], int, float]:
-    remaining_quantity = _coerce_float(position.get("remaining_quantity"))
+    remaining_quantity = coerce_float(position.get("remaining_quantity"))
     if remaining_quantity is None or remaining_quantity <= 0:
         raise ValueError("Session position does not have remaining quantity to close")
     resolved_quantity = quantity if quantity is not None else int(round(remaining_quantity))
@@ -350,7 +350,7 @@ def _build_close_order_request(
     if resolved_quantity > remaining_quantity:
         raise ValueError("Close quantity exceeds the remaining session position quantity")
 
-    resolved_limit_price = limit_price if limit_price is not None else _coerce_float(position.get("close_mark"))
+    resolved_limit_price = limit_price if limit_price is not None else coerce_float(position.get("close_mark"))
     resolved_limit_price = _normalize_limit_value(resolved_limit_price)
     if resolved_limit_price is None or resolved_limit_price <= 0:
         raise ValueError("Close execution requires a positive limit price or a quoted close mark")
@@ -380,17 +380,17 @@ def _normalize_submit_order_request(
     request = dict(order_request)
     request_legs = order_payload_legs(
         request,
-        expiration_date=_as_text(payload.get("expiration_date")),
+        expiration_date=as_text(payload.get("expiration_date")),
     ) or normalize_legs(payload.get("legs"))
     if not request_legs or len(request_legs) != 1:
         return request
     requires_single_leg_rebuild = str(request.get("order_class") or "").strip().lower() == "mleg" or "symbol" not in request or "side" not in request
     if not requires_single_leg_rebuild:
         return request
-    limit_price = _coerce_float(request.get("limit_price")) or _coerce_float(payload.get("limit_price"))
+    limit_price = coerce_float(request.get("limit_price")) or coerce_float(payload.get("limit_price"))
     if limit_price is None:
         return request
-    quantity = _coerce_int(request.get("qty")) or _coerce_int(payload.get("quantity")) or 1
+    quantity = coerce_int(request.get("qty")) or coerce_int(payload.get("quantity")) or 1
     normalized_request = build_order_payload(
         legs=request_legs,
         limit_price=limit_price,
@@ -398,7 +398,7 @@ def _normalize_submit_order_request(
         trade_intent=str(payload.get("trade_intent") or OPEN_TRADE_INTENT),
         quantity=quantity,
     )
-    client_order_id = _as_text(request.get("client_order_id"))
+    client_order_id = as_text(request.get("client_order_id"))
     if client_order_id is not None:
         normalized_request["client_order_id"] = client_order_id
     return normalized_request

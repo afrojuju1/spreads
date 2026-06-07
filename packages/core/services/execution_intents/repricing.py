@@ -5,14 +5,13 @@ from uuid import uuid4
 
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.execution.sync import refresh_execution_attempt
+from core.services.value_coercion import as_text, coerce_int, utc_now_iso
 
 from .maintenance import _position_is_active_for_intent
 from .shared import (
     ACTIVE_INTENT_STATES,
     WORKING_REPRICE_ATTEMPT_STATUSES,
     _append_event,
-    _as_text,
-    _coerce_int,
     _intent_action_type,
     issue_pending_execution_intent,
     _intent_payload,
@@ -21,7 +20,6 @@ from .shared import (
     _repricing_policy,
     _submitted_age_seconds,
     _update_intent,
-    _utc_now,
 )
 
 
@@ -42,7 +40,7 @@ def _create_replacement_intent(
             intent,
             state="failed",
             payload_updates={"dispatch_status": "reprice_exhausted"},
-            updated_at=_utc_now(),
+            updated_at=utc_now_iso(),
         )
         _append_event(
             execution_store,
@@ -51,7 +49,7 @@ def _create_replacement_intent(
             payload={"execution_attempt_id": attempt.get("execution_attempt_id")},
         )
         return updated
-    now = _utc_now()
+    now = utc_now_iso()
     replacement_id = _replacement_intent_id()
     payload = _intent_payload(intent)
     original_limit_price = payload.get("original_limit_price")
@@ -65,16 +63,16 @@ def _create_replacement_intent(
             "reprice_count": _reprice_count(intent) + 1,
             "dispatch_status": "pending",
             "supersedes_execution_intent_id": str(intent["execution_intent_id"]),
-            "previous_execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
+            "previous_execution_attempt_id": as_text(attempt.get("execution_attempt_id")),
         }
     )
     issue_pending_execution_intent(
         execution_store,
         execution_intent_id=replacement_id,
         trading_strategy_id=str(intent["trading_strategy_id"]),
-        trade_signal_id=_as_text(intent.get("trade_signal_id")),
-        trade_decision_id=_as_text(intent.get("trade_decision_id")),
-        strategy_position_id=_as_text(intent.get("strategy_position_id")),
+        trade_signal_id=as_text(intent.get("trade_signal_id")),
+        trade_decision_id=as_text(intent.get("trade_decision_id")),
+        strategy_position_id=as_text(intent.get("strategy_position_id")),
         execution_attempt_id=None,
         action_type=str(intent["action_type"]),
         slot_key=str(intent["slot_key"]),
@@ -82,7 +80,7 @@ def _create_replacement_intent(
         policy_ref=dict(intent.get("policy_ref") or {}),
         config_hash=str(intent.get("config_hash") or ""),
         state="pending",
-        expires_at=_as_text(intent.get("expires_at")),
+        expires_at=as_text(intent.get("expires_at")),
         superseded_by_id=None,
         payload=payload,
         created_event_payload={
@@ -95,7 +93,7 @@ def _create_replacement_intent(
         execution_store,
         intent,
         state="superseded",
-        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
+        execution_attempt_id=as_text(attempt.get("execution_attempt_id")),
         superseded_by_id=replacement_id,
         payload_updates={
             "dispatch_status": "superseded_for_reprice",
@@ -122,7 +120,7 @@ def _stale_after_seconds(
     default_seconds: int,
 ) -> int:
     policy = _repricing_policy(intent, attempt)
-    configured = _coerce_int(policy.get("stale_after_seconds", policy.get("ttl_seconds")))
+    configured = coerce_int(policy.get("stale_after_seconds", policy.get("ttl_seconds")))
     if configured is None:
         return max(int(default_seconds), 1)
     return max(configured, 1)
@@ -154,7 +152,7 @@ def _manage_submitted_open_intents(
             break
         reviewed += 1
         action_type = _intent_action_type(intent)
-        execution_attempt_id = _as_text(intent.get("execution_attempt_id"))
+        execution_attempt_id = as_text(intent.get("execution_attempt_id"))
         if execution_attempt_id is None:
             continue
         refreshed_result = refresh_execution_attempt(
@@ -208,7 +206,7 @@ def _manage_submitted_open_intents(
         )
         if age_seconds is None or age_seconds < float(reprice_after_seconds):
             continue
-        broker_order_id = _as_text(refreshed_attempt.get("broker_order_id"))
+        broker_order_id = as_text(refreshed_attempt.get("broker_order_id"))
         if broker_order_id is None:
             continue
         next_limit = _next_reprice_limit(intent, refreshed_attempt)
@@ -252,7 +250,7 @@ def _manage_submitted_open_intents(
                     "dispatch_status": "revoked",
                     "revoke_reason": inactive_reason,
                 },
-                updated_at=_utc_now(),
+                updated_at=utc_now_iso(),
             )
             _append_event(
                 execution_store,

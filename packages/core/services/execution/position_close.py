@@ -25,8 +25,8 @@ from core.services.session_positions import (
     resolve_trade_intent,
 )
 from core.services.value_coercion import (
-    as_text as _as_text,
-    utc_now_iso as _utc_now,
+    as_text,
+    utc_now_iso,
 )
 from .attempts import (
     _get_attempt_payload,
@@ -82,7 +82,7 @@ def submit_position_close_by_id(
             "attempt": payload,
         }
 
-    requested_at = _utc_now()
+    requested_at = utc_now_iso()
     client_order_id = _execution_client_order_id()
     trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
     attempt_id: str | None = None
@@ -99,16 +99,16 @@ def submit_position_close_by_id(
             limit_price=resolved_limit_price,
             max_reconciliation_age_seconds=CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
         )
-        open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+        open_attempt_id = as_text(position.get("open_execution_attempt_id"))
         open_attempt = execution_store.get_attempt(open_attempt_id) if open_attempt_id is not None else None
-        label = _as_text(open_attempt.get("label") if isinstance(open_attempt, Mapping) else None) or _as_text(position.get("trading_strategy_id"))
+        label = as_text(open_attempt.get("label") if isinstance(open_attempt, Mapping) else None) or as_text(position.get("trading_strategy_id"))
         market_date = (
-            _as_text(position.get("market_date"))
-            or _as_text(position.get("market_date_opened"))
-            or _as_text(open_attempt.get("market_date") if isinstance(open_attempt, Mapping) else None)
-            or _as_text(open_attempt.get("session_date") if isinstance(open_attempt, Mapping) else None)
+            as_text(position.get("market_date"))
+            or as_text(position.get("market_date_opened"))
+            or as_text(open_attempt.get("market_date") if isinstance(open_attempt, Mapping) else None)
+            or as_text(open_attempt.get("session_date") if isinstance(open_attempt, Mapping) else None)
         )
-        session_id = _as_text(open_attempt.get("session_id") if isinstance(open_attempt, Mapping) else None)
+        session_id = as_text(open_attempt.get("session_id") if isinstance(open_attempt, Mapping) else None)
         if label is None or market_date is None:
             raise ValueError("Position is missing opening attempt context or market_date")
         policy_fields = resolve_runtime_policy_fields(
@@ -164,7 +164,7 @@ def submit_position_close_by_id(
             session_id=session_id or build_live_run_scope_id(label, market_date),
             session_date=market_date,
             label=label,
-            trading_strategy_id=_as_text(position.get("trading_strategy_id")),
+            trading_strategy_id=as_text(position.get("trading_strategy_id")),
             market_date=market_date,
             cycle_id=None,
             attempt_context="position_close",
@@ -173,7 +173,7 @@ def submit_position_close_by_id(
             job_run_id=None,
             underlying_symbol=str(position["underlying_symbol"]),
             strategy=str(position["strategy"]),
-            expiration_date=_as_text(position.get("expiration_date")),
+            expiration_date=as_text(position.get("expiration_date")),
             structure_identity=attempt_structure_identity,
             legs=attempt_legs,
             order_payload=dict(order_request),

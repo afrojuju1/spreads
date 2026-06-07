@@ -13,6 +13,7 @@ from core.services.trading_strategy_runtime import (
     find_management_runtime_for_position,
     resolve_management_runtimes,
 )
+from core.services.value_coercion import as_text, coerce_float
 
 from .kernel import EngineComponentRole, EngineRunRef
 from .portfolio import CloseDecisionResult, PositionSnapshot
@@ -21,31 +22,15 @@ from .risk_runtime import OPEN_POSITION_STATUSES
 NEW_YORK = ZoneInfo("America/New_York")
 
 
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _round_money(value: Any) -> float | None:
-    parsed = _coerce_float(value)
+    parsed = coerce_float(value)
     if parsed is None:
         return None
     return round(parsed, 4)
 
 
 def _time_reached(time_value: str | None, *, now: datetime) -> bool:
-    rendered = _as_text(time_value)
+    rendered = as_text(time_value)
     if rendered is None:
         return False
     hour_text, separator, minute_text = rendered.partition(":")
@@ -60,7 +45,7 @@ def build_position_snapshot(position: Mapping[str, Any]) -> PositionSnapshot:
     position_id = str(payload["position_id"])
     return PositionSnapshot(
         position_id=position_id,
-        trading_strategy_id=_as_text(payload.get("trading_strategy_id")) or "",
+        trading_strategy_id=as_text(payload.get("trading_strategy_id")) or "",
         underlying_symbol=str(payload.get("underlying_symbol") or payload.get("root_symbol") or ""),
         state=str(payload.get("position_status") or payload.get("status") or "unknown"),
         payload=payload,
@@ -143,7 +128,7 @@ def blocked_close_decision_projection(
     portfolio_run_id: str,
     decided_at: str | None = None,
 ) -> dict[str, Any]:
-    position_id = _as_text(position.get("position_id")) or "unknown"
+    position_id = as_text(position.get("position_id")) or "unknown"
     close_decision = build_blocked_close_decision(
         position=position,
         reason=reason,
@@ -189,7 +174,7 @@ def evaluate_position_close_decision(
             )
         policy_decision = evaluate_exit_policy(
             position=position_payload,
-            mark=_coerce_float(position_payload.get("close_mark")),
+            mark=coerce_float(position_payload.get("close_mark")),
             now=now,
         )
         policy_decision["decision_source"] = "position_exit_policy"
@@ -267,7 +252,7 @@ def describe_position_exit_state(
     if not details:
         fallback = evaluate_exit_policy(
             position=position,
-            mark=_coerce_float(position.get("close_mark")),
+            mark=coerce_float(position.get("close_mark")),
             now=current_time,
         )
         details = {
@@ -287,24 +272,24 @@ def describe_position_exit_state(
             }
         }
     return {
-        "decision_source": _as_text(decision.get("decision_source")),
+        "decision_source": as_text(decision.get("decision_source")),
         "management_recipe_refs": [str(value) for value in list(decision.get("management_recipe_refs") or []) if str(value or "").strip()],
         "should_close": bool(decision.get("should_close")),
         "reason": str(decision.get("reason") or "unknown"),
         "close_decision_state": close_decision.get("decision_state"),
         "close_decision_id": close_decision.get("close_decision_id"),
         "close_decision": close_decision,
-        "recipe_ref": _as_text(decision.get("recipe_ref")),
-        "limit_price": _coerce_float(decision.get("limit_price")),
-        "limit_price_source": _as_text(decision.get("limit_price_source")),
+        "recipe_ref": as_text(decision.get("recipe_ref")),
+        "limit_price": coerce_float(decision.get("limit_price")),
+        "limit_price_source": as_text(decision.get("limit_price_source")),
         "current_mark": _round_money(details.get("mark")),
         "effective_mark": _round_money(details.get("effective_mark")),
-        "mark_state": _as_text(details.get("mark_state")),
+        "mark_state": as_text(details.get("mark_state")),
         "entry_value": _round_money(details.get("entry_value")),
-        "premium_kind": _as_text(details.get("premium_kind")),
+        "premium_kind": as_text(details.get("premium_kind")),
         "profit_target_mark": _round_money(details.get("profit_target_mark")),
         "stop_mark": _round_money(details.get("stop_mark")),
-        "force_close_at": _as_text(details.get("force_close_at")),
+        "force_close_at": as_text(details.get("force_close_at")),
     }
 
 

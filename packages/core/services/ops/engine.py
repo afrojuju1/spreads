@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from core.services.positions import enrich_position_row
 from core.services.trading_strategies import load_active_trading_strategies
-from core.services.value_coercion import as_text as _as_text
+from core.services.value_coercion import as_text
 from core.storage.capture_models import CaptureSummaryModel
 from core.storage.engine_models import (
     CandidateRunModel,
@@ -369,7 +369,7 @@ def _capture_summary(*, capture_store: Any, now: datetime) -> dict[str, Any]:
         with capture_store.session_factory() as session:
             latest = session.scalars(select(CaptureSummaryModel).order_by(CaptureSummaryModel.captured_at.desc()).limit(1)).first()
         latest_summary = None if latest is None else capture_store.row(latest)
-    latest_status = None if latest_summary is None else _as_text(latest_summary.get("status"))
+    latest_status = None if latest_summary is None else as_text(latest_summary.get("status"))
     if active_targets:
         status = "healthy" if latest_status in {None, "ok", "idle"} else "degraded"
     else:

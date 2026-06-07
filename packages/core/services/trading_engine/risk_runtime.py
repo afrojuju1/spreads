@@ -9,25 +9,10 @@ from core.services.risk_manager import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
 )
+from core.services.value_coercion import as_text, coerce_float
 from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ("open", "partial_close")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def position_status(position: Mapping[str, Any]) -> str:
@@ -75,15 +60,15 @@ def position_close_block_reason(position: Mapping[str, Any], *, now: datetime) -
     if status and status not in OPEN_POSITION_STATUSES:
         return "position_not_open"
 
-    remaining_quantity = _coerce_float(position_payload.get("remaining_quantity")) or 0.0
+    remaining_quantity = coerce_float(position_payload.get("remaining_quantity")) or 0.0
     if remaining_quantity <= 0:
         return "no_remaining_quantity"
 
-    reconciliation_status = _as_text(position_payload.get("reconciliation_status"))
+    reconciliation_status = as_text(position_payload.get("reconciliation_status"))
     if reconciliation_status != "matched":
         return "awaiting_broker_reconciliation"
 
-    last_reconciled_at = parse_datetime(_as_text(position_payload.get("last_reconciled_at")))
+    last_reconciled_at = parse_datetime(as_text(position_payload.get("last_reconciled_at")))
     if last_reconciled_at is None:
         return "awaiting_broker_reconciliation"
 
@@ -112,7 +97,7 @@ def close_execution_block_reason(
     position: Mapping[str, Any],
     now: datetime,
 ) -> str | None:
-    position_id = _as_text(position.get("position_id"))
+    position_id = as_text(position.get("position_id"))
     if position_id is not None and has_open_close_attempt(execution_store, position_id=position_id):
         return "close_already_open"
     return position_close_block_reason(position, now=now)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -8,7 +8,15 @@ from typing import Any
 from core.services.scanners.config import parse_args as parse_scanner_args
 from core.services.strategy_builders import build_entry_runtime_candidates_with_diagnostics, runtime_owner_key
 from core.services.ticker_sources import resolve_ticker_source_symbols
-from core.services.trading_engine.data import CaptureTargetRequest, CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet, TickerSourceSpec
+from core.services.trading_engine.data import (
+    CaptureTargetDeclaration,
+    CaptureTargetRequest,
+    CandidateBuildRequest,
+    CandidateBuildResult,
+    ResolvedTickerSet,
+    TickerSourceFallback,
+    TickerSourceSpec,
+)
 from core.services.trading_engine.kernel import EngineContext
 from core.services.trading_strategies import StrategySource, load_universe_symbols
 from core.services.trading_strategy_runtime import EntryRuntime
@@ -28,15 +36,12 @@ def engine_snapshot_label(
 
 
 def ticker_source_spec_from_strategy_source(source: StrategySource) -> TickerSourceSpec:
-    fallback: dict[str, Any] = {}
-    if source.fallback_universe_ref is not None:
-        fallback["universe_ref"] = source.fallback_universe_ref
     return TickerSourceSpec(
         source_type=source.kind,
         ref=source.ref,
         max_age_seconds=source.max_age_seconds,
         max_symbols=source.max_symbols,
-        fallback=fallback,
+        fallback=TickerSourceFallback(universe_ref=source.fallback_universe_ref),
     )
 
 
@@ -108,9 +113,9 @@ class PostgresDataEngine:
         self,
         request: CandidateBuildRequest,
     ) -> CandidateBuildResult:
-        runtime = request.build_policy.get("entry_runtime")
+        runtime = request.entry_runtime
         if not isinstance(runtime, EntryRuntime):
-            raise ValueError("CandidateBuildRequest.build_policy.entry_runtime is required")
+            raise ValueError("CandidateBuildRequest.entry_runtime is required")
         return self.build_entry_trade_candidates(
             request=request,
             runtime=runtime,
@@ -199,11 +204,16 @@ class PostgresDataEngine:
 
     def declare_capture_targets(
         self,
-        requests: Any,
-    ) -> Mapping[str, Any]:
+        requests: Sequence[CaptureTargetRequest],
+    ) -> CaptureTargetDeclaration:
         capture_store = self.context.storage.capture
         if not capture_store.target_schema_ready():
-            return {"status": "skipped", "reason": "capture_schema_unavailable"}
+            return CaptureTargetDeclaration(
+                status="skipped",
+                reason="capture_schema_unavailable",
+                request_count=0,
+                target_counts={},
+            )
 
         request_rows = [request for request in list(requests or []) if isinstance(request, CaptureTargetRequest)]
         counts: dict[str, int] = {}
@@ -234,11 +244,11 @@ class PostgresDataEngine:
                 rows=rows,
             )
             counts[request.reason] = counts.get(request.reason, 0) + len(persisted)
-        return {
-            "status": "ok",
-            "request_count": len(request_rows),
-            "target_counts": counts,
-        }
+        return CaptureTargetDeclaration(
+            status="ok",
+            request_count=len(request_rows),
+            target_counts=counts,
+        )
 
     def _resolved_ticker_set(
         self,
@@ -269,19 +279,15 @@ class PostgresDataEngine:
 
     @staticmethod
     def _fallback_universe_ref(source: TickerSourceSpec) -> str | None:
-        fallback_ref = source.fallback.get("universe_ref") if isinstance(source.fallback, Mapping) else None
+        fallback_ref = source.fallback.universe_ref
         if fallback_ref in (None, ""):
             return None
         return str(fallback_ref)
 
     @staticmethod
     def _candidate_limit(request: CandidateBuildRequest) -> int:
-        policy = request.build_policy
-        for key in ("per_runtime_limit", "top", "candidate_limit"):
-            value = policy.get(key)
-            if value in (None, ""):
-                continue
-            return max(int(value), 1)
+        if request.candidate_limit not in (None, ""):
+            return max(int(request.candidate_limit), 1)
         return DEFAULT_ENTRY_CANDIDATE_LIMIT
 
     @staticmethod
@@ -302,9 +308,9 @@ class PostgresDataEngine:
         args.universe = None
         args.strategy = runtime.build_settings.scanner_strategy
         args.profile = runtime.build_settings.scanner_profile
-        args.greeks_source = str(request.build_policy.get("greeks_source") or DEFAULT_GREEKS_SOURCE)
+        args.greeks_source = str(request.greeks_source or DEFAULT_GREEKS_SOURCE)
         args.top = self._candidate_limit(request)
-        args.per_symbol_top = max(int(request.build_policy.get("per_symbol_top") or 1), 1)
+        args.per_symbol_top = max(int(request.per_symbol_top or 1), 1)
         args.history_db = self.context.db_target
         args.session_label = engine_snapshot_label(
             universe_label=entry_engine_label(runtime),

@@ -3,9 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from .kernel import EngineRunRef
+from .kernel import EngineEvidence, EnginePayload, EngineSummary, EngineRunRef
+
+if TYPE_CHECKING:
+    from core.services.trading_strategy_runtime import EntryRuntime
+
+
+@dataclass(frozen=True)
+class TickerSourceFallback:
+    universe_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -15,7 +23,7 @@ class TickerSourceSpec:
     max_age_seconds: int | None = None
     max_symbols: int | None = None
     stale_behavior: str = "skip"
-    fallback: Mapping[str, Any] = field(default_factory=dict)
+    fallback: TickerSourceFallback = field(default_factory=TickerSourceFallback)
 
 
 @dataclass(frozen=True)
@@ -26,7 +34,7 @@ class ResolvedTickerSet:
     ticker_source_run_id: str | None = None
     reason_codes: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
-    evidence: Mapping[str, Any] = field(default_factory=dict)
+    evidence: EngineEvidence = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -35,18 +43,21 @@ class CandidateBuildRequest:
     trading_strategy_id: str
     trade_structure: str
     symbols: tuple[str, ...]
-    build_policy: Mapping[str, Any] = field(default_factory=dict)
-    source_evidence: Mapping[str, Any] = field(default_factory=dict)
+    entry_runtime: EntryRuntime | None = None
+    candidate_limit: int | None = None
+    per_symbol_top: int = 1
+    greeks_source: str = "auto"
+    source_evidence: EngineEvidence = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class CandidateBuildResult:
     run_ref: EngineRunRef
     candidate_run_id: str
-    candidates: tuple[Mapping[str, Any], ...]
-    diagnostics: tuple[Mapping[str, Any], ...] = ()
-    failures: tuple[Mapping[str, Any], ...] = ()
-    summary: Mapping[str, Any] = field(default_factory=dict)
+    candidates: tuple[EnginePayload, ...]
+    diagnostics: tuple[EnginePayload, ...] = ()
+    failures: tuple[EnginePayload, ...] = ()
+    summary: EngineSummary = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -57,7 +68,15 @@ class CaptureTargetRequest:
     priority: int
     ttl_seconds: int
     reason: str
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: EnginePayload = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CaptureTargetDeclaration:
+    status: str
+    request_count: int
+    target_counts: Mapping[str, int] = field(default_factory=dict)
+    reason: str | None = None
 
 
 class DataEngine(Protocol):
@@ -76,4 +95,4 @@ class DataEngine(Protocol):
     def declare_capture_targets(
         self,
         requests: Sequence[CaptureTargetRequest],
-    ) -> Mapping[str, Any]: ...
+    ) -> CaptureTargetDeclaration: ...

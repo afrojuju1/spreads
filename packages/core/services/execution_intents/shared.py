@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 
 from core.services.option_structures import (
@@ -14,6 +13,13 @@ from core.services.trading_lifecycle import (
     require_lifecycle_transition,
     validate_lifecycle_transition,
     normalize_lifecycle_state,
+)
+from core.services.value_coercion import (
+    as_text,
+    coerce_float,
+    coerce_int,
+    utc_now,
+    utc_now_iso,
 )
 from core.storage.serializers import parse_datetime
 
@@ -43,35 +49,6 @@ TERMINAL_INTENT_STATES = {
 _UNCHANGED = object()
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
-
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
@@ -99,7 +76,7 @@ def validate_execution_intent_transition(
 ):
     return validate_lifecycle_transition(
         LifecycleObject.EXECUTION_INTENT,
-        None if _as_text(from_state) is None else normalize_execution_intent_state(from_state),
+        None if as_text(from_state) is None else normalize_execution_intent_state(from_state),
         normalize_execution_intent_state(to_state),
     )
 
@@ -111,7 +88,7 @@ def require_execution_intent_transition(
     normalized_to = normalize_execution_intent_state(to_state)
     require_lifecycle_transition(
         LifecycleObject.EXECUTION_INTENT,
-        None if _as_text(from_state) is None else normalize_execution_intent_state(from_state),
+        None if as_text(from_state) is None else normalize_execution_intent_state(from_state),
         normalized_to,
     )
     return normalized_to
@@ -161,7 +138,7 @@ def _update_intent(
     resolved_payload = _intent_payload(intent) if payload is _UNCHANGED else dict(payload or {})
     if payload_updates:
         resolved_payload.update(payload_updates)
-    current_state = _as_text(intent.get("state"))
+    current_state = as_text(intent.get("state"))
     if state is _UNCHANGED:
         if current_state is None:
             raise ValueError("Execution intent is missing its lifecycle state.")
@@ -171,21 +148,21 @@ def _update_intent(
     return execution_store.upsert_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
         trading_strategy_id=str(intent["trading_strategy_id"]),
-        trade_signal_id=(_as_text(intent.get("trade_signal_id")) if trade_signal_id is _UNCHANGED else trade_signal_id),
-        trade_decision_id=(_as_text(intent.get("trade_decision_id")) if trade_decision_id is _UNCHANGED else trade_decision_id),
-        strategy_position_id=(_as_text(intent.get("strategy_position_id")) if strategy_position_id is _UNCHANGED else strategy_position_id),
-        execution_attempt_id=(_as_text(intent.get("execution_attempt_id")) if execution_attempt_id is _UNCHANGED else execution_attempt_id),
+        trade_signal_id=(as_text(intent.get("trade_signal_id")) if trade_signal_id is _UNCHANGED else trade_signal_id),
+        trade_decision_id=(as_text(intent.get("trade_decision_id")) if trade_decision_id is _UNCHANGED else trade_decision_id),
+        strategy_position_id=(as_text(intent.get("strategy_position_id")) if strategy_position_id is _UNCHANGED else strategy_position_id),
+        execution_attempt_id=(as_text(intent.get("execution_attempt_id")) if execution_attempt_id is _UNCHANGED else execution_attempt_id),
         action_type=str(intent["action_type"]),
         slot_key=str(intent["slot_key"]),
-        claim_token=(_as_text(intent.get("claim_token")) if claim_token is _UNCHANGED else claim_token),
+        claim_token=(as_text(intent.get("claim_token")) if claim_token is _UNCHANGED else claim_token),
         policy_ref=dict(intent.get("policy_ref") or {}),
         config_hash=str(intent.get("config_hash") or ""),
         state=resolved_state,
-        expires_at=(_as_text(intent.get("expires_at")) if expires_at is _UNCHANGED else expires_at),
-        superseded_by_id=(_as_text(intent.get("superseded_by_id")) if superseded_by_id is _UNCHANGED else superseded_by_id),
+        expires_at=(as_text(intent.get("expires_at")) if expires_at is _UNCHANGED else expires_at),
+        superseded_by_id=(as_text(intent.get("superseded_by_id")) if superseded_by_id is _UNCHANGED else superseded_by_id),
         payload=resolved_payload,
         created_at=str(intent["created_at"]),
-        updated_at=updated_at or _utc_now(),
+        updated_at=updated_at or utc_now_iso(),
     )
 
 
@@ -199,7 +176,7 @@ def _append_event(
     execution_store.append_execution_intent_event(
         execution_intent_id=execution_intent_id,
         event_type=event_type,
-        event_at=_utc_now(),
+        event_at=utc_now_iso(),
         payload=payload,
     )
 
@@ -224,7 +201,7 @@ def issue_pending_execution_intent(
     trade_decision_id: str | None = None,
     state: str = "pending",
 ) -> dict[str, Any]:
-    created_at = _utc_now()
+    created_at = utc_now_iso()
     resolved_state = require_execution_intent_transition(None, state)
     intent = execution_store.upsert_execution_intent(
         execution_intent_id=execution_intent_id,
@@ -282,9 +259,9 @@ def sync_execution_intent_from_attempt(
     event_payload: dict[str, Any] | None = None,
     payload_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    execution_attempt_id = _as_text(attempt.get("execution_attempt_id"))
-    strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(intent.get("strategy_position_id"))
-    updated_at = _utc_now()
+    execution_attempt_id = as_text(attempt.get("execution_attempt_id"))
+    strategy_position_id = as_text(attempt.get("position_id")) or as_text(intent.get("strategy_position_id"))
+    updated_at = utc_now_iso()
     updated = _update_intent(
         execution_store,
         intent,
@@ -337,12 +314,12 @@ def _reprice_count(intent: dict[str, Any]) -> int:
 
 
 def _submitted_age_seconds(attempt: dict[str, Any]) -> float | None:
-    submitted_at = parse_datetime(_as_text(attempt.get("submitted_at")))
+    submitted_at = parse_datetime(as_text(attempt.get("submitted_at")))
     if submitted_at is None:
-        submitted_at = parse_datetime(_as_text(attempt.get("requested_at")))
+        submitted_at = parse_datetime(as_text(attempt.get("requested_at")))
     if submitted_at is None:
         return None
-    return max((datetime.now(UTC) - submitted_at).total_seconds(), 0.0)
+    return max((utc_now() - submitted_at).total_seconds(), 0.0)
 
 
 def _repricing_policy(intent: dict[str, Any], attempt: dict[str, Any]) -> dict[str, Any]:
@@ -371,9 +348,9 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
     request = _attempt_request(attempt)
     candidate = request.get("candidate") if isinstance(request.get("candidate"), dict) else {}
     execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), dict) else {}
-    current_limit = _coerce_float(attempt.get("requested_limit_price"))
+    current_limit = coerce_float(attempt.get("requested_limit_price"))
     if current_limit is None:
-        current_limit = _coerce_float(attempt.get("limit_price"))
+        current_limit = coerce_float(attempt.get("limit_price"))
     if current_limit is None:
         return None
     policy = _repricing_policy(intent, attempt)
@@ -381,14 +358,14 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
     if action_type == "close":
         if not policy or not _policy_enabled(policy):
             return None
-        max_reprices = _coerce_int(policy.get("max_reprices", policy.get("max_reprice_count")))
+        max_reprices = coerce_int(policy.get("max_reprices", policy.get("max_reprice_count")))
         if max_reprices is None:
             max_reprices = 3
         if _reprice_count(intent) >= max(max_reprices, 0):
             return None
-    natural_value = _coerce_float(candidate.get("natural_credit") or candidate.get("natural_debit") or candidate.get("natural_value"))
+    natural_value = coerce_float(candidate.get("natural_credit") or candidate.get("natural_debit") or candidate.get("natural_value"))
     max_credit_concession = max(
-        _coerce_float(
+        coerce_float(
             policy.get(
                 "max_concession",
                 policy.get(
@@ -401,10 +378,10 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
         0.0,
     )
     step = max(
-        _coerce_float(policy.get("price_step", policy.get("step"))) or 0.01,
+        coerce_float(policy.get("price_step", policy.get("step"))) or 0.01,
         0.01,
     )
-    original_limit = _coerce_float(
+    original_limit = coerce_float(
         _intent_payload(intent).get(
             "original_limit_price",
             request.get("original_limit_price"),

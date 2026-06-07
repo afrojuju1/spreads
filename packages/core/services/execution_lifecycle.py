@@ -12,6 +12,7 @@ from core.services.trading_lifecycle import (
     is_terminal_lifecycle_state,
     normalize_lifecycle_state,
 )
+from core.services.value_coercion import as_text, coerce_float, coerce_int
 from core.storage.serializers import parse_datetime
 
 PENDING_SUBMISSION_STATUS = "pending_submission"
@@ -50,35 +51,8 @@ OPEN_ATTEMPT_STATUSES = frozenset(
 )
 OPEN_ATTEMPT_STATUS_LIST = tuple(sorted(OPEN_ATTEMPT_STATUSES))
 BROKER_WORKING_ATTEMPT_STATUSES = frozenset(
-    status
-    for status in OPEN_ATTEMPT_STATUSES
-    if status not in {PENDING_SUBMISSION_STATUS, SUBMIT_UNKNOWN_STATUS}
+    status for status in OPEN_ATTEMPT_STATUSES if status not in {PENDING_SUBMISSION_STATUS, SUBMIT_UNKNOWN_STATUS}
 )
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
 
 
 def _seconds_since(value: Any, *, now: datetime) -> float | None:
@@ -152,12 +126,7 @@ def resolve_execution_attempt_primary_order(
     if not isinstance(orders, list):
         return None
     primary = next(
-        (
-            order
-            for order in orders
-            if isinstance(order, Mapping)
-            and not _as_text(order.get("parent_broker_order_id"))
-        ),
+        (order for order in orders if isinstance(order, Mapping) and not as_text(order.get("parent_broker_order_id"))),
         None,
     )
     if primary is not None:
@@ -185,14 +154,8 @@ def resolve_execution_attempt_filled_quantity(
     *,
     primary_order: Mapping[str, Any] | None = None,
 ) -> float:
-    primary = (
-        primary_order
-        if primary_order is not None
-        else resolve_execution_attempt_primary_order(attempt)
-    )
-    primary_value = (
-        None if primary is None else _coerce_float(primary.get("filled_qty"))
-    )
+    primary = primary_order if primary_order is not None else resolve_execution_attempt_primary_order(attempt)
+    primary_value = None if primary is None else coerce_float(primary.get("filled_qty"))
     if primary_value is not None and primary_value > 0:
         return primary_value
 
@@ -200,7 +163,7 @@ def resolve_execution_attempt_filled_quantity(
     for order in attempt.get("orders") or []:
         if not isinstance(order, Mapping):
             continue
-        filled = _coerce_float(order.get("filled_qty"))
+        filled = coerce_float(order.get("filled_qty"))
         if filled is not None and filled > 0:
             order_values.append(filled)
     if order_values:
@@ -210,11 +173,9 @@ def resolve_execution_attempt_filled_quantity(
     for fill in attempt.get("fills") or []:
         if not isinstance(fill, Mapping):
             continue
-        cumulative = _coerce_float(fill.get("cumulative_quantity"))
-        quantity = _coerce_float(fill.get("quantity"))
-        candidate = (
-            cumulative if cumulative is not None and cumulative > 0 else quantity
-        )
+        cumulative = coerce_float(fill.get("cumulative_quantity"))
+        quantity = coerce_float(fill.get("quantity"))
+        candidate = cumulative if cumulative is not None and cumulative > 0 else quantity
         if candidate is not None and candidate > 0:
             fill_values.append(candidate)
     if fill_values:
@@ -228,20 +189,12 @@ def resolve_open_attempt_working_stale_after_seconds(
     source_job_definition: Mapping[str, Any] | None = None,
 ) -> float | None:
     source = resolve_execution_attempt_source(attempt)
-    if _as_text(source.get("kind")) != "auto_session_execution":
+    if as_text(source.get("kind")) != "auto_session_execution":
         return None
 
     stale_after_seconds = AUTO_OPEN_ATTEMPT_STALE_AFTER_FALLBACK_SECONDS
-    payload = (
-        source_job_definition.get("payload")
-        if isinstance(source_job_definition, Mapping)
-        else {}
-    )
-    interval_seconds = (
-        _coerce_int(payload.get("interval_seconds"))
-        if isinstance(payload, Mapping)
-        else None
-    )
+    payload = source_job_definition.get("payload") if isinstance(source_job_definition, Mapping) else {}
+    interval_seconds = coerce_int(payload.get("interval_seconds")) if isinstance(payload, Mapping) else None
     if interval_seconds is not None and interval_seconds > 0:
         stale_after_seconds = max(
             interval_seconds * 2,
@@ -260,37 +213,29 @@ def classify_open_execution_attempt(
     running_submit_stale_after_seconds: int = PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
 ) -> dict[str, Any]:
     status = normalize_execution_attempt_status(attempt.get("status"))
-    broker_order_id = _as_text(attempt.get("broker_order_id"))
+    broker_order_id = as_text(attempt.get("broker_order_id"))
     source = resolve_execution_attempt_source(attempt)
-    source_kind = _as_text(source.get("kind")) or "unknown"
+    source_kind = as_text(source.get("kind")) or "unknown"
     filled_quantity = resolve_execution_attempt_filled_quantity(attempt)
-    requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
-    pending_quantity = max(
-        requested_quantity - min(filled_quantity, requested_quantity), 0.0
-    )
-    linked_position_id = _as_text(attempt.get("position_id"))
+    requested_quantity = max(coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    pending_quantity = max(requested_quantity - min(filled_quantity, requested_quantity), 0.0)
+    linked_position_id = as_text(attempt.get("position_id"))
     occupies_position_slot = linked_position_id is None and filled_quantity <= 0
-    submit_job_status = normalize_execution_attempt_status(
-        None if not isinstance(submit_job, Mapping) else submit_job.get("status")
-    )
+    submit_job_status = normalize_execution_attempt_status(None if not isinstance(submit_job, Mapping) else submit_job.get("status"))
     queue_age_seconds = _seconds_since(attempt.get("requested_at"), now=now)
     submitted_age_seconds = _seconds_since(
-        _as_text(attempt.get("submitted_at")) or _as_text(attempt.get("requested_at")),
+        as_text(attempt.get("submitted_at")) or as_text(attempt.get("requested_at")),
         now=now,
     )
     submit_job_age_seconds = _seconds_since(
-        None
-        if not isinstance(submit_job, Mapping)
-        else submit_job.get("scheduled_for"),
+        None if not isinstance(submit_job, Mapping) else submit_job.get("scheduled_for"),
         now=now,
     )
     submit_job_heartbeat_age_seconds = _seconds_since(
-        None
-        if not isinstance(submit_job, Mapping)
-        else (
-            submit_job.get("heartbeat_at")
-            or submit_job.get("started_at")
-            or submit_job.get("scheduled_for")
+        (
+            None
+            if not isinstance(submit_job, Mapping)
+            else (submit_job.get("heartbeat_at") or submit_job.get("started_at") or submit_job.get("scheduled_for"))
         ),
         now=now,
     )
@@ -305,9 +250,7 @@ def classify_open_execution_attempt(
         "status": status,
         "age_seconds": submitted_age_seconds,
         "queue_age_seconds": queue_age_seconds,
-        "submit_job_run_id": resolve_execution_submit_job_run_id(
-            str(attempt.get("execution_attempt_id") or "")
-        ),
+        "submit_job_run_id": resolve_execution_submit_job_run_id(str(attempt.get("execution_attempt_id") or "")),
         "submit_job_status": None if not submit_job_status else submit_job_status,
         "submit_job_age_seconds": submit_job_age_seconds,
         "submit_job_heartbeat_age_seconds": submit_job_heartbeat_age_seconds,
@@ -336,32 +279,24 @@ def classify_open_execution_attempt(
             lifecycle["next_action"] = "fail_unsubmitted"
             lifecycle["intervention"] = "fail_unsubmitted"
             lifecycle["note"] = (
-                "Execution remained queued locally past the submission grace window "
-                "and the submit job did not complete successfully."
+                "Execution remained queued locally past the submission grace window " "and the submit job did not complete successfully."
             )
             return lifecycle
         if submit_job_status == "queued":
             lifecycle["stale"] = True
             lifecycle["next_action"] = "fail_unsubmitted"
             lifecycle["intervention"] = "fail_unsubmitted"
-            lifecycle["note"] = (
-                "Execution remained queued locally past the submission grace window "
-                "without reaching a worker."
-            )
+            lifecycle["note"] = "Execution remained queued locally past the submission grace window " "without reaching a worker."
             return lifecycle
         if submit_job_status == "running":
             heartbeat_stale_after = float(max(running_submit_stale_after_seconds, 1))
-            if (
-                submit_job_heartbeat_age_seconds is not None
-                and submit_job_heartbeat_age_seconds > heartbeat_stale_after
-            ):
+            if submit_job_heartbeat_age_seconds is not None and submit_job_heartbeat_age_seconds > heartbeat_stale_after:
                 lifecycle["phase"] = "submit_unknown"
                 lifecycle["stale"] = True
                 lifecycle["next_action"] = "reconcile_broker"
                 lifecycle["intervention"] = "mark_submit_unknown"
                 lifecycle["note"] = (
-                    "Execution submit outcome is uncertain because the submit job heartbeat "
-                    "is stale and broker submission may have happened."
+                    "Execution submit outcome is uncertain because the submit job heartbeat " "is stale and broker submission may have happened."
                 )
             return lifecycle
         if submit_job_status == "succeeded":
@@ -370,25 +305,19 @@ def classify_open_execution_attempt(
             lifecycle["next_action"] = "reconcile_broker"
             lifecycle["intervention"] = "mark_submit_unknown"
             lifecycle["note"] = (
-                "Execution submit outcome is uncertain because the submit job completed "
-                "without a reconciled broker order on the attempt."
+                "Execution submit outcome is uncertain because the submit job completed " "without a reconciled broker order on the attempt."
             )
             return lifecycle
         lifecycle["stale"] = True
         lifecycle["next_action"] = "fail_unsubmitted"
         lifecycle["intervention"] = "fail_unsubmitted"
-        lifecycle["note"] = (
-            "Execution remained queued locally past the submission grace window "
-            "and requires cleanup."
-        )
+        lifecycle["note"] = "Execution remained queued locally past the submission grace window " "and requires cleanup."
         return lifecycle
 
     if status == SUBMIT_UNKNOWN_STATUS:
         lifecycle["phase"] = "submit_unknown"
         lifecycle["stale"] = True
-        lifecycle["note"] = (
-            "Execution submit outcome is uncertain and needs broker reconciliation."
-        )
+        lifecycle["note"] = "Execution submit outcome is uncertain and needs broker reconciliation."
         lifecycle["next_action"] = "reconcile_broker"
         return lifecycle
 
@@ -396,48 +325,32 @@ def classify_open_execution_attempt(
         lifecycle["phase"] = "canceling"
         lifecycle["note"] = "Execution is waiting for broker cancel confirmation."
         lifecycle["next_action"] = "wait_for_cancel_confirmation"
-        if (
-            working_stale_after_seconds is not None
-            and submitted_age_seconds is not None
-            and submitted_age_seconds > working_stale_after_seconds
-        ):
+        if working_stale_after_seconds is not None and submitted_age_seconds is not None and submitted_age_seconds > working_stale_after_seconds:
             lifecycle["stale"] = True
             lifecycle["next_action"] = "escalate"
-            lifecycle["note"] = (
-                "Execution cancel request is stale and needs operator review."
-            )
+            lifecycle["note"] = "Execution cancel request is stale and needs operator review."
         return lifecycle
 
     if status == "partially_filled":
         lifecycle["phase"] = "partial_open"
         lifecycle["occupies_position_slot"] = False
-        lifecycle["note"] = (
-            "Execution is partially filled and linked to position ownership."
-        )
+        lifecycle["note"] = "Execution is partially filled and linked to position ownership."
         lifecycle["next_action"] = "manage_partial_open"
         return lifecycle
 
     lifecycle["phase"] = "working_fresh"
     lifecycle["note"] = "Execution is working at the broker."
     lifecycle["next_action"] = "wait_for_broker_update"
-    if (
-        working_stale_after_seconds is not None
-        and submitted_age_seconds is not None
-        and submitted_age_seconds > working_stale_after_seconds
-    ):
+    if working_stale_after_seconds is not None and submitted_age_seconds is not None and submitted_age_seconds > working_stale_after_seconds:
         lifecycle["phase"] = "working_stale"
         lifecycle["stale"] = True
         if source_kind == "auto_session_execution":
             lifecycle["next_action"] = "cancel_order"
             lifecycle["intervention"] = "cancel_order"
-            lifecycle["note"] = (
-                "Automatic open execution remained pending past its stale-order window."
-            )
+            lifecycle["note"] = "Automatic open execution remained pending past its stale-order window."
         else:
             lifecycle["next_action"] = "escalate"
-            lifecycle["note"] = (
-                "Manual open execution remained pending past its review window."
-            )
+            lifecycle["note"] = "Manual open execution remained pending past its review window."
     return lifecycle
 
 
@@ -506,18 +419,14 @@ def project_execution_attempt_lifecycle(
 ) -> dict[str, Any]:
     status = normalize_execution_attempt_status(attempt.get("status"))
     state = normalize_execution_attempt_lifecycle_state(status)
-    broker_order_id = _as_text(attempt.get("broker_order_id"))
+    broker_order_id = as_text(attempt.get("broker_order_id"))
     primary_order = resolve_execution_attempt_primary_order(attempt)
-    broker_order_state = (
-        None
-        if primary_order is None
-        else normalize_broker_order_lifecycle_state(primary_order.get("order_status"))
-    )
+    broker_order_state = None if primary_order is None else normalize_broker_order_lifecycle_state(primary_order.get("order_status"))
     filled_quantity = resolve_execution_attempt_filled_quantity(
         attempt,
         primary_order=primary_order,
     )
-    requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    requested_quantity = max(coerce_float(attempt.get("quantity")) or 0.0, 0.0)
     pending_quantity = max(
         requested_quantity - min(filled_quantity, requested_quantity),
         0.0,
@@ -549,8 +458,7 @@ def project_execution_attempt_lifecycle(
         "filled_quantity": round(filled_quantity, 4),
         "pending_quantity": round(pending_quantity, 4),
         "age_seconds": _seconds_since(
-            _as_text(attempt.get("submitted_at"))
-            or _as_text(attempt.get("requested_at")),
+            as_text(attempt.get("submitted_at")) or as_text(attempt.get("requested_at")),
             now=now,
         ),
         "queue_age_seconds": _seconds_since(attempt.get("requested_at"), now=now),
@@ -568,11 +476,7 @@ def project_execution_attempt_lifecycle(
         lifecycle["object_type"] = LifecycleObject.EXECUTION_ATTEMPT.value
         lifecycle["lifecycle_state"] = state
         if bool(open_lifecycle.get("stale")):
-            lifecycle["lifecycle_state"] = (
-                ExecutionAttemptState.STALE.value
-                if state == ExecutionAttemptState.WORKING.value
-                else state
-            )
+            lifecycle["lifecycle_state"] = ExecutionAttemptState.STALE.value if state == ExecutionAttemptState.WORKING.value else state
         lifecycle["broker_order_state"] = broker_order_state
         lifecycle["broker_order_state_counts"] = _order_state_counts(attempt)
         lifecycle["primary_broker_order_id"] = None if primary_order is None else primary_order.get("broker_order_id")
@@ -580,7 +484,7 @@ def project_execution_attempt_lifecycle(
         lifecycle["fill_count"] = _mapping_row_count(attempt.get("fills"))
     if lifecycle.get("intervention") is not None:
         lifecycle["next_action"] = lifecycle["intervention"]
-    elif _as_text(lifecycle.get("next_action")) is None:
+    elif as_text(lifecycle.get("next_action")) is None:
         lifecycle["next_action"] = _next_action_for_lifecycle_state(
             str(lifecycle.get("lifecycle_state") or state),
             stale=bool(lifecycle.get("stale")),

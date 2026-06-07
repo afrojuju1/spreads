@@ -27,10 +27,10 @@ from core.services.session_positions import (
     resolve_trade_intent,
 )
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    coerce_int as _coerce_int,
-    utc_now_iso as _utc_now,
+    as_text,
+    coerce_float,
+    coerce_int,
+    utc_now_iso,
 )
 from .alpaca_adapter import create_alpaca_order_adapter
 from .attempts import (
@@ -101,17 +101,17 @@ def submit_equity_order(
         raise ValueError("Equity order time_in_force must be day or gtc")
 
     resolved_trade_intent = resolve_trade_intent(
-        _as_text(metadata.get("trade_intent")) or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
+        as_text(metadata.get("trade_intent")) or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
     )
     if normalized_side == "buy":
         position_intent = "buy_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "buy_to_close"
     else:
         position_intent = "sell_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "sell_to_close"
     leg_role = "short" if position_intent in {"sell_to_open", "buy_to_close"} else "long"
-    position_id = _as_text(metadata.get("position_id"))
-    requested_at = _utc_now()
+    position_id = as_text(metadata.get("position_id"))
+    requested_at = utc_now_iso()
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
-    resolved_label = _as_text(label) or "manual_equity"
+    resolved_label = as_text(label) or "manual_equity"
     client_order_id = _execution_client_order_id()
     attempt_id = _execution_attempt_id()
     order_request = {
@@ -183,7 +183,7 @@ def submit_equity_order(
             session_id=build_live_run_scope_id(resolved_label, resolved_market_date),
             session_date=resolved_market_date,
             label=resolved_label,
-            trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
+            trading_strategy_id=as_text(metadata.get("trading_strategy_id")),
             market_date=resolved_market_date,
             cycle_id=None,
             attempt_context="equity_order",
@@ -201,8 +201,8 @@ def submit_equity_order(
             position_id=position_id,
             root_symbol=normalized_symbol,
             strategy_family=strategy,
-            style_profile=_as_text(metadata.get("style_profile")) or "manual_equity",
-            horizon_intent=_as_text(metadata.get("horizon_intent")) or "manual",
+            style_profile=as_text(metadata.get("style_profile")) or "manual_equity",
+            horizon_intent=as_text(metadata.get("horizon_intent")) or "manual",
             product_class="single_name_equity",
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
@@ -220,14 +220,14 @@ def submit_equity_order(
                 **({} if position_id is None else {"position_id": position_id}),
                 **(
                     {}
-                    if _as_text(metadata.get("trading_strategy_id")) is None
-                    else {"trading_strategy_id": _as_text(metadata.get("trading_strategy_id"))}
+                    if as_text(metadata.get("trading_strategy_id")) is None
+                    else {"trading_strategy_id": as_text(metadata.get("trading_strategy_id"))}
                 ),
-                **({} if _as_text(metadata.get("config_hash")) is None else {"config_hash": _as_text(metadata.get("config_hash"))}),
+                **({} if as_text(metadata.get("config_hash")) is None else {"config_hash": as_text(metadata.get("config_hash"))}),
                 **(
                     {}
-                    if _as_text(metadata.get("execution_intent_id")) is None
-                    else {"execution_intent_id": _as_text(metadata.get("execution_intent_id"))}
+                    if as_text(metadata.get("execution_intent_id")) is None
+                    else {"execution_intent_id": as_text(metadata.get("execution_intent_id"))}
                 ),
                 **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
                 **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
@@ -348,22 +348,22 @@ def submit_option_order(
     if resolved_strategy_family not in {"long_call", "long_put"}:
         raise ValueError("Direct option orders currently support long_call and long_put")
     resolved_trade_intent = resolve_trade_intent(
-        _as_text(metadata.get("trade_intent")) or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
+        as_text(metadata.get("trade_intent")) or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
     )
     if resolved_trade_intent == OPEN_TRADE_INTENT and normalized_side != "buy":
         raise ValueError("Long option opens must buy to open")
     if resolved_trade_intent == CLOSE_TRADE_INTENT and normalized_side != "sell":
         raise ValueError("Long option closes must sell to close")
     position_intent = "buy_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "sell_to_close"
-    resolved_option_type = (_as_text(option_type) or ("call" if resolved_strategy_family == "long_call" else "put")).lower()
+    resolved_option_type = (as_text(option_type) or ("call" if resolved_strategy_family == "long_call" else "put")).lower()
     if resolved_option_type not in {"call", "put"}:
         raise ValueError("Option order option_type must be call or put")
 
-    resolved_expiration = _as_text(expiration_date)
-    position_id = _as_text(metadata.get("position_id"))
-    requested_at = _utc_now()
+    resolved_expiration = as_text(expiration_date)
+    position_id = as_text(metadata.get("position_id"))
+    requested_at = utc_now_iso()
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
-    resolved_label = _as_text(label) or "manual_option"
+    resolved_label = as_text(label) or "manual_option"
     client_order_id = _execution_client_order_id()
     attempt_id = _execution_attempt_id()
     legs = [
@@ -386,14 +386,14 @@ def submit_option_order(
         quantity=resolved_quantity,
     )
     order_request["client_order_id"] = client_order_id
-    profile = _as_text(metadata.get("profile")) or "weekly"
+    profile = as_text(metadata.get("profile")) or "weekly"
     policy_fields = resolve_runtime_policy_fields(
         profile=profile,
         root_symbol=normalized_underlying,
     )
     option_selection = dict(metadata.get("option_selection")) if isinstance(metadata.get("option_selection"), Mapping) else {}
     option_quote_metrics = _metadata_policy(option_selection, "quote_metrics")
-    candidate_generated_at = _as_text(option_quote_metrics.get("timestamp")) or requested_at
+    candidate_generated_at = as_text(option_quote_metrics.get("timestamp")) or requested_at
     candidate_payload = {
         "underlying_symbol": normalized_underlying,
         "strategy": resolved_strategy_family,
@@ -401,7 +401,7 @@ def submit_option_order(
         "profile": profile,
         "generated_at": candidate_generated_at,
         "expiration_date": resolved_expiration,
-        "underlying_price": _coerce_float(metadata.get("underlying_price")),
+        "underlying_price": coerce_float(metadata.get("underlying_price")),
         "legs": legs,
         "order_payload": dict(order_request),
         "structure_identity": legs_identity_key(
@@ -432,7 +432,7 @@ def submit_option_order(
     )
     if resolved_trade_intent == OPEN_TRADE_INTENT:
         position_size_policy = _strategy_position_size_policy(
-            trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
+            trading_strategy_id=as_text(metadata.get("trading_strategy_id")),
         )
         risk_evaluation = evaluate_open_execution(
             execution_store=execution_store,
@@ -492,7 +492,7 @@ def submit_option_order(
             session_id=build_live_run_scope_id(resolved_label, resolved_market_date),
             session_date=resolved_market_date,
             label=resolved_label,
-            trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
+            trading_strategy_id=as_text(metadata.get("trading_strategy_id")),
             market_date=resolved_market_date,
             cycle_id=None,
             attempt_context="option_order",
@@ -515,9 +515,9 @@ def submit_option_order(
             position_id=position_id,
             root_symbol=normalized_underlying,
             strategy_family=resolved_strategy_family,
-            style_profile=_as_text(metadata.get("style_profile")) or str(policy_fields["style_profile"]),
-            horizon_intent=_as_text(metadata.get("horizon_intent")) or str(policy_fields["horizon_intent"]),
-            product_class=_as_text(metadata.get("product_class")) or str(policy_fields["product_class"]),
+            style_profile=as_text(metadata.get("style_profile")) or str(policy_fields["style_profile"]),
+            horizon_intent=as_text(metadata.get("horizon_intent")) or str(policy_fields["horizon_intent"]),
+            product_class=as_text(metadata.get("product_class")) or str(policy_fields["product_class"]),
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             requested_at=requested_at,
@@ -534,14 +534,14 @@ def submit_option_order(
                 **({} if position_id is None else {"position_id": position_id}),
                 **(
                     {}
-                    if _as_text(metadata.get("trading_strategy_id")) is None
-                    else {"trading_strategy_id": _as_text(metadata.get("trading_strategy_id"))}
+                    if as_text(metadata.get("trading_strategy_id")) is None
+                    else {"trading_strategy_id": as_text(metadata.get("trading_strategy_id"))}
                 ),
-                **({} if _as_text(metadata.get("config_hash")) is None else {"config_hash": _as_text(metadata.get("config_hash"))}),
+                **({} if as_text(metadata.get("config_hash")) is None else {"config_hash": as_text(metadata.get("config_hash"))}),
                 **(
                     {}
-                    if _as_text(metadata.get("execution_intent_id")) is None
-                    else {"execution_intent_id": _as_text(metadata.get("execution_intent_id"))}
+                    if as_text(metadata.get("execution_intent_id")) is None
+                    else {"execution_intent_id": as_text(metadata.get("execution_intent_id"))}
                 ),
                 **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
                 **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
@@ -549,25 +549,25 @@ def submit_option_order(
                 **({} if not isinstance(metadata.get("source"), Mapping) else {"source": dict(metadata["source"])}),
                 **(
                     {}
-                    if _as_text(metadata.get("original_limit_price")) is None
-                    else {"original_limit_price": _coerce_float(metadata.get("original_limit_price"))}
+                    if as_text(metadata.get("original_limit_price")) is None
+                    else {"original_limit_price": coerce_float(metadata.get("original_limit_price"))}
                 ),
                 **(
                     {}
-                    if _as_text(metadata.get("previous_limit_price")) is None
-                    else {"previous_limit_price": _coerce_float(metadata.get("previous_limit_price"))}
+                    if as_text(metadata.get("previous_limit_price")) is None
+                    else {"previous_limit_price": coerce_float(metadata.get("previous_limit_price"))}
                 ),
                 **(
                     {}
-                    if _as_text(metadata.get("previous_execution_attempt_id")) is None
-                    else {"previous_execution_attempt_id": _as_text(metadata.get("previous_execution_attempt_id"))}
+                    if as_text(metadata.get("previous_execution_attempt_id")) is None
+                    else {"previous_execution_attempt_id": as_text(metadata.get("previous_execution_attempt_id"))}
                 ),
                 **(
                     {}
-                    if _as_text(metadata.get("supersedes_execution_intent_id")) is None
-                    else {"supersedes_execution_intent_id": _as_text(metadata.get("supersedes_execution_intent_id"))}
+                    if as_text(metadata.get("supersedes_execution_intent_id")) is None
+                    else {"supersedes_execution_intent_id": as_text(metadata.get("supersedes_execution_intent_id"))}
                 ),
-                **({} if _coerce_int(metadata.get("reprice_count")) is None else {"reprice_count": _coerce_int(metadata.get("reprice_count"))}),
+                **({} if coerce_int(metadata.get("reprice_count")) is None else {"reprice_count": coerce_int(metadata.get("reprice_count"))}),
                 **({} if not isinstance(metadata.get("repricing_policy"), Mapping) else {"repricing_policy": dict(metadata["repricing_policy"])}),
                 **({} if not option_selection else {"option_selection": option_selection}),
                 "order": order_request,

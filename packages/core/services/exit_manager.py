@@ -24,6 +24,7 @@ from core.services.trading_engine.risk_runtime import (
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
+from core.services.value_coercion import as_text, coerce_float, utc_now, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
@@ -31,28 +32,8 @@ BROKER_SYNC_KEY = "broker_sync:alpaca"
 BROKER_SYNC_IN_FLIGHT_STATUSES = {"queued", "running", "leased"}
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
 def _expires_in(minutes: int) -> str:
-    return (datetime.now(UTC) + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return (utc_now() + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _latest_broker_sync_run(storage: Any) -> dict[str, Any] | None:
@@ -96,7 +77,7 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
         snapshot["reason"] = "broker_sync_in_flight" if broker_sync_in_flight else "broker_sync_missing"
         return snapshot
 
-    updated_at = parse_datetime(_as_text(state.get("updated_at")))
+    updated_at = parse_datetime(as_text(state.get("updated_at")))
     state_status = str(state.get("status") or "unknown").lower()
     age_seconds = None
     if updated_at is not None:
@@ -137,7 +118,7 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
 
 
 def _round_money(value: Any) -> float | None:
-    parsed = _coerce_float(value)
+    parsed = coerce_float(value)
     if parsed is None:
         return None
     return round(parsed, 4)
@@ -157,16 +138,16 @@ def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, A
         if rounded is not None:
             exit_context[key] = rounded
     for key in ("mark_state", "force_close_at"):
-        text = _as_text(details.get(key))
+        text = as_text(details.get(key))
         if text is not None:
             exit_context[key] = text
 
     payload: dict[str, Any] = {
         "kind": kind,
-        "reason": _as_text(decision.get("reason")),
-        "decision_source": _as_text(decision.get("decision_source")),
-        "recipe_ref": _as_text(decision.get("recipe_ref")),
-        "limit_price_source": _as_text(decision.get("limit_price_source")),
+        "reason": as_text(decision.get("reason")),
+        "decision_source": as_text(decision.get("decision_source")),
+        "recipe_ref": as_text(decision.get("recipe_ref")),
+        "limit_price_source": as_text(decision.get("limit_price_source")),
     }
     if exit_context:
         payload["exit_context"] = exit_context
@@ -189,7 +170,7 @@ def _create_close_intent(
     close_decision = close_decision_lifecycle(
         position=position,
         decision=decision,
-        decision_source=_as_text(decision.get("decision_source")),
+        decision_source=as_text(decision.get("decision_source")),
     )
     decision = {**decision, "close_decision": close_decision}
     return issue_pending_execution_intent(
@@ -250,9 +231,9 @@ def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], stor
 def _mark_exit_evaluated(execution_store: Any, *, position_id: str, reason: str) -> None:
     execution_store.update_position(
         position_id=position_id,
-        last_exit_evaluated_at=_utc_now(),
+        last_exit_evaluated_at=utc_now_iso(),
         last_exit_reason=reason,
-        updated_at=_utc_now(),
+        updated_at=utc_now_iso(),
     )
 
 
@@ -422,7 +403,7 @@ def run_position_exit_manager(
             position=position_snapshot,
         )
         decision = dict(close_result.payload.get("decision") or {})
-        decision_source = _as_text(close_result.payload.get("decision_source")) or "portfolio_engine"
+        decision_source = as_text(close_result.payload.get("decision_source")) or "portfolio_engine"
         management_runtime = close_result.payload.get("management_runtime")
         close_decision = dict(close_result.payload.get("close_decision") or decision.get("close_decision") or {})
         evaluated += 1

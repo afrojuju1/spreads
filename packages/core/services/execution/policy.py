@@ -11,9 +11,9 @@ from core.services.deployment_policy import (
 from core.services.trading_engine.close_policy import normalize_exit_policy
 from core.services.risk_manager import normalize_risk_policy
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    coerce_int as _coerce_int,
+    as_text,
+    coerce_float,
+    coerce_int,
 )
 from core.storage.factory import build_job_repository
 from core.storage.serializers import parse_datetime
@@ -35,7 +35,7 @@ def _validate_open_timing_window(
     deployment_mode: str | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_exit_policy(exit_policy)
-    force_close_at_text = _as_text(normalized_policy.get("force_close_at"))
+    force_close_at_text = as_text(normalized_policy.get("force_close_at"))
     force_close_at = None if force_close_at_text is None else parse_datetime(force_close_at_text)
     if force_close_at is None:
         return {
@@ -49,7 +49,7 @@ def _validate_open_timing_window(
     from core.services.candidate_policy import resolve_deployment_quality_thresholds
 
     thresholds = resolve_deployment_quality_thresholds(profile)
-    minimum_minutes_to_force_close = _coerce_float(thresholds.get("min_minutes_to_force_close"))
+    minimum_minutes_to_force_close = coerce_float(thresholds.get("min_minutes_to_force_close"))
     minutes_to_force_close = round(
         max((force_close_at - current_time).total_seconds(), 0.0) / 60.0,
         1,
@@ -114,10 +114,10 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         raw_policy = source
     if isinstance(raw_policy, dict):
         quantity_configured = raw_policy.get("quantity") not in (None, "")
-        quantity = _coerce_int(raw_policy.get("quantity")) or 1
-        pricing_mode = _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
-        min_credit_retention_pct = _coerce_float(raw_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT
-        max_credit_concession = _coerce_float(raw_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION
+        quantity = coerce_int(raw_policy.get("quantity")) or 1
+        pricing_mode = as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
+        min_credit_retention_pct = coerce_float(raw_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT
+        max_credit_concession = coerce_float(raw_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION
         deployment_mode = resolve_execution_deployment_mode(
             raw_policy,
             risk_policy=(source.get("risk_policy") if isinstance(source.get("risk_policy"), Mapping) else None),
@@ -150,7 +150,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             "min_credit_retention_pct": min_credit_retention_pct,
             "max_credit_concession": max_credit_concession,
         }
-    mode = _as_text(raw_policy.get("mode")) if isinstance(raw_policy, dict) else None
+    mode = as_text(raw_policy.get("mode")) if isinstance(raw_policy, dict) else None
     if mode == "disabled":
         mode = None
     mode = mode or "top_promotable"
@@ -173,7 +173,7 @@ def _resolve_source_policies(
     cycle: dict[str, Any],
     job_store: Any | None = None,
 ) -> dict[str, Any]:
-    job_run_id = _as_text(cycle.get("job_run_id"))
+    job_run_id = as_text(cycle.get("job_run_id"))
     if job_run_id is None:
         return {
             "source_job_type": None,
@@ -187,8 +187,8 @@ def _resolve_source_policies(
     job_run = resolved_job_store.get_job_run(job_run_id)
     payload = {} if job_run is None else dict(job_run["payload"])
     return {
-        "source_job_type": None if job_run is None else _as_text(job_run.get("job_type")),
-        "source_job_key": None if job_run is None else _as_text(job_run.get("job_key")),
+        "source_job_type": None if job_run is None else as_text(job_run.get("job_type")),
+        "source_job_key": None if job_run is None else as_text(job_run.get("job_key")),
         "source_job_run_id": job_run_id,
         "execution_policy": normalize_execution_policy(
             {
@@ -242,8 +242,8 @@ def _build_policy_refs(
     resolved_execution_policy: dict[str, Any],
     resolved_exit_policy: dict[str, Any],
 ) -> dict[str, Any]:
-    source_job_key = _as_text(source_policies.get("source_job_key"))
-    source_job_run_id = _as_text(source_policies.get("source_job_run_id"))
+    source_job_key = as_text(source_policies.get("source_job_key"))
+    source_job_run_id = as_text(source_policies.get("source_job_run_id"))
     risk_rollout = active_policy_rollouts.get("risk_policy")
     execution_rollout = active_policy_rollouts.get("execution_policy")
     exit_rollout = active_policy_rollouts.get("exit_policy")
@@ -268,7 +268,7 @@ def _build_policy_refs(
                 if risk_rollout is None
                 else {
                     "policy_rollout_id": str(risk_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(risk_rollout.get("operator_action_id")),
+                    "operator_action_id": as_text(risk_rollout.get("operator_action_id")),
                 }
             ),
         ),
@@ -294,7 +294,7 @@ def _build_policy_refs(
                 if execution_rollout is None
                 else {
                     "policy_rollout_id": str(execution_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(execution_rollout.get("operator_action_id")),
+                    "operator_action_id": as_text(execution_rollout.get("operator_action_id")),
                 }
             ),
         ),
@@ -318,7 +318,7 @@ def _build_policy_refs(
                 if exit_rollout is None
                 else {
                     "policy_rollout_id": str(exit_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(exit_rollout.get("operator_action_id")),
+                    "operator_action_id": as_text(exit_rollout.get("operator_action_id")),
                 }
             ),
         ),

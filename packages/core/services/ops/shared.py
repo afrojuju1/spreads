@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_int as _coerce_int,
+    as_text,
+    coerce_int,
 )
 from core.storage.serializers import parse_datetime
 
@@ -33,7 +33,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
-    text = _as_text(value)
+    text = as_text(value)
     if text is None:
         return None
     try:
@@ -83,13 +83,13 @@ def _session_status(status: Any) -> str:
 def _stream_quote_ticks_saved(capture: Mapping[str, Any] | None) -> int:
     if not isinstance(capture, Mapping):
         return 0
-    return _coerce_int(capture.get("stream_quote_ticks_saved")) or _coerce_int(capture.get("websocket_quote_ticks_saved")) or 0
+    return coerce_int(capture.get("stream_quote_ticks_saved")) or coerce_int(capture.get("websocket_quote_ticks_saved")) or 0
 
 
 def _stream_trade_ticks_saved(capture: Mapping[str, Any] | None) -> int:
     if not isinstance(capture, Mapping):
         return 0
-    return _coerce_int(capture.get("stream_trade_ticks_saved")) or _coerce_int(capture.get("websocket_trade_ticks_saved")) or 0
+    return coerce_int(capture.get("stream_trade_ticks_saved")) or coerce_int(capture.get("websocket_trade_ticks_saved")) or 0
 
 
 def _seconds_since(value: Any, *, now: datetime) -> float | None:
@@ -137,7 +137,7 @@ def _activity_at(row: Mapping[str, Any]) -> str | None:
         "requested_at",
         "updated_at",
     ):
-        value = _as_text(row.get(key))
+        value = as_text(row.get(key))
         if value:
             return value
     return None

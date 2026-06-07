@@ -19,8 +19,8 @@ from core.services.option_structures import (
     order_payload_legs,
 )
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
+    as_text,
+    coerce_float,
 )
 
 BROKER_NAME = "alpaca"
@@ -38,7 +38,7 @@ ATTEMPT_CONTEXT_BUCKET_MIRROR = {
 
 
 def _normalize_attempt_context(value: Any) -> str | None:
-    normalized = _as_text(value)
+    normalized = as_text(value)
     if normalized == "promotable":
         return "open_promotable"
     if normalized == "monitor":
@@ -47,7 +47,7 @@ def _normalize_attempt_context(value: Any) -> str | None:
 
 
 def _deprecated_bucket(value: Any) -> str | None:
-    normalized = _as_text(value)
+    normalized = as_text(value)
     if normalized is None:
         return None
     return ATTEMPT_CONTEXT_BUCKET_MIRROR.get(normalized, normalized)
@@ -113,7 +113,7 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strategy_family_from_payload(payload: Mapping[str, Any]) -> str:
-    return normalize_strategy_family(_as_text(payload.get("strategy_family")) or _as_text(payload.get("strategy")))
+    return normalize_strategy_family(as_text(payload.get("strategy_family")) or as_text(payload.get("strategy")))
 
 
 def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
@@ -122,15 +122,15 @@ def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
     candidate_payload = dict(attempt.get("candidate") or {}) if isinstance(attempt.get("candidate"), Mapping) else {}
     legs = order_payload_legs(
         request_order,
-        expiration_date=_as_text(attempt.get("expiration_date")),
+        expiration_date=as_text(attempt.get("expiration_date")),
     ) or candidate_legs(candidate_payload)
     if not legs:
         return None
     strategy = (
-        _as_text(attempt.get("strategy_family"))
-        or _as_text(attempt.get("strategy"))
-        or _as_text(candidate_payload.get("strategy_family"))
-        or _as_text(candidate_payload.get("strategy"))
+        as_text(attempt.get("strategy_family"))
+        or as_text(attempt.get("strategy"))
+        or as_text(candidate_payload.get("strategy_family"))
+        or as_text(candidate_payload.get("strategy"))
     )
     return legs_identity_key(strategy=strategy, legs=legs)
 
@@ -140,7 +140,7 @@ def _clamp_fraction(value: float, *, minimum: float = 0.0, maximum: float = 1.0)
 
 
 def _normalize_limit_value(value: Any) -> float | None:
-    numeric = _coerce_float(value)
+    numeric = coerce_float(value)
     if numeric is None or numeric == 0:
         return None
     return abs(numeric)
@@ -148,7 +148,7 @@ def _normalize_limit_value(value: Any) -> float | None:
 
 def _resolve_completed_at(order: dict[str, Any]) -> str | None:
     for key in ("filled_at", "canceled_at", "expired_at", "failed_at", "updated_at"):
-        value = _as_text(order.get(key))
+        value = as_text(order.get(key))
         if value:
             return value
     return None

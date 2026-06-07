@@ -22,9 +22,9 @@ from core.jobs.specs import (
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.storage.serializers import parse_datetime
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_int as _coerce_int,
-    utc_now_iso as _utc_now,
+    as_text,
+    coerce_int,
+    utc_now_iso,
 )
 
 from .broker_sync import broker_sync_payload as _broker_sync_payload
@@ -95,7 +95,7 @@ def _broker_sync_state_supersedes_run(
 
 
 def _broker_sync_recovered_note(broker_sync: Mapping[str, Any]) -> str:
-    updated_at = _as_text(broker_sync.get("updated_at")) or "a later sync"
+    updated_at = as_text(broker_sync.get("updated_at")) or "a later sync"
     return f"Broker sync state recovered at {updated_at}; this failed scheduled run " "is historical."
 
 
@@ -172,8 +172,8 @@ def _run_is_superseded_by_later_success(
 
 
 def _superseded_run_note(latest_run: Mapping[str, Any]) -> str:
-    latest_at = _as_text(latest_run.get("finished_at") or _activity_at(latest_run))
-    latest_id = _as_text(latest_run.get("job_run_id")) or "a later run"
+    latest_at = as_text(latest_run.get("finished_at") or _activity_at(latest_run))
+    latest_id = as_text(latest_run.get("job_run_id")) or "a later run"
     return f"Later successful run {latest_id} completed at {latest_at or 'a later time'}; " "this failed run is historical."
 
 
@@ -207,7 +207,7 @@ def _job_run_is_actionable_failure(row: Mapping[str, Any]) -> bool:
 
 def _skip_reason_text(run: Mapping[str, Any]) -> str | None:
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
-    return _as_text(result.get("reason"))
+    return as_text(result.get("reason"))
 
 
 def _skip_is_benign(run: Mapping[str, Any]) -> bool:
@@ -220,7 +220,7 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
         return True
     if reason == "superseded_by_newer_scheduled_run":
         return True
-    error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
+    error_text = str(as_text(run.get("error_text")) or "").strip().lower()
     return error_text in {
         "superseded during queue consolidation",
         "superseded by a newer live slot under scheduler coalescing.",
@@ -274,11 +274,11 @@ def _job_run_operator_status(
 ) -> tuple[str, str | None]:
     status = str(run.get("status") or "unknown").strip().lower()
     if status == "failed":
-        error_text = _as_text(run.get("error_text"))
+        error_text = as_text(run.get("error_text"))
         return "blocked", error_text or "Job run failed."
     if status == "skipped":
         result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
-        reason = _as_text(result.get("reason"))
+        reason = as_text(result.get("reason"))
         if _skip_is_benign(run):
             if reason == "singleton_lease_unavailable":
                 return (
@@ -309,7 +309,7 @@ def _job_run_operator_status(
         return "healthy", None
     if status == "running":
         payload = run.get("payload") if isinstance(run.get("payload"), Mapping) else {}
-        interval_seconds = _coerce_int(payload.get("interval_seconds")) or 0
+        interval_seconds = coerce_int(payload.get("interval_seconds")) or 0
         stale_after_seconds = max(
             interval_seconds * 2,
             JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS,
@@ -367,7 +367,7 @@ def _summarize_job_run(
         "heartbeat_at": enriched.get("heartbeat_at"),
         "activity_at": _activity_at(enriched),
         "duration_seconds": _run_duration_seconds(enriched),
-        "retry_count": _coerce_int(enriched.get("retry_count")) or 0,
+        "retry_count": coerce_int(enriched.get("retry_count")) or 0,
         "worker_name": enriched.get("worker_name"),
         "arq_job_id": enriched.get("arq_job_id"),
         "error_text": enriched.get("error_text"),
@@ -377,9 +377,9 @@ def _summarize_job_run(
         "result_reason": result.get("reason"),
         "stream_quote_ticks_saved": stream_quote_ticks_saved,
         "websocket_quote_ticks_saved": stream_quote_ticks_saved,
-        "baseline_quote_ticks_saved": _coerce_int(quote_capture.get("baseline_quote_ticks_saved")) or 0,
-        "recovery_quote_ticks_saved": _coerce_int(quote_capture.get("recovery_quote_ticks_saved")) or 0,
-        "total_trade_ticks_saved": _coerce_int(trade_capture.get("total_trade_ticks_saved")) or 0,
+        "baseline_quote_ticks_saved": coerce_int(quote_capture.get("baseline_quote_ticks_saved")) or 0,
+        "recovery_quote_ticks_saved": coerce_int(quote_capture.get("recovery_quote_ticks_saved")) or 0,
+        "total_trade_ticks_saved": coerce_int(trade_capture.get("total_trade_ticks_saved")) or 0,
         "stream_trade_ticks_saved": stream_trade_ticks_saved,
         "websocket_trade_ticks_saved": stream_trade_ticks_saved,
     }
@@ -568,7 +568,7 @@ def build_jobs_overview(
     limit: int = 25,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = _utc_now()
+    generated_at = utc_now_iso()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
@@ -792,7 +792,7 @@ def build_jobs_overview(
 
     stale_singleton_leases: list[dict[str, Any]] = []
     for lease in singleton_leases:
-        lease_run_id = _as_text(lease.get("job_run_id"))
+        lease_run_id = as_text(lease.get("job_run_id"))
         if lease_run_id is None:
             continue
         run_record = job_store.get_job_run(lease_run_id)
@@ -869,7 +869,7 @@ def build_jobs_compact_state(
     limit: int = 25,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = _utc_now()
+    generated_at = utc_now_iso()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
@@ -1102,7 +1102,7 @@ def build_job_run_view(
     db_target: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = _utc_now()
+    generated_at = utc_now_iso()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
     job_store = storage.jobs
     if not job_store.schema_ready():
@@ -1117,7 +1117,7 @@ def build_job_run_view(
     attention: list[dict[str, str]] = []
     statuses = [str(run_summary.get("operator_status") or "unknown")]
 
-    operator_note = _as_text(run_summary.get("operator_note"))
+    operator_note = as_text(run_summary.get("operator_note"))
     if operator_note is not None:
         attention.append(
             _attention(
@@ -1163,9 +1163,9 @@ def build_job_run_view(
                 )
             )
 
-    singleton_scope = _as_text((run.get("payload") or {}).get("singleton_scope"))
+    singleton_scope = as_text((run.get("payload") or {}).get("singleton_scope"))
     singleton_lease = None
-    if singleton_scope is not None and _as_text(run.get("job_type")) is not None:
+    if singleton_scope is not None and as_text(run.get("job_type")) is not None:
         singleton_lease = job_store.get_lease(singleton_lease_key(str(run["job_type"]), singleton_scope))
         if singleton_lease is not None and singleton_lease.get("job_run_id") != run_summary["job_run_id"]:
             statuses.append("degraded")
@@ -1180,8 +1180,8 @@ def build_job_run_view(
             )
 
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
-    if str(run.get("status") or "") == "failed" and _as_text(run.get("error_text")) is None:
-        result_reason = _as_text(result.get("reason"))
+    if str(run.get("status") or "") == "failed" and as_text(run.get("error_text")) is None:
+        result_reason = as_text(result.get("reason"))
         if result_reason is not None:
             attention.append(
                 _attention(

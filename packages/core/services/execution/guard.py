@@ -17,10 +17,10 @@ from core.services.execution_lifecycle import (
 )
 from core.services.session_positions import OPEN_TRADE_INTENT
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    coerce_int as _coerce_int,
-    utc_now_iso as _utc_now,
+    as_text,
+    coerce_float,
+    coerce_int,
+    utc_now_iso,
 )
 
 from .attempts import (
@@ -46,7 +46,7 @@ def _execution_submit_job_run(storage: Any, execution_attempt_id: str) -> Mappin
 
 def _source_job_definition(storage: Any, attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
     source_job = resolve_execution_attempt_source_job(attempt)
-    source_job_key = _as_text(source_job.get("job_key"))
+    source_job_key = as_text(source_job.get("job_key"))
     if source_job_key is None:
         return None
     return get_declared_job_row(source_job_key)
@@ -90,10 +90,10 @@ def _evaluate_open_attempt_guard(
         return {
             **dict(timing_gate),
             "lifecycle": lifecycle,
-            "intervention": "cancel_order" if _as_text(attempt.get("broker_order_id")) else "fail_unsubmitted",
+            "intervention": "cancel_order" if as_text(attempt.get("broker_order_id")) else "fail_unsubmitted",
         }
 
-    intervention = _as_text(lifecycle.get("intervention"))
+    intervention = as_text(lifecycle.get("intervention"))
     if intervention is None:
         return {
             **dict(timing_gate),
@@ -110,7 +110,7 @@ def _evaluate_open_attempt_guard(
     return {
         "allowed": False,
         "reason": reason,
-        "message": _as_text(lifecycle.get("note")),
+        "message": as_text(lifecycle.get("note")),
         "force_close_at": timing_gate.get("force_close_at"),
         "age_seconds": lifecycle.get("age_seconds"),
         "stale_after_seconds": lifecycle.get("working_stale_after_seconds"),
@@ -126,21 +126,21 @@ def _guard_intervention_message(
     *,
     submitted: bool,
 ) -> str:
-    reason = _as_text(guard_decision.get("reason"))
-    direct_message = _as_text(guard_decision.get("message"))
+    reason = as_text(guard_decision.get("reason"))
+    direct_message = as_text(guard_decision.get("message"))
     if reason in {"stale_pending_submission", "submit_outcome_uncertain"}:
         return direct_message or "Execution needs operator reconciliation."
     if reason == "stale_auto_open_attempt":
-        age_seconds = _coerce_float(guard_decision.get("age_seconds"))
-        stale_after_seconds = _coerce_int(guard_decision.get("stale_after_seconds"))
+        age_seconds = coerce_float(guard_decision.get("age_seconds"))
+        stale_after_seconds = coerce_int(guard_decision.get("stale_after_seconds"))
         age_fragment = "" if age_seconds is None else f" after {int(round(age_seconds))}s"
         threshold_fragment = "" if stale_after_seconds is None else f" (stale threshold {stale_after_seconds}s)"
         if submitted:
             return "Canceled automatic open execution because the order remained pending" f"{age_fragment}{threshold_fragment}."
         return "Automatic open execution expired before broker submission because it remained pending" f"{age_fragment}{threshold_fragment}."
     if reason == "insufficient_time_to_force_close":
-        minimum_minutes = _coerce_float(guard_decision.get("minimum_minutes_to_force_close"))
-        minutes_remaining = _coerce_float(guard_decision.get("minutes_to_force_close"))
+        minimum_minutes = coerce_float(guard_decision.get("minimum_minutes_to_force_close"))
+        minutes_remaining = coerce_float(guard_decision.get("minutes_to_force_close"))
         threshold_fragment = "" if minimum_minutes is None else f" below the {minimum_minutes:.1f}-minute threshold"
         remaining_fragment = "" if minutes_remaining is None else f" with {minutes_remaining:.1f} minutes remaining"
         if submitted:
@@ -213,9 +213,9 @@ def run_open_execution_guard(
             continue
 
         evaluated += 1
-        broker_order_id = _as_text(attempt.get("broker_order_id"))
-        position_id = _as_text(attempt.get("position_id"))
-        intervention = _as_text(guard_decision.get("intervention"))
+        broker_order_id = as_text(attempt.get("broker_order_id"))
+        position_id = as_text(attempt.get("position_id"))
+        intervention = as_text(guard_decision.get("intervention"))
         if intervention == "mark_submit_unknown":
             message = _guard_intervention_message(
                 guard_decision,
@@ -260,7 +260,7 @@ def run_open_execution_guard(
             execution_store.update_attempt(
                 execution_attempt_id=execution_attempt_id,
                 status="failed",
-                completed_at=_utc_now(),
+                completed_at=utc_now_iso(),
                 error_text=message,
                 position_id=position_id,
             )

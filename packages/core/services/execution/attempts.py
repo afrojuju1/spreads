@@ -19,9 +19,9 @@ from core.services.session_positions import (
 )
 from core.services.execution_lifecycle import project_execution_attempt_lifecycle
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    utc_now_iso as _utc_now,
+    as_text,
+    coerce_float,
+    utc_now_iso,
 )
 
 from .shared import (
@@ -123,32 +123,32 @@ def _flatten_order_snapshot(
     *,
     parent_broker_order_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    broker_order_id = _as_text(order.get("id"))
+    broker_order_id = as_text(order.get("id"))
     if broker_order_id is None:
         raise ValueError("Broker order payload is missing an id")
-    updated_at = _as_text(order.get("updated_at")) or _as_text(order.get("filled_at")) or _as_text(order.get("submitted_at")) or _utc_now()
-    symbol = _as_text(order.get("symbol"))
-    side = _as_text(order.get("side"))
+    updated_at = as_text(order.get("updated_at")) or as_text(order.get("filled_at")) or as_text(order.get("submitted_at")) or utc_now_iso()
+    symbol = as_text(order.get("symbol"))
+    side = as_text(order.get("side"))
     rows = [
         {
             "broker": BROKER_NAME,
             "broker_order_id": broker_order_id,
             "parent_broker_order_id": parent_broker_order_id,
-            "client_order_id": _as_text(order.get("client_order_id")),
+            "client_order_id": as_text(order.get("client_order_id")),
             "order_status": str(order.get("status") or "unknown"),
-            "order_type": _as_text(order.get("type")),
-            "time_in_force": _as_text(order.get("time_in_force")),
-            "order_class": _as_text(order.get("order_class")),
+            "order_type": as_text(order.get("type")),
+            "time_in_force": as_text(order.get("time_in_force")),
+            "order_class": as_text(order.get("order_class")),
             "side": side,
             "symbol": symbol,
             "leg_symbol": symbol if parent_broker_order_id is not None else None,
             "leg_side": side if parent_broker_order_id is not None else None,
-            "position_intent": _as_text(order.get("position_intent")),
-            "quantity": _coerce_float(order.get("qty")),
-            "limit_price": _coerce_float(order.get("limit_price")),
-            "filled_qty": _coerce_float(order.get("filled_qty")),
-            "filled_avg_price": _coerce_float(order.get("filled_avg_price")),
-            "submitted_at": _as_text(order.get("submitted_at")),
+            "position_intent": as_text(order.get("position_intent")),
+            "quantity": coerce_float(order.get("qty")),
+            "limit_price": coerce_float(order.get("limit_price")),
+            "filled_qty": coerce_float(order.get("filled_qty")),
+            "filled_avg_price": coerce_float(order.get("filled_avg_price")),
+            "submitted_at": as_text(order.get("submitted_at")),
             "updated_at": updated_at,
             "order": order,
         }
@@ -172,11 +172,11 @@ def _sync_fill_rows(
     activities = client.list_account_activities(activity_type="FILL", date=session_date)
     rows: list[dict[str, Any]] = []
     for activity in activities:
-        broker_fill_id = _as_text(activity.get("id"))
-        broker_order_id = _as_text(activity.get("order_id"))
-        symbol = _as_text(activity.get("symbol"))
-        filled_at = _as_text(activity.get("transaction_time"))
-        quantity = _coerce_float(activity.get("qty"))
+        broker_fill_id = as_text(activity.get("id"))
+        broker_order_id = as_text(activity.get("order_id"))
+        symbol = as_text(activity.get("symbol"))
+        filled_at = as_text(activity.get("transaction_time"))
+        quantity = coerce_float(activity.get("qty"))
         if (
             broker_fill_id is None
             or broker_order_id is None
@@ -194,12 +194,12 @@ def _sync_fill_rows(
                 "broker_fill_id": broker_fill_id,
                 "broker_order_id": broker_order_id,
                 "symbol": symbol,
-                "side": _as_text(activity.get("side")),
-                "fill_type": _as_text(activity.get("type")),
+                "side": as_text(activity.get("side")),
+                "fill_type": as_text(activity.get("type")),
                 "quantity": quantity,
-                "cumulative_quantity": _coerce_float(activity.get("cum_qty")),
-                "remaining_quantity": _coerce_float(activity.get("leaves_qty")),
-                "price": _coerce_float(activity.get("price")),
+                "cumulative_quantity": coerce_float(activity.get("cum_qty")),
+                "remaining_quantity": coerce_float(activity.get("leaves_qty")),
+                "price": coerce_float(activity.get("price")),
                 "filled_at": filled_at,
                 "fill": activity,
             }
@@ -241,9 +241,9 @@ def _sync_attempt_state(
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
-        broker_order_id=_as_text(order_snapshot.get("id")),
-        client_order_id=_as_text(order_snapshot.get("client_order_id")),
-        submitted_at=_as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
+        broker_order_id=as_text(order_snapshot.get("id")),
+        client_order_id=as_text(order_snapshot.get("client_order_id")),
+        submitted_at=as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
         completed_at=completed_at,
         error_text=None,
     )
@@ -289,16 +289,16 @@ def _sync_equity_attempt_state(
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
-        broker_order_id=_as_text(order_snapshot.get("id")),
-        client_order_id=_as_text(order_snapshot.get("client_order_id")),
-        submitted_at=_as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
+        broker_order_id=as_text(order_snapshot.get("id")),
+        client_order_id=as_text(order_snapshot.get("client_order_id")),
+        submitted_at=as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
         completed_at=completed_at,
         error_text=None,
     )
     payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
     request = dict(payload.get("request") or {})
     should_sync_position = str(request.get("trade_intent") or "") == OPEN_TRADE_INTENT
-    should_sync_position = should_sync_position or _as_text(request.get("position_id")) is not None
+    should_sync_position = should_sync_position or as_text(request.get("position_id")) is not None
     if should_sync_position:
         try:
             sync_session_position_from_attempt(
@@ -322,11 +322,11 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
                 **attempt,
                 "message": message,
             },
-            timestamp=attempt.get("completed_at") or attempt.get("submitted_at") or attempt.get("requested_at") or _utc_now(),
+            timestamp=attempt.get("completed_at") or attempt.get("submitted_at") or attempt.get("requested_at") or utc_now_iso(),
             source="execution",
-            session_date=_as_text(attempt.get("session_date")),
-            correlation_id=_as_text(attempt.get("session_id")),
-            causation_id=_as_text(attempt.get("broker_order_id")),
+            session_date=as_text(attempt.get("session_date")),
+            correlation_id=as_text(attempt.get("session_id")),
+            causation_id=as_text(attempt.get("broker_order_id")),
         )
     except Exception:
         pass
@@ -336,7 +336,7 @@ def _linked_execution_intent_id(attempt: Mapping[str, Any]) -> str | None:
     request = attempt.get("request")
     if not isinstance(request, Mapping):
         return None
-    return _as_text(request.get("execution_intent_id"))
+    return as_text(request.get("execution_intent_id"))
 
 
 def _intent_state_from_attempt_status(status: str) -> str:
@@ -396,7 +396,7 @@ def _sync_linked_execution_intent(
         state=resolved_state,
         event_type=event_type,
         event_payload={
-            "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
+            "execution_attempt_id": as_text(attempt.get("execution_attempt_id")),
             "message": message,
             "attempt_status": str(attempt.get("status") or ""),
             "execution_attempt_lifecycle": dict(lifecycle),
@@ -463,9 +463,9 @@ def _queue_execution_attempt(
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status="failed",
-            completed_at=_utc_now(),
+            completed_at=utc_now_iso(),
             error_text=str(exc),
-            position_id=_as_text(attempt.get("position_id")),
+            position_id=as_text(attempt.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -484,9 +484,9 @@ def _queue_execution_attempt(
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status="failed",
-            completed_at=_utc_now(),
+            completed_at=utc_now_iso(),
             error_text="Execution submit job was not enqueued.",
-            position_id=_as_text(attempt.get("position_id")),
+            position_id=as_text(attempt.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -508,7 +508,7 @@ def _reconcile_submit_unknown_attempt(
     attempt: Mapping[str, Any],
     client: AlpacaClient,
 ) -> dict[str, Any] | None:
-    client_order_id = _as_text(attempt.get("client_order_id"))
+    client_order_id = as_text(attempt.get("client_order_id"))
     if client_order_id is None:
         return None
     try:

@@ -18,6 +18,7 @@ from core.services.execution.admission import ExecutionAdmissionError
 from core.services.execution.direct_orders import submit_equity_order, submit_option_order
 from core.services.execution.position_close import submit_position_close_by_id
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
+from core.services.value_coercion import as_text, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 from .maintenance import (
@@ -33,12 +34,10 @@ from .maintenance import (
 from .repricing import _manage_submitted_open_intents
 from .shared import (
     _append_event,
-    _as_text,
     _attempt_state,
     _intent_action_type,
     _intent_payload,
     _update_intent,
-    _utc_now,
     normalize_execution_intent_state,
 )
 
@@ -50,7 +49,7 @@ def _equity_intent_payload(intent: dict[str, Any]) -> dict[str, Any] | None:
     asset_class = str(payload.get("asset_class") or "").strip().lower()
     if asset_class != "equity":
         return None
-    symbol = _as_text(payload.get("symbol"))
+    symbol = as_text(payload.get("symbol"))
     side = str(payload.get("side") or intent.get("action_type") or "").strip().lower()
     if symbol is None or side not in {"buy", "sell"}:
         return None
@@ -62,7 +61,7 @@ def _option_intent_payload(intent: dict[str, Any]) -> dict[str, Any] | None:
     asset_class = str(payload.get("asset_class") or "").strip().lower()
     if asset_class != "option":
         return None
-    symbol = _as_text(payload.get("symbol"))
+    symbol = as_text(payload.get("symbol"))
     side = str(payload.get("side") or intent.get("action_type") or "").strip().lower()
     if symbol is None or side not in {"buy", "sell"}:
         return None
@@ -72,9 +71,9 @@ def _option_intent_payload(intent: dict[str, Any]) -> dict[str, Any] | None:
 def _intent_engine_ref_metadata(intent: dict[str, Any]) -> dict[str, Any]:
     payload = _intent_payload(intent)
     admission = payload.get("execution_admission") if isinstance(payload.get("execution_admission"), dict) else {}
-    trade_signal_id = _as_text(intent.get("trade_signal_id")) or _as_text(payload.get("trade_signal_id"))
-    trade_decision_id = _as_text(intent.get("trade_decision_id")) or _as_text(payload.get("trade_decision_id"))
-    admission_decision_id = _as_text(payload.get("admission_decision_id")) or _as_text(admission.get("admission_decision_id"))
+    trade_signal_id = as_text(intent.get("trade_signal_id")) or as_text(payload.get("trade_signal_id"))
+    trade_decision_id = as_text(intent.get("trade_decision_id")) or as_text(payload.get("trade_decision_id"))
+    admission_decision_id = as_text(payload.get("admission_decision_id")) or as_text(admission.get("admission_decision_id"))
     source_object_type = None
     source_object_id = None
     if trade_decision_id is not None:
@@ -102,7 +101,7 @@ def _repricing_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get(key) not in (None, ""):
             metadata[key] = payload[key]
     for key in ("previous_execution_attempt_id", "supersedes_execution_intent_id"):
-        value = _as_text(payload.get(key))
+        value = as_text(payload.get(key))
         if value is not None:
             metadata[key] = value
     if isinstance(payload.get("repricing_policy"), dict):
@@ -114,7 +113,7 @@ def _trade_decision_is_active_for_intent(
     engine_facts: Any,
     intent: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    trade_decision_id = _as_text(intent.get("trade_decision_id")) or _as_text(_intent_payload(intent).get("trade_decision_id"))
+    trade_decision_id = as_text(intent.get("trade_decision_id")) or as_text(_intent_payload(intent).get("trade_decision_id"))
     if trade_decision_id is None:
         return False, "trade_decision_missing"
     if engine_facts is None or not engine_facts.schema_ready():
@@ -129,7 +128,7 @@ def _trade_decision_is_active_for_intent(
         return False, "trade_signal_missing"
     if str(signal.get("signal_state") or "").strip().lower() not in {"ready"}:
         return False, "trade_signal_not_ready"
-    expires_at = parse_datetime(_as_text(signal.get("expires_at")))
+    expires_at = parse_datetime(as_text(signal.get("expires_at")))
     if expires_at is not None and expires_at <= datetime.now(UTC):
         return False, "trade_signal_expired"
     return True, None
@@ -141,7 +140,7 @@ def _trade_decision_option_payload(
     intent: dict[str, Any],
 ) -> dict[str, Any]:
     payload = _intent_payload(intent)
-    trade_decision_id = _as_text(intent.get("trade_decision_id")) or _as_text(payload.get("trade_decision_id"))
+    trade_decision_id = as_text(intent.get("trade_decision_id")) or as_text(payload.get("trade_decision_id"))
     if trade_decision_id is None:
         raise ValueError("Execution intent is missing trade_decision_id")
     if engine_facts is None or not engine_facts.schema_ready():
@@ -161,16 +160,16 @@ def _trade_decision_option_payload(
     if len(legs) != 1:
         raise ValueError("Trade-decision dispatch currently requires a single-leg option execution shape.")
     leg = dict(legs[0])
-    symbol = _as_text(order_payload.get("symbol")) or _as_text(leg.get("symbol"))
-    side = _as_text(order_payload.get("side")) or _as_text(leg.get("side"))
+    symbol = as_text(order_payload.get("symbol")) or as_text(leg.get("symbol"))
+    side = as_text(order_payload.get("side")) or as_text(leg.get("side"))
     if symbol is None or side is None:
         raise ValueError("Trade-decision option shape is missing symbol or side.")
     admission = payload.get("execution_admission") if isinstance(payload.get("execution_admission"), dict) else {}
     quantity = (
-        _as_text(payload.get("quantity"))
-        or _as_text(decision.get("selected_quantity"))
-        or _as_text(admission.get("admissible_quantity"))
-        or _as_text(order_payload.get("qty"))
+        as_text(payload.get("quantity"))
+        or as_text(decision.get("selected_quantity"))
+        or as_text(admission.get("admissible_quantity"))
+        or as_text(order_payload.get("qty"))
         or "1"
     )
     limit_price = payload.get("limit_price")
@@ -182,7 +181,7 @@ def _trade_decision_option_payload(
     if limit_price in (None, ""):
         raise ValueError("Trade-decision option shape is missing a limit price.")
 
-    trade_structure = _as_text(signal.get("trade_structure")) or _as_text(decision.get("trade_structure")) or "long_call"
+    trade_structure = as_text(signal.get("trade_structure")) or as_text(decision.get("trade_structure")) or "long_call"
     strategy_family = normalize_strategy_family(trade_structure)
     option_selection = {
         "source": "trade_decision",
@@ -201,14 +200,14 @@ def _trade_decision_option_payload(
         "side": side,
         "quantity": int(float(quantity)),
         "limit_price": float(limit_price),
-        "time_in_force": _as_text(order_payload.get("time_in_force")) or "day",
-        "label": _as_text(signal.get("trading_strategy_id")) or str(intent["trading_strategy_id"]),
-        "market_date": _as_text(signal.get("session_date")),
-        "underlying_symbol": _as_text(signal.get("underlying_symbol")) or _as_text(execution_shape.get("underlying_symbol")),
-        "root_symbol": _as_text(signal.get("root_symbol")) or _as_text(signal.get("underlying_symbol")),
+        "time_in_force": as_text(order_payload.get("time_in_force")) or "day",
+        "label": as_text(signal.get("trading_strategy_id")) or str(intent["trading_strategy_id"]),
+        "market_date": as_text(signal.get("session_date")),
+        "underlying_symbol": as_text(signal.get("underlying_symbol")) or as_text(execution_shape.get("underlying_symbol")),
+        "root_symbol": as_text(signal.get("root_symbol")) or as_text(signal.get("underlying_symbol")),
         "strategy_family": strategy_family,
-        "expiration_date": _as_text(leg.get("expiration_date")),
-        "option_type": _as_text(leg.get("option_type")),
+        "expiration_date": as_text(leg.get("expiration_date")),
+        "option_type": as_text(leg.get("option_type")),
         "strike": leg.get("strike"),
         "trade_intent": "open",
         "underlying_price": economics.get("underlying_price"),
@@ -303,9 +302,9 @@ def _intent_target_is_active(
     engine_facts: Any,
 ) -> tuple[bool, str | None]:
     action_type = _intent_action_type(intent)
-    if _as_text(intent.get("trade_decision_id")) is not None or _as_text(_intent_payload(intent).get("trade_decision_id")) is not None:
+    if as_text(intent.get("trade_decision_id")) is not None or as_text(_intent_payload(intent).get("trade_decision_id")) is not None:
         return _trade_decision_is_active_for_intent(engine_facts, intent)
-    if _as_text(intent.get("strategy_position_id")) is not None or action_type == "close":
+    if as_text(intent.get("strategy_position_id")) is not None or action_type == "close":
         return _position_is_active_for_intent(execution_store, intent)
     if _equity_intent_payload(intent) is not None:
         return True, None
@@ -351,7 +350,7 @@ def submit_execution_intent(
                 "dispatch_status": "revoked",
                 "revoke_reason": inactive_reason,
             },
-            updated_at=_utc_now(),
+            updated_at=utc_now_iso(),
         )
         _append_event(
             execution_store,
@@ -376,27 +375,27 @@ def submit_execution_intent(
         dict(intent),
         state="claimed",
         payload_updates={"dispatch_status": "claimed"},
-        updated_at=_utc_now(),
+        updated_at=utc_now_iso(),
     )
-    if not _as_text(claimed_intent.get("claim_token")):
+    if not as_text(claimed_intent.get("claim_token")):
         claimed_intent = execution_store.upsert_execution_intent(
             execution_intent_id=str(claimed_intent["execution_intent_id"]),
             trading_strategy_id=str(claimed_intent["trading_strategy_id"]),
-            trade_signal_id=_as_text(claimed_intent.get("trade_signal_id")),
-            trade_decision_id=_as_text(claimed_intent.get("trade_decision_id")),
-            strategy_position_id=_as_text(claimed_intent.get("strategy_position_id")),
-            execution_attempt_id=_as_text(claimed_intent.get("execution_attempt_id")),
+            trade_signal_id=as_text(claimed_intent.get("trade_signal_id")),
+            trade_decision_id=as_text(claimed_intent.get("trade_decision_id")),
+            strategy_position_id=as_text(claimed_intent.get("strategy_position_id")),
+            execution_attempt_id=as_text(claimed_intent.get("execution_attempt_id")),
             action_type=str(claimed_intent["action_type"]),
             slot_key=str(claimed_intent["slot_key"]),
             claim_token=claim_token,
             policy_ref=dict(claimed_intent.get("policy_ref") or {}),
             config_hash=str(claimed_intent.get("config_hash") or ""),
             state="claimed",
-            expires_at=_as_text(claimed_intent.get("expires_at")),
-            superseded_by_id=_as_text(claimed_intent.get("superseded_by_id")),
+            expires_at=as_text(claimed_intent.get("expires_at")),
+            superseded_by_id=as_text(claimed_intent.get("superseded_by_id")),
             payload=_intent_payload(claimed_intent),
             created_at=str(claimed_intent["created_at"]),
-            updated_at=_utc_now(),
+            updated_at=utc_now_iso(),
         )
     _append_event(
         execution_store,
@@ -427,11 +426,11 @@ def submit_execution_intent(
                 limit_price=float(option_payload["limit_price"]),
                 time_in_force=str(option_payload.get("time_in_force") or "day"),
                 label=str(option_payload.get("label") or source_intent["trading_strategy_id"]),
-                market_date=_as_text(option_payload.get("market_date")),
-                underlying_symbol=_as_text(option_payload.get("underlying_symbol")) or _as_text(option_payload.get("root_symbol")),
-                strategy_family=_as_text(option_payload.get("strategy_family")) or "long_call",
-                expiration_date=_as_text(option_payload.get("expiration_date")),
-                option_type=_as_text(option_payload.get("option_type")),
+                market_date=as_text(option_payload.get("market_date")),
+                underlying_symbol=as_text(option_payload.get("underlying_symbol")) or as_text(option_payload.get("root_symbol")),
+                strategy_family=as_text(option_payload.get("strategy_family")) or "long_call",
+                expiration_date=as_text(option_payload.get("expiration_date")),
+                option_type=as_text(option_payload.get("option_type")),
                 strike=(None if option_payload.get("strike") in (None, "") else float(option_payload["strike"])),
                 execution_runtime=payload.get("execution_runtime"),
                 request_metadata={
@@ -494,7 +493,7 @@ def submit_execution_intent(
                 limit_price=float(equity_payload["limit_price"]),
                 time_in_force=str(equity_payload.get("time_in_force") or "day"),
                 label=str(equity_payload.get("label") or "research_equity"),
-                market_date=_as_text(equity_payload.get("market_date")),
+                market_date=as_text(equity_payload.get("market_date")),
                 execution_runtime=equity_payload.get("execution_runtime"),
                 request_metadata={
                     "execution_intent_id": execution_intent_id,
@@ -502,10 +501,10 @@ def submit_execution_intent(
                     "trade_structure": policy_ref.get("trade_structure"),
                     "routine": policy_ref.get("routine"),
                     "config_hash": source_intent.get("config_hash"),
-                    "position_id": _as_text(equity_payload.get("position_id")),
-                    "trade_intent": _as_text(equity_payload.get("trade_intent")),
-                    "approval_mode": _as_text(equity_payload.get("approval_mode")),
-                    "execution_mode": _as_text(equity_payload.get("execution_mode")),
+                    "position_id": as_text(equity_payload.get("position_id")),
+                    "trade_intent": as_text(equity_payload.get("trade_intent")),
+                    "approval_mode": as_text(equity_payload.get("approval_mode")),
+                    "execution_mode": as_text(equity_payload.get("execution_mode")),
                     "execution_policy": execution_policy,
                     "exit_policy": (dict(equity_payload["exit_policy"]) if isinstance(equity_payload.get("exit_policy"), dict) else None),
                     "risk_policy": (dict(equity_payload["risk_policy"]) if isinstance(equity_payload.get("risk_policy"), dict) else None),
@@ -525,11 +524,11 @@ def submit_execution_intent(
                 limit_price=float(option_payload["limit_price"]),
                 time_in_force=str(option_payload.get("time_in_force") or "day"),
                 label=str(option_payload.get("label") or "research_option"),
-                market_date=_as_text(option_payload.get("market_date")),
-                underlying_symbol=_as_text(option_payload.get("underlying_symbol")) or _as_text(option_payload.get("root_symbol")),
-                strategy_family=_as_text(option_payload.get("strategy_family")) or "long_call",
-                expiration_date=_as_text(option_payload.get("expiration_date")),
-                option_type=_as_text(option_payload.get("option_type")),
+                market_date=as_text(option_payload.get("market_date")),
+                underlying_symbol=as_text(option_payload.get("underlying_symbol")) or as_text(option_payload.get("root_symbol")),
+                strategy_family=as_text(option_payload.get("strategy_family")) or "long_call",
+                expiration_date=as_text(option_payload.get("expiration_date")),
+                option_type=as_text(option_payload.get("option_type")),
                 strike=(None if option_payload.get("strike") in (None, "") else float(option_payload["strike"])),
                 execution_runtime=option_payload.get("execution_runtime"),
                 request_metadata={
@@ -538,10 +537,10 @@ def submit_execution_intent(
                     "trade_structure": policy_ref.get("trade_structure"),
                     "routine": policy_ref.get("routine"),
                     "config_hash": source_intent.get("config_hash"),
-                    "position_id": _as_text(option_payload.get("position_id")),
-                    "trade_intent": _as_text(option_payload.get("trade_intent")),
-                    "approval_mode": _as_text(option_payload.get("approval_mode")),
-                    "execution_mode": _as_text(option_payload.get("execution_mode")),
+                    "position_id": as_text(option_payload.get("position_id")),
+                    "trade_intent": as_text(option_payload.get("trade_intent")),
+                    "approval_mode": as_text(option_payload.get("approval_mode")),
+                    "execution_mode": as_text(option_payload.get("execution_mode")),
                     "execution_policy": execution_policy,
                     "exit_policy": (dict(option_payload["exit_policy"]) if isinstance(option_payload.get("exit_policy"), dict) else None),
                     "risk_policy": (dict(option_payload["risk_policy"]) if isinstance(option_payload.get("risk_policy"), dict) else None),
@@ -568,7 +567,7 @@ def submit_execution_intent(
                 "error": str(exc),
                 "execution_admission": dict(exc.admission),
             },
-            updated_at=_utc_now(),
+            updated_at=utc_now_iso(),
         )
         _append_event(
             execution_store,
@@ -591,7 +590,7 @@ def submit_execution_intent(
             dict(claimed_intent),
             state="failed",
             payload_updates={"dispatch_status": "failed", "error": str(exc)},
-            updated_at=_utc_now(),
+            updated_at=utc_now_iso(),
         )
         _append_event(
             execution_store,
@@ -607,8 +606,8 @@ def submit_execution_intent(
         }
 
     attempt = result.get("attempt") if isinstance(result.get("attempt"), dict) else None
-    linked_attempt_id = None if attempt is None else _as_text(attempt.get("execution_attempt_id"))
-    admission_decision_id = _as_text(engine_ref_metadata.get("admission_decision_id"))
+    linked_attempt_id = None if attempt is None else as_text(attempt.get("execution_attempt_id"))
+    admission_decision_id = as_text(engine_ref_metadata.get("admission_decision_id"))
     if linked_attempt_id is not None and admission_decision_id is not None and engine_facts is not None and engine_facts.schema_ready():
         try:
             engine_facts.attach_trade_admission_attempt(
@@ -630,7 +629,7 @@ def submit_execution_intent(
             **({} if linked_attempt_id is None else {"execution_attempt_id": linked_attempt_id}),
             **({} if not isinstance(execution_admission, dict) else {"execution_admission": dict(execution_admission)}),
         },
-        updated_at=_utc_now(),
+        updated_at=utc_now_iso(),
     )
     _append_event(
         execution_store,
@@ -693,7 +692,7 @@ def dispatch_pending_execution_intents(
             limit=batch_limit * 5,
         )
     ]
-    intents.sort(key=lambda row: parse_datetime(_as_text(row.get("created_at"))) or datetime.min.replace(tzinfo=UTC))
+    intents.sort(key=lambda row: parse_datetime(as_text(row.get("created_at"))) or datetime.min.replace(tzinfo=UTC))
     submitted = 0
     skipped = 0
     expired = 0
@@ -705,7 +704,7 @@ def dispatch_pending_execution_intents(
             break
         reviewed += 1
         execution_intent_id = str(intent["execution_intent_id"])
-        expires_at = parse_datetime(_as_text(intent.get("expires_at")))
+        expires_at = parse_datetime(as_text(intent.get("expires_at")))
         if expires_at is not None and expires_at <= datetime.now(UTC):
             updated = _update_intent(
                 execution_store,
@@ -715,7 +714,7 @@ def dispatch_pending_execution_intents(
                     "dispatch_status": "expired",
                     "expire_reason": PRE_DISPATCH_EXPIRE_REASON,
                 },
-                updated_at=_utc_now(),
+                updated_at=utc_now_iso(),
             )
             _append_event(
                 execution_store,
@@ -745,7 +744,7 @@ def dispatch_pending_execution_intents(
                     intent,
                     state="failed",
                     payload_updates={"dispatch_status": reason},
-                    updated_at=_utc_now(),
+                    updated_at=utc_now_iso(),
                 )
                 _append_event(
                     execution_store,

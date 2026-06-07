@@ -15,8 +15,8 @@ from core.services.session_positions import (
     OPEN_TRADE_INTENT,
 )
 from core.services.value_coercion import (
-    as_text as _as_text,
-    utc_now_iso as _utc_now,
+    as_text,
+    utc_now_iso,
 )
 from .alpaca_adapter import create_alpaca_order_adapter
 from .attempts import (
@@ -61,7 +61,7 @@ def run_execution_submit(
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
 
     payload = _get_attempt_payload(execution_store, execution_attempt_id)
-    broker_order_id = _as_text(payload.get("broker_order_id"))
+    broker_order_id = as_text(payload.get("broker_order_id"))
     status = str(payload.get("status") or "")
     if broker_order_id is not None or status != PENDING_SUBMISSION_STATUS:
         return {
@@ -79,9 +79,9 @@ def run_execution_submit(
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status="failed",
-            completed_at=_utc_now(),
+            completed_at=utc_now_iso(),
             error_text="Execution attempt is missing its broker order payload.",
-            position_id=_as_text(payload.get("position_id")),
+            position_id=as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -97,8 +97,8 @@ def run_execution_submit(
         )
         raise ValueError("Execution attempt is missing its broker order payload.")
 
-    requested_at = _as_text(payload.get("requested_at")) or _utc_now()
-    client_order_id = _as_text(payload.get("client_order_id"))
+    requested_at = as_text(payload.get("requested_at")) or utc_now_iso()
+    client_order_id = as_text(payload.get("client_order_id"))
 
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
         request_execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), Mapping) else {}
@@ -112,9 +112,9 @@ def run_execution_submit(
             execution_store.update_attempt(
                 execution_attempt_id=execution_attempt_id,
                 status="failed",
-                completed_at=_utc_now(),
+                completed_at=utc_now_iso(),
                 error_text=str(timing_gate["message"]),
-                position_id=_as_text(payload.get("position_id")),
+                position_id=as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -153,9 +153,9 @@ def run_execution_submit(
             execution_store.update_attempt(
                 execution_attempt_id=execution_attempt_id,
                 status="failed",
-                completed_at=_utc_now(),
+                completed_at=utc_now_iso(),
                 error_text=str(live_deployment_quality["message"]),
-                position_id=_as_text(payload.get("position_id")),
+                position_id=as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -186,9 +186,9 @@ def run_execution_submit(
             execution_store.update_attempt(
                 execution_attempt_id=execution_attempt_id,
                 status="failed",
-                completed_at=_utc_now(),
+                completed_at=utc_now_iso(),
                 error_text=str(account_capacity["message"]),
-                position_id=_as_text(payload.get("position_id")),
+                position_id=as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -227,10 +227,10 @@ def run_execution_submit(
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status=str(submitted_order.get("status") or "submitted").lower(),
-            broker_order_id=_as_text(submitted_order.get("id")),
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-            position_id=_as_text(payload.get("position_id")),
+            broker_order_id=as_text(submitted_order.get("id")),
+            client_order_id=as_text(submitted_order.get("client_order_id")) or client_order_id,
+            submitted_at=as_text(submitted_order.get("submitted_at")) or requested_at,
+            position_id=as_text(payload.get("position_id")),
         )
         if callable(heartbeat):
             heartbeat()
@@ -263,7 +263,7 @@ def run_execution_submit(
                 client_order_id=client_order_id,
                 completed_at=requested_at,
                 error_text=str(classified_error["message"]),
-                position_id=_as_text(payload.get("position_id")),
+                position_id=as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -296,17 +296,17 @@ def run_execution_submit(
                     "attempt": failed_attempt,
                 }
             raise
-        broker_order_id = _as_text(submitted_order.get("id"))
+        broker_order_id = as_text(submitted_order.get("id"))
         submitted_status = str(submitted_order.get("status") or "submitted").lower()
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status=submitted_status,
             broker_order_id=broker_order_id,
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+            client_order_id=as_text(submitted_order.get("client_order_id")) or client_order_id,
+            submitted_at=as_text(submitted_order.get("submitted_at")) or requested_at,
             completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
             error_text=str(exc),
-            position_id=_as_text(payload.get("position_id")),
+            position_id=as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -328,7 +328,7 @@ def run_execution_submit(
                 client_order_id=client_order_id,
                 completed_at=requested_at,
                 error_text=str(exc),
-                position_id=_as_text(payload.get("position_id")),
+                position_id=as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -343,17 +343,17 @@ def run_execution_submit(
                 message=f"Execution failed before submission: {exc}",
             )
             raise
-        broker_order_id = _as_text(submitted_order.get("id"))
+        broker_order_id = as_text(submitted_order.get("id"))
         submitted_status = str(submitted_order.get("status") or "submitted").lower()
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status=submitted_status,
             broker_order_id=broker_order_id,
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+            client_order_id=as_text(submitted_order.get("client_order_id")) or client_order_id,
+            submitted_at=as_text(submitted_order.get("submitted_at")) or requested_at,
             completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
             error_text=str(exc),
-            position_id=_as_text(payload.get("position_id")),
+            position_id=as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(

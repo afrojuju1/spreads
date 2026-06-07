@@ -14,31 +14,12 @@ from core.services.option_structures import position_legs, unique_leg_symbols
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.session_positions import sync_session_position_from_attempt
+from core.services.value_coercion import as_text, coerce_float, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 BROKER_SYNC_KEY = "broker_sync:alpaca"
 FILL_ACTIVITY_SYNC_KEY = "broker_sync:alpaca:activity:FILL"
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
 
 
 def _hydrate_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any] | None:
@@ -52,7 +33,7 @@ def _hydrate_attempt_payload(execution_store: Any, execution_attempt_id: str) ->
 
 
 def _parse_activity_timestamp(activity: dict[str, Any]) -> datetime | None:
-    return parse_datetime(_as_text(activity.get("transaction_time")))
+    return parse_datetime(as_text(activity.get("transaction_time")))
 
 
 def _activity_dates(sync_state: dict[str, Any] | None, *, lookback_days: int) -> list[str]:
@@ -89,7 +70,7 @@ def _fetch_fill_activities(*, activity_dates: list[str]) -> tuple[list[dict[str,
         for activity in payload:
             if not isinstance(activity, dict):
                 continue
-            activity_id = _as_text(activity.get("id"))
+            activity_id = as_text(activity.get("id"))
             if activity_id is None:
                 continue
             activities_by_id[activity_id] = dict(activity)
@@ -114,18 +95,18 @@ def _sync_recent_fill_activities(
         lookback_days=lookback_days,
     )
     activities, errors = _fetch_fill_activities(activity_dates=activity_dates)
-    broker_order_ids = sorted({str(order_id) for activity in activities if (order_id := _as_text(activity.get("order_id"))) is not None})
+    broker_order_ids = sorted({str(order_id) for activity in activities if (order_id := as_text(activity.get("order_id"))) is not None})
     persisted_orders = execution_store.list_orders_by_broker_order_ids(broker_order_ids)
     orders_by_broker_order_id = {str(order["broker_order_id"]): dict(order) for order in persisted_orders}
 
     matched_rows_by_attempt: dict[str, list[dict[str, Any]]] = {}
     unmatched_activity_count = 0
     for activity in activities:
-        broker_order_id = _as_text(activity.get("order_id"))
-        broker_fill_id = _as_text(activity.get("id"))
-        filled_at = _as_text(activity.get("transaction_time"))
-        symbol = _as_text(activity.get("symbol"))
-        quantity = _coerce_float(activity.get("qty"))
+        broker_order_id = as_text(activity.get("order_id"))
+        broker_fill_id = as_text(activity.get("id"))
+        filled_at = as_text(activity.get("transaction_time"))
+        symbol = as_text(activity.get("symbol"))
+        quantity = coerce_float(activity.get("qty"))
         if broker_order_id is None or broker_fill_id is None or filled_at is None or symbol is None or quantity is None:
             unmatched_activity_count += 1
             continue
@@ -140,12 +121,12 @@ def _sync_recent_fill_activities(
                 "broker_fill_id": broker_fill_id,
                 "broker_order_id": broker_order_id,
                 "symbol": symbol,
-                "side": _as_text(activity.get("side")),
-                "fill_type": _as_text(activity.get("type")),
+                "side": as_text(activity.get("side")),
+                "fill_type": as_text(activity.get("type")),
                 "quantity": quantity,
-                "cumulative_quantity": _coerce_float(activity.get("cum_qty")),
-                "remaining_quantity": _coerce_float(activity.get("leaves_qty")),
-                "price": _coerce_float(activity.get("price")),
+                "cumulative_quantity": coerce_float(activity.get("cum_qty")),
+                "remaining_quantity": coerce_float(activity.get("leaves_qty")),
+                "price": coerce_float(activity.get("price")),
                 "filled_at": filled_at,
                 "fill": dict(activity),
             }
@@ -208,16 +189,16 @@ def _reconcile_position(
     broker_positions_by_symbol: dict[str, dict[str, Any]],
     reconciled_at: str,
 ) -> dict[str, Any]:
-    remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
+    remaining_quantity = coerce_float(position.get("remaining_quantity")) or 0.0
     issues: list[str] = []
     for leg in position_legs(position):
-        symbol = _as_text(leg.get("symbol"))
-        role = _as_text(leg.get("role")) or "unknown"
+        symbol = as_text(leg.get("symbol"))
+        role = as_text(leg.get("role")) or "unknown"
         if symbol is None:
             continue
         broker_position = broker_positions_by_symbol.get(symbol)
-        broker_qty = abs(_coerce_float(None if broker_position is None else broker_position.get("qty")) or 0.0)
-        broker_side = _as_text(None if broker_position is None else broker_position.get("side"))
+        broker_qty = abs(coerce_float(None if broker_position is None else broker_position.get("qty")) or 0.0)
+        broker_side = as_text(None if broker_position is None else broker_position.get("side"))
         expected_side = "short" if role == "short" else "long"
         if broker_position is None:
             issues.append(f"missing broker {role} leg {symbol}")
@@ -246,7 +227,7 @@ def run_broker_sync(
     activity_lookback_days: int = 1,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    now = _utc_now()
+    now = utc_now_iso()
     broker_store = storage.broker
     execution_store = storage.execution
     try:
@@ -284,7 +265,7 @@ def run_broker_sync(
             limit=200,
         )
         for attempt in active_attempts:
-            if str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS and _as_text(attempt.get("broker_order_id")) is None:
+            if str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS and as_text(attempt.get("broker_order_id")) is None:
                 queued_attempts += 1
                 continue
             try:
@@ -297,7 +278,7 @@ def run_broker_sync(
                 refreshed_attempt = (
                     refresh_result.get("attempt") if isinstance(refresh_result, dict) and isinstance(refresh_result.get("attempt"), dict) else {}
                 )
-                if str(refreshed_attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS and _as_text(refreshed_attempt.get("broker_order_id")) is None:
+                if str(refreshed_attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS and as_text(refreshed_attempt.get("broker_order_id")) is None:
                     unresolved_submit_unknown_attempts += 1
             except Exception as exc:
                 refresh_errors.append(

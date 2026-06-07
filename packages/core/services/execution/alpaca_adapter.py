@@ -5,16 +5,10 @@ from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.alpaca import create_alpaca_client_from_env
+from core.services.value_coercion import as_text
 
 from .runtimes import ALPACA_DIRECT_RUNTIME
 from .shared import BROKER_NAME
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
 
 
 @dataclass(frozen=True)
@@ -58,7 +52,7 @@ class AlpacaOrderAdapter:
 
     def submit_order(self, order_request: dict[str, Any]) -> AlpacaOrderSubmission:
         submitted_order = self.client.submit_order(dict(order_request))
-        broker_order_id = _as_text(submitted_order.get("id"))
+        broker_order_id = as_text(submitted_order.get("id"))
         order_snapshot = (
             dict(submitted_order)
             if broker_order_id is None
@@ -74,7 +68,7 @@ class AlpacaOrderAdapter:
             submitted_order=dict(submitted_order),
             order_snapshot=order_snapshot,
             broker_order_id=broker_order_id,
-            client_order_id=_as_text(submitted_order.get("client_order_id")),
+            client_order_id=as_text(submitted_order.get("client_order_id")),
         )
 
     def request_cancel(self, broker_order_id: str) -> dict[str, Any] | None:

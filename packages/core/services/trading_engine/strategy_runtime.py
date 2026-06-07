@@ -576,13 +576,10 @@ def _refresh_entry_runtime_signals(
         trading_strategy_id=runtime.trading_strategy_id,
         trade_structure=runtime.trade_structure,
         symbols=tuple(ticker_set.symbols),
-        build_policy={
-            "entry_runtime": runtime_with_symbols,
-            "top": _entry_candidate_limit(runtime_with_symbols),
-            "per_runtime_limit": _entry_candidate_limit(runtime_with_symbols),
-            "per_symbol_top": 1,
-            "greeks_source": "auto",
-        },
+        entry_runtime=runtime_with_symbols,
+        candidate_limit=_entry_candidate_limit(runtime_with_symbols),
+        per_symbol_top=1,
+        greeks_source="auto",
         source_evidence=ticker_set.evidence,
     )
     candidate_result = data_engine.build_entry_trade_candidates(

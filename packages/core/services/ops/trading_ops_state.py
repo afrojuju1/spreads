@@ -29,10 +29,10 @@ from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.storage.engine_models import CandidateRunModel, CandidateSymbolDiagnosticModel, TickerSourceObservationModel, TickerSourceRunModel
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    coerce_int as _coerce_int,
-    utc_now_iso as _utc_now,
+    as_text,
+    coerce_float,
+    coerce_int,
+    utc_now_iso,
 )
 
 from .broker_sync import broker_sync_payload as _broker_sync_payload
@@ -122,10 +122,10 @@ def _account_snapshot_payload(snapshot: Mapping[str, Any] | None) -> dict[str, A
 def _top_positions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ranked: list[dict[str, Any]] = []
     for row in rows:
-        exposure = _coerce_float(row.get("max_loss"))
+        exposure = coerce_float(row.get("max_loss"))
         if exposure is None:
-            exposure = _coerce_float(row.get("entry_notional"))
-        net_pnl = _coerce_float(row.get("net_pnl"))
+            exposure = coerce_float(row.get("entry_notional"))
+        net_pnl = coerce_float(row.get("net_pnl"))
         ranked.append(
             {
                 "position_id": row.get("position_id"),
@@ -151,7 +151,7 @@ def _load_execution_attempt_job_context(
         return submit_jobs, source_definitions
 
     for attempt in attempts:
-        execution_attempt_id = _as_text(attempt.get("execution_attempt_id"))
+        execution_attempt_id = as_text(attempt.get("execution_attempt_id"))
         if execution_attempt_id is None:
             continue
         try:
@@ -160,7 +160,7 @@ def _load_execution_attempt_job_context(
             submit_jobs[execution_attempt_id] = None
 
         source_job = resolve_execution_attempt_source_job(attempt)
-        source_job_key = _as_text(source_job.get("job_key"))
+        source_job_key = as_text(source_job.get("job_key"))
         if source_job_key is None or source_job_key in source_definitions:
             continue
         source_definitions[source_job_key] = get_declared_job_row(source_job_key)
@@ -176,9 +176,9 @@ def _execution_attempt_lifecycle(
 ) -> dict[str, Any]:
     if not is_open_execution_attempt_status(attempt.get("status")):
         return {}
-    execution_attempt_id = _as_text(attempt.get("execution_attempt_id")) or ""
+    execution_attempt_id = as_text(attempt.get("execution_attempt_id")) or ""
     source_job = resolve_execution_attempt_source_job(attempt)
-    source_job_key = _as_text(source_job.get("job_key"))
+    source_job_key = as_text(source_job.get("job_key"))
     submit_job = submit_jobs.get(execution_attempt_id)
     source_definition = None if source_job_key is None else source_definitions.get(source_job_key)
     attached_lifecycle = attempt.get("execution_attempt_lifecycle")
@@ -432,7 +432,7 @@ def _source_state(
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
         "stale": stale,
-        "symbol_count": _coerce_int(ticker_source_run.get("selected_count")) or len(symbols),
+        "symbol_count": coerce_int(ticker_source_run.get("selected_count")) or len(symbols),
         "symbols": symbols[:25],
         "latest_run": dict(ticker_source_run),
         "reason": "source_stale" if stale else None,
@@ -463,7 +463,7 @@ def _candidate_state(
     status = "healthy" if raw_status in {"completed", "ready", "ok"} else "degraded"
     if stale and status == "healthy":
         status = "degraded"
-    candidate_count = _coerce_int(candidate_run.get("candidate_count")) or 0
+    candidate_count = coerce_int(candidate_run.get("candidate_count")) or 0
     summary = _mapping(candidate_run.get("summary"))
     diagnostics = [dict(row) for row in _sequence(candidate_run.get("diagnostics")) if isinstance(row, Mapping)]
     return {
@@ -472,7 +472,7 @@ def _candidate_state(
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
         "stale": stale,
-        "symbol_count": _coerce_int(candidate_run.get("symbol_count")) or 0,
+        "symbol_count": coerce_int(candidate_run.get("symbol_count")) or 0,
         "candidate_count": candidate_count,
         "diagnostic_status": summary.get("diagnostic_status"),
         "symbol_status_counts": _mapping(summary.get("symbol_status_counts")),
@@ -518,14 +518,14 @@ def _flow_position_summary(
     ]
     closed_positions = [row for row in day_positions if str(row.get("status") or "") == "closed"]
     closed_positions.sort(key=lambda row: str(row.get("closed_at") or ""), reverse=True)
-    realized = sum(_coerce_float(row.get("realized_pnl")) or 0.0 for row in day_positions)
-    unrealized = sum(_coerce_float(row.get("unrealized_pnl")) or 0.0 for row in open_positions)
+    realized = sum(coerce_float(row.get("realized_pnl")) or 0.0 for row in day_positions)
+    unrealized = sum(coerce_float(row.get("unrealized_pnl")) or 0.0 for row in open_positions)
     return {
         "status": "healthy",
         "position_count": len(day_positions),
         "open_position_count": len(open_positions),
         "closed_position_count": len(closed_positions),
-        "latest_exit_reason": None if not closed_positions else _as_text(closed_positions[0].get("last_exit_reason")),
+        "latest_exit_reason": None if not closed_positions else as_text(closed_positions[0].get("last_exit_reason")),
         "realized_pnl": round(realized, 2),
         "unrealized_pnl": round(unrealized, 2),
         "net_pnl": round(realized + unrealized, 2),
@@ -604,7 +604,7 @@ def _build_trading_flows(
             market_date=market_date,
         )
         max_entries = strategy.risk_limits.max_new_entries_per_day
-        used_entries = _coerce_int(position_summary.get("position_count")) or 0
+        used_entries = coerce_int(position_summary.get("position_count")) or 0
         remaining_entries = None if max_entries is None else max(max_entries - used_entries - int(intent_summary.get("active_intent_count") or 0), 0)
         flows.append(
             {
@@ -662,9 +662,9 @@ def build_trading_ops_state(
     market_date: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = _utc_now()
+    generated_at = utc_now_iso()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-    resolved_market_date = _as_text(market_date) or now.astimezone(NEW_YORK).date().isoformat()
+    resolved_market_date = as_text(market_date) or now.astimezone(NEW_YORK).date().isoformat()
     market_session = _market_session_context(now=now)
     market_open = bool(market_session.get("is_open"))
     attention: list[dict[str, str]] = []
@@ -678,7 +678,7 @@ def build_trading_ops_state(
             _attention(
                 severity="high" if control_status == "halted" else "medium",
                 code=f"control_mode_{control.get('mode')}",
-                message=_as_text(control.get("note")) or f"Control mode is {control.get('mode')}.",
+                message=as_text(control.get("note")) or f"Control mode is {control.get('mode')}.",
             )
         )
 
@@ -815,7 +815,7 @@ def build_trading_ops_state(
         {
             str(row.get("underlying_symbol") or "")
             for row in summarized_open_execution_attempts
-            if bool(row.get("blocks_capacity")) and _as_text(row.get("underlying_symbol"))
+            if bool(row.get("blocks_capacity")) and as_text(row.get("underlying_symbol"))
         }
     )
     execution_health_status = "degraded" if stale_open_execution_count or submit_unknown_execution_count else "healthy"
@@ -856,7 +856,7 @@ def build_trading_ops_state(
         ]
         for position in persisted_positions:
             risk = assess_position_risk(position=position)
-            close_mark = _coerce_float(position.get("close_mark"))
+            close_mark = coerce_float(position.get("close_mark"))
             mark_age_seconds = _seconds_since(position.get("close_marked_at"), now=now)
             if close_mark is None:
                 missing_mark_count += 1
@@ -866,8 +866,8 @@ def build_trading_ops_state(
                 reconciliation_mismatch_count += 1
             if str(risk.get("status") or "") == "breach":
                 risk_breach_count += 1
-            realized_pnl = _coerce_float(position.get("realized_pnl")) or 0.0
-            unrealized_pnl = _coerce_float(position.get("unrealized_pnl")) or 0.0
+            realized_pnl = coerce_float(position.get("realized_pnl")) or 0.0
+            unrealized_pnl = coerce_float(position.get("unrealized_pnl")) or 0.0
             open_positions.append(
                 {
                     **position,
@@ -893,8 +893,8 @@ def build_trading_ops_state(
             )
         )
 
-    mark_error = _as_text(_mapping(broker_sync.get("summary")).get("mark_error"))
-    broker_unquoted_positions = _coerce_int(_mapping(broker_sync.get("summary")).get("unquoted_position_count")) or 0
+    mark_error = as_text(_mapping(broker_sync.get("summary")).get("mark_error"))
+    broker_unquoted_positions = coerce_int(_mapping(broker_sync.get("summary")).get("unquoted_position_count")) or 0
     mark_health_status = "healthy"
     if missing_mark_count or stale_mark_count or broker_unquoted_positions or mark_error:
         mark_health_status = "degraded"
@@ -1026,17 +1026,17 @@ def build_trading_ops_state(
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
         "engine_status": engine_status,
-        "engine_ticker_source_run_count": _coerce_int(engine_summary.get("ticker_source_run_count")) or 0,
-        "engine_candidate_run_count": _coerce_int(engine_summary.get("candidate_run_count")) or 0,
-        "engine_trade_candidate_count": _coerce_int(engine_summary.get("trade_candidate_count")) or 0,
-        "engine_signal_count": _coerce_int(engine_summary.get("signal_count")) or 0,
-        "engine_decision_count": _coerce_int(engine_summary.get("decision_count")) or 0,
-        "engine_selected_count": _coerce_int(engine_summary.get("selected_count")) or 0,
-        "engine_intent_count": _coerce_int(engine_summary.get("intent_count")) or 0,
-        "engine_entry_intent_count": _coerce_int(engine_summary.get("entry_intent_count")) or 0,
-        "engine_management_intent_count": _coerce_int(engine_summary.get("management_intent_count")) or 0,
-        "engine_open_position_count": _coerce_int(engine_summary.get("open_position_count")) or 0,
-        "capture_active_target_count": _coerce_int(engine_summary.get("capture_active_target_count")) or 0,
+        "engine_ticker_source_run_count": coerce_int(engine_summary.get("ticker_source_run_count")) or 0,
+        "engine_candidate_run_count": coerce_int(engine_summary.get("candidate_run_count")) or 0,
+        "engine_trade_candidate_count": coerce_int(engine_summary.get("trade_candidate_count")) or 0,
+        "engine_signal_count": coerce_int(engine_summary.get("signal_count")) or 0,
+        "engine_decision_count": coerce_int(engine_summary.get("decision_count")) or 0,
+        "engine_selected_count": coerce_int(engine_summary.get("selected_count")) or 0,
+        "engine_intent_count": coerce_int(engine_summary.get("intent_count")) or 0,
+        "engine_entry_intent_count": coerce_int(engine_summary.get("entry_intent_count")) or 0,
+        "engine_management_intent_count": coerce_int(engine_summary.get("management_intent_count")) or 0,
+        "engine_open_position_count": coerce_int(engine_summary.get("open_position_count")) or 0,
+        "capture_active_target_count": coerce_int(engine_summary.get("capture_active_target_count")) or 0,
         "capture_status": engine_summary.get("capture_status"),
     }
 

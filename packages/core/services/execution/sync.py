@@ -11,8 +11,8 @@ from core.services.runtime_identity import (
     build_live_run_scope_id,
 )
 from core.services.value_coercion import (
-    as_text as _as_text,
-    utc_now_iso as _utc_now,
+    as_text,
+    utc_now_iso,
 )
 from .alpaca_adapter import create_alpaca_order_adapter
 from .attempts import (
@@ -43,7 +43,7 @@ def refresh_live_session_execution(
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
     if str(attempt["session_id"]) != session_id:
         raise ValueError(f"Execution {execution_attempt_id} does not belong to session {session_id}")
-    if _as_text(attempt.get("broker_order_id")) is None and str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
+    if as_text(attempt.get("broker_order_id")) is None and str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
         payload = _get_attempt_payload(execution_store, execution_attempt_id)
         return {
             "action": "refresh",
@@ -51,8 +51,8 @@ def refresh_live_session_execution(
             "message": "Execution is still queued for broker submission.",
             "attempt": payload,
         }
-    if _as_text(attempt.get("broker_order_id")) is None and str(attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS:
-        client_order_id = _as_text(attempt.get("client_order_id"))
+    if as_text(attempt.get("broker_order_id")) is None and str(attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS:
+        client_order_id = as_text(attempt.get("client_order_id"))
         if client_order_id is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
             message = "Execution submit outcome is uncertain and cannot be reconciled because the client order id is missing."
@@ -103,7 +103,7 @@ def refresh_live_session_execution(
             "message": message,
             "attempt": reconciled_attempt,
         }
-    broker_order_id = _as_text(attempt.get("broker_order_id"))
+    broker_order_id = as_text(attempt.get("broker_order_id"))
     if broker_order_id is None:
         raise ValueError("Execution does not have a broker order id to refresh")
 
@@ -143,10 +143,10 @@ def refresh_execution_attempt(
     attempt = execution_store.get_attempt(execution_attempt_id)
     if attempt is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
-    session_id = _as_text(attempt.get("session_id"))
+    session_id = as_text(attempt.get("session_id"))
     if session_id is None:
-        label = _as_text(attempt.get("label"))
-        market_date = _as_text(attempt.get("market_date")) or _as_text(attempt.get("session_date"))
+        label = as_text(attempt.get("label"))
+        market_date = as_text(attempt.get("market_date")) or as_text(attempt.get("session_date"))
         if label is None or market_date is None:
             raise ValueError("Execution attempt is missing session compatibility fields")
         session_id = build_live_run_scope_id(label, market_date)
@@ -181,15 +181,15 @@ def cancel_execution_attempt(
             "attempt": payload,
         }
 
-    broker_order_id = _as_text(attempt.get("broker_order_id"))
+    broker_order_id = as_text(attempt.get("broker_order_id"))
     if broker_order_id is None:
         if status != PENDING_SUBMISSION_STATUS:
             raise ValueError("Execution does not have a broker order id to cancel")
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status="canceled",
-            completed_at=_utc_now(),
-            position_id=_as_text(attempt.get("position_id")),
+            completed_at=utc_now_iso(),
+            position_id=as_text(attempt.get("position_id")),
         )
         payload = _get_attempt_payload(execution_store, execution_attempt_id)
         message = f"Canceled queued execution {execution_attempt_id} before broker submit."
@@ -213,7 +213,7 @@ def cancel_execution_attempt(
     execution_store.update_attempt(
         execution_attempt_id=execution_attempt_id,
         status="pending_cancel",
-        position_id=_as_text(attempt.get("position_id")),
+        position_id=as_text(attempt.get("position_id")),
     )
     if order_snapshot is None:
         payload = _get_attempt_payload(execution_store, execution_attempt_id)

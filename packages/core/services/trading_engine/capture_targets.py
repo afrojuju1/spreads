@@ -7,7 +7,7 @@ from typing import Any
 
 from core.services.option_structures import normalize_legs, position_legs
 from core.services.positions import enrich_position_row
-from core.services.value_coercion import as_text as _as_text
+from core.services.value_coercion import as_text
 
 CAPTURE_OWNER_POSITION = "position"
 CAPTURE_OWNER_WORKING_INTENT = "working_intent"
@@ -42,7 +42,7 @@ DEFAULT_SELECTED_LIMIT = 50
 DEFAULT_WATCH_LIMIT = 100
 
 
-def _utc_now() -> datetime:
+def utc_now_iso() -> datetime:
     return datetime.now(UTC)
 
 
@@ -51,22 +51,22 @@ def _expires_at(now: datetime, ttl_seconds: int) -> str:
 
 
 def _as_session_date(value: Any) -> str | None:
-    rendered = _as_text(value)
+    rendered = as_text(value)
     if rendered is None:
         return None
     return rendered[:10]
 
 
 def _source_legs(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    legs = normalize_legs(payload.get("legs"), expiration_date=_as_text(payload.get("expiration_date")))
+    legs = normalize_legs(payload.get("legs"), expiration_date=as_text(payload.get("expiration_date")))
     if legs:
         return legs
     execution_shape = payload.get("execution_shape")
     if isinstance(execution_shape, Mapping):
-        legs = normalize_legs(execution_shape.get("legs"), expiration_date=_as_text(payload.get("expiration_date")))
+        legs = normalize_legs(execution_shape.get("legs"), expiration_date=as_text(payload.get("expiration_date")))
         if legs:
             return legs
-    option_symbol = _as_text(payload.get("option_symbol"))
+    option_symbol = as_text(payload.get("option_symbol"))
     if option_symbol is None:
         return []
     return normalize_legs(
@@ -95,7 +95,7 @@ def _capture_rows_from_legs(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for leg in normalize_legs(list(legs)):
-        option_symbol = _as_text(leg.get("symbol"))
+        option_symbol = as_text(leg.get("symbol"))
         if option_symbol is None:
             continue
         rows.append(
@@ -103,7 +103,7 @@ def _capture_rows_from_legs(
                 "option_symbol": option_symbol,
                 "underlying_symbol": underlying_symbol,
                 "strategy": strategy,
-                "leg_role": _as_text(leg.get("role")) or "contract",
+                "leg_role": as_text(leg.get("role")) or "contract",
                 "quote_enabled": quote_enabled,
                 "trade_enabled": trade_enabled,
                 "feed": feed,
@@ -124,8 +124,8 @@ def _position_capture_rows(position: Mapping[str, Any], *, now: datetime) -> lis
     payload = enrich_position_row(dict(position))
     return _capture_rows_from_legs(
         legs=position_legs(payload),
-        underlying_symbol=_as_text(payload.get("underlying_symbol")) or _as_text(payload.get("root_symbol")),
-        strategy=_as_text(payload.get("strategy_family")) or _as_text(payload.get("strategy")),
+        underlying_symbol=as_text(payload.get("underlying_symbol")) or as_text(payload.get("root_symbol")),
+        strategy=as_text(payload.get("strategy_family")) or as_text(payload.get("strategy")),
         priority=CAPTURE_PRIORITY_OPEN_POSITION,
         expires_at=_expires_at(now, DEFAULT_ROLLING_TTL_SECONDS),
         metadata={
@@ -140,8 +140,8 @@ def _position_capture_rows(position: Mapping[str, Any], *, now: datetime) -> lis
 def _attempt_capture_rows(attempt: Mapping[str, Any], *, now: datetime) -> list[dict[str, Any]]:
     return _capture_rows_from_legs(
         legs=_source_legs(attempt),
-        underlying_symbol=_as_text(attempt.get("underlying_symbol")),
-        strategy=_as_text(attempt.get("strategy")) or _as_text(attempt.get("strategy_family")),
+        underlying_symbol=as_text(attempt.get("underlying_symbol")),
+        strategy=as_text(attempt.get("strategy")) or as_text(attempt.get("strategy_family")),
         priority=CAPTURE_PRIORITY_WORKING_INTENT,
         expires_at=_expires_at(now, DEFAULT_ROLLING_TTL_SECONDS),
         metadata={
@@ -167,8 +167,8 @@ def _signal_capture_rows(
 ) -> list[dict[str, Any]]:
     return _capture_rows_from_legs(
         legs=_source_legs(signal),
-        underlying_symbol=_as_text(signal.get("underlying_symbol")),
-        strategy=_as_text(signal.get("trade_structure")),
+        underlying_symbol=as_text(signal.get("underlying_symbol")),
+        strategy=as_text(signal.get("trade_structure")),
         priority=priority,
         expires_at=_expires_at(now, ttl_seconds),
         metadata={
@@ -256,7 +256,7 @@ def refresh_engine_capture_targets(
     if not capture_store.target_schema_ready():
         return {"status": "skipped", "reason": "capture_schema_unavailable"}
 
-    resolved_now = now or _utc_now()
+    resolved_now = now or utc_now_iso()
     execution_store = storage.execution
     engine_facts = storage.engine_facts
 
@@ -280,9 +280,9 @@ def refresh_engine_capture_targets(
                 reason=CAPTURE_REASON_OPEN_POSITION,
                 priority=CAPTURE_PRIORITY_OPEN_POSITION,
                 rows=_position_capture_rows(position, now=resolved_now),
-                session_id=_as_text(position.get("session_id")),
+                session_id=as_text(position.get("session_id")),
                 session_date=_as_session_date(position.get("market_date_opened")),
-                label=_as_text(position.get("trading_strategy_id")),
+                label=as_text(position.get("trading_strategy_id")),
             )
     capture_store.delete_capture_targets_for_absent_owners(
         owner_kind=CAPTURE_OWNER_POSITION,
@@ -304,17 +304,17 @@ def refresh_engine_capture_targets(
                 reason=CAPTURE_REASON_WORKING_INTENT,
                 priority=CAPTURE_PRIORITY_WORKING_INTENT,
                 rows=_attempt_capture_rows(attempt, now=resolved_now),
-                session_id=_as_text(attempt.get("session_id")),
+                session_id=as_text(attempt.get("session_id")),
                 session_date=_as_session_date(attempt.get("session_date")),
-                label=_as_text(attempt.get("trading_strategy_id")) or _as_text(attempt.get("label")),
+                label=as_text(attempt.get("trading_strategy_id")) or as_text(attempt.get("label")),
             )
 
     if execution_store.intent_schema_ready() and engine_facts.schema_ready():
         for intent in execution_store.list_execution_intents(states=list(WORKING_INTENT_STATES), limit=500):
             owner_key = str(intent["execution_intent_id"])
             working_owner_keys.append(owner_key)
-            trade_signal_id = _as_text(intent.get("trade_signal_id"))
-            trade_decision_id = _as_text(intent.get("trade_decision_id"))
+            trade_signal_id = as_text(intent.get("trade_signal_id"))
+            trade_decision_id = as_text(intent.get("trade_decision_id"))
             signal = None if trade_signal_id is None else engine_facts.get_trade_signal(trade_signal_id)
             decision = None if trade_decision_id is None else engine_facts.get_trade_decision(trade_decision_id)
             target_counts[CAPTURE_REASON_WORKING_INTENT] += _replace_owner_targets(
@@ -326,7 +326,7 @@ def refresh_engine_capture_targets(
                 rows=_intent_signal_rows(intent=intent, signal=signal, decision=decision, now=resolved_now),
                 session_id=None,
                 session_date=None,
-                label=_as_text(intent.get("trading_strategy_id")),
+                label=as_text(intent.get("trading_strategy_id")),
             )
     capture_store.delete_capture_targets_for_absent_owners(
         owner_kind=CAPTURE_OWNER_WORKING_INTENT,
@@ -365,10 +365,10 @@ def refresh_engine_capture_targets(
                 ),
                 session_id=None,
                 session_date=_as_session_date(signal.get("session_date")),
-                label=_as_text(signal.get("trading_strategy_id")),
+                label=as_text(signal.get("trading_strategy_id")),
             )
 
-        selected_signal_ids = {_as_text(dict(row.get("trade_signal") or {}).get("trade_signal_id")) for row in selected_rows}
+        selected_signal_ids = {as_text(dict(row.get("trade_signal") or {}).get("trade_signal_id")) for row in selected_rows}
         watch_rows = engine_facts.list_trade_signals(
             signal_states=list(WATCH_SIGNAL_STATES),
             routine="entry",
@@ -396,7 +396,7 @@ def refresh_engine_capture_targets(
                 ),
                 session_id=None,
                 session_date=_as_session_date(signal.get("session_date")),
-                label=_as_text(signal.get("trading_strategy_id")),
+                label=as_text(signal.get("trading_strategy_id")),
             )
     capture_store.delete_capture_targets_for_absent_owners(
         owner_kind=CAPTURE_OWNER_TRADE_DECISION,

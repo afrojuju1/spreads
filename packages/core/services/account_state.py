@@ -11,10 +11,10 @@ from core.db.core import first_model_row
 from core.db.decorators import with_session
 from core.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
 from core.services.value_coercion import (
-    as_text as _as_text,
-    coerce_float as _coerce_float,
-    coerce_int as _coerce_int,
-    utc_now_iso as _utc_now,
+    as_text,
+    coerce_float,
+    coerce_int,
+    utc_now_iso,
 )
 from core.storage.broker_models import AccountSnapshotModel, BrokerSyncStateModel
 from core.storage.capabilities import StorageCapabilities
@@ -40,6 +40,7 @@ HISTORY_RANGE_REQUESTS: dict[AccountHistoryRange, dict[str, str | None]] = {
 }
 ACCOUNT_OVERVIEW_LIVE_TIMEOUT_SECONDS = 5.0
 
+
 def _coerce_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -58,7 +59,7 @@ def _coerce_bool(value: Any) -> bool | None:
 def _parse_history_timestamp(value: Any) -> str | None:
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(float(value), UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    text = _as_text(value)
+    text = as_text(value)
     if text is None:
         return None
     if text.isdigit():
@@ -74,33 +75,33 @@ def _parse_history_timestamp(value: Any) -> str | None:
 
 
 def normalize_history_range(value: str | None) -> AccountHistoryRange:
-    normalized = (_as_text(value) or "1D").upper()
+    normalized = (as_text(value) or "1D").upper()
     if normalized not in HISTORY_RANGE_REQUESTS:
         raise ValueError(f"Unsupported history range: {normalized}")
     return normalized  # type: ignore[return-value]
 
 
 def _normalize_account(payload: dict[str, Any]) -> dict[str, Any]:
-    equity = _coerce_float(payload.get("equity"))
-    last_equity = _coerce_float(payload.get("last_equity"))
+    equity = coerce_float(payload.get("equity"))
+    last_equity = coerce_float(payload.get("last_equity"))
     return {
-        "account_number": _as_text(payload.get("account_number")),
-        "status": _as_text(payload.get("status")),
-        "currency": _as_text(payload.get("currency")) or "USD",
+        "account_number": as_text(payload.get("account_number")),
+        "status": as_text(payload.get("status")),
+        "currency": as_text(payload.get("currency")) or "USD",
         "equity": equity,
         "last_equity": last_equity,
-        "cash": _coerce_float(payload.get("cash")),
-        "buying_power": _coerce_float(payload.get("buying_power")),
-        "regt_buying_power": _coerce_float(payload.get("regt_buying_power")),
-        "daytrading_buying_power": _coerce_float(payload.get("daytrading_buying_power")),
-        "non_marginable_buying_power": _coerce_float(payload.get("non_marginable_buying_power")),
-        "options_buying_power": _coerce_float(payload.get("options_buying_power")),
+        "cash": coerce_float(payload.get("cash")),
+        "buying_power": coerce_float(payload.get("buying_power")),
+        "regt_buying_power": coerce_float(payload.get("regt_buying_power")),
+        "daytrading_buying_power": coerce_float(payload.get("daytrading_buying_power")),
+        "non_marginable_buying_power": coerce_float(payload.get("non_marginable_buying_power")),
+        "options_buying_power": coerce_float(payload.get("options_buying_power")),
         "portfolio_value": equity,
-        "long_market_value": _coerce_float(payload.get("long_market_value")),
-        "short_market_value": _coerce_float(payload.get("short_market_value")),
-        "initial_margin": _coerce_float(payload.get("initial_margin")),
-        "maintenance_margin": _coerce_float(payload.get("maintenance_margin")),
-        "daytrade_count": _coerce_int(payload.get("daytrade_count")),
+        "long_market_value": coerce_float(payload.get("long_market_value")),
+        "short_market_value": coerce_float(payload.get("short_market_value")),
+        "initial_margin": coerce_float(payload.get("initial_margin")),
+        "maintenance_margin": coerce_float(payload.get("maintenance_margin")),
+        "daytrade_count": coerce_int(payload.get("daytrade_count")),
         "pattern_day_trader": _coerce_bool(payload.get("pattern_day_trader")),
         "trading_blocked": _coerce_bool(payload.get("trading_blocked")),
         "transfers_blocked": _coerce_bool(payload.get("transfers_blocked")),
@@ -110,8 +111,8 @@ def _normalize_account(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_pnl_snapshot(account: dict[str, Any]) -> dict[str, Any]:
-    equity = _coerce_float(account.get("equity"))
-    last_equity = _coerce_float(account.get("last_equity"))
+    equity = coerce_float(account.get("equity"))
+    last_equity = coerce_float(account.get("last_equity"))
     if equity is None or last_equity is None:
         return {
             "day_change": None,
@@ -128,25 +129,25 @@ def _build_pnl_snapshot(account: dict[str, Any]) -> dict[str, Any]:
 def _normalize_positions(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in payload:
-        market_value = _coerce_float(item.get("market_value"))
+        market_value = coerce_float(item.get("market_value"))
         rows.append(
             {
-                "asset_id": _as_text(item.get("asset_id")),
-                "symbol": _as_text(item.get("symbol")) or "—",
-                "asset_class": _as_text(item.get("asset_class")),
-                "exchange": _as_text(item.get("exchange")),
-                "side": _as_text(item.get("side")),
-                "qty": _coerce_float(item.get("qty")),
-                "qty_available": _coerce_float(item.get("qty_available")),
+                "asset_id": as_text(item.get("asset_id")),
+                "symbol": as_text(item.get("symbol")) or "—",
+                "asset_class": as_text(item.get("asset_class")),
+                "exchange": as_text(item.get("exchange")),
+                "side": as_text(item.get("side")),
+                "qty": coerce_float(item.get("qty")),
+                "qty_available": coerce_float(item.get("qty_available")),
                 "market_value": market_value,
-                "cost_basis": _coerce_float(item.get("cost_basis")),
-                "avg_entry_price": _coerce_float(item.get("avg_entry_price")),
-                "current_price": _coerce_float(item.get("current_price")),
-                "change_today": _coerce_float(item.get("change_today")),
-                "unrealized_pl": _coerce_float(item.get("unrealized_pl")),
-                "unrealized_plpc": _coerce_float(item.get("unrealized_plpc")),
-                "unrealized_intraday_pl": _coerce_float(item.get("unrealized_intraday_pl")),
-                "unrealized_intraday_plpc": _coerce_float(item.get("unrealized_intraday_plpc")),
+                "cost_basis": coerce_float(item.get("cost_basis")),
+                "avg_entry_price": coerce_float(item.get("avg_entry_price")),
+                "current_price": coerce_float(item.get("current_price")),
+                "change_today": coerce_float(item.get("change_today")),
+                "unrealized_pl": coerce_float(item.get("unrealized_pl")),
+                "unrealized_plpc": coerce_float(item.get("unrealized_plpc")),
+                "unrealized_intraday_pl": coerce_float(item.get("unrealized_intraday_pl")),
+                "unrealized_intraday_plpc": coerce_float(item.get("unrealized_intraday_plpc")),
             }
         )
     rows.sort(
@@ -175,13 +176,13 @@ def _normalize_history(
                 continue
             equity = None
             if isinstance(equities, list) and index < len(equities):
-                equity = _coerce_float(equities[index])
+                equity = coerce_float(equities[index])
             profit_loss = None
             if isinstance(pnl_values, list) and index < len(pnl_values):
-                profit_loss = _coerce_float(pnl_values[index])
+                profit_loss = coerce_float(pnl_values[index])
             profit_loss_pct = None
             if isinstance(pnl_percentages, list) and index < len(pnl_percentages):
-                profit_loss_pct = _coerce_float(pnl_percentages[index])
+                profit_loss_pct = coerce_float(pnl_percentages[index])
             points.append(
                 {
                     "timestamp": timestamp,
@@ -196,7 +197,7 @@ def _normalize_history(
         "period": request["period"],
         "timeframe": request["timeframe"],
         "intraday_reporting": request["intraday_reporting"],
-        "base_value": _coerce_float(payload.get("base_value")),
+        "base_value": coerce_float(payload.get("base_value")),
         "points": points,
     }
 
@@ -248,7 +249,7 @@ def fetch_account_overview_live(
         "broker": "alpaca",
         "environment": resolve_trading_environment(client.trading_base_url),
         "source": "live",
-        "retrieved_at": _utc_now(),
+        "retrieved_at": utc_now_iso(),
         "account": account,
         "pnl": _build_pnl_snapshot(account),
         "history": _normalize_history(
@@ -293,9 +294,7 @@ def get_account_overview(
         if _schema_ready(session):
             snapshot = first_model_row(
                 session,
-                select(AccountSnapshotModel)
-                .order_by(AccountSnapshotModel.captured_at.desc(), AccountSnapshotModel.snapshot_id.desc())
-                .limit(1),
+                select(AccountSnapshotModel).order_by(AccountSnapshotModel.captured_at.desc(), AccountSnapshotModel.snapshot_id.desc()).limit(1),
             )
         if snapshot is None:
             raise

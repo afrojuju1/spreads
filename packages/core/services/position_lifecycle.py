@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 import re
 from typing import Any
 
@@ -12,6 +11,7 @@ from core.services.trading_lifecycle import (
     is_terminal_lifecycle_state,
     normalize_lifecycle_state,
 )
+from core.services.value_coercion import as_text, coerce_float, utc_now_iso
 
 BLOCKED_CLOSE_REASONS = {
     "awaiting_broker_reconciliation",
@@ -30,26 +30,6 @@ BLOCKED_CLOSE_REASONS = {
 }
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _safe_component(value: Any) -> str:
     rendered = str(value or "").strip()
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", rendered) or "unknown"
@@ -64,7 +44,7 @@ def _list(value: Any) -> list[Any]:
 
 
 def normalize_position_lifecycle_state(position: Mapping[str, Any]) -> str:
-    raw_status = _as_text(position.get("position_status")) or _as_text(position.get("status"))
+    raw_status = as_text(position.get("position_status")) or as_text(position.get("status"))
     if raw_status is not None:
         try:
             return normalize_lifecycle_state(
@@ -73,8 +53,8 @@ def normalize_position_lifecycle_state(position: Mapping[str, Any]) -> str:
             ).value
         except ValueError:
             pass
-    opened_quantity = _coerce_float(position.get("opened_quantity")) or 0.0
-    remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
+    opened_quantity = coerce_float(position.get("opened_quantity")) or 0.0
+    remaining_quantity = coerce_float(position.get("remaining_quantity")) or 0.0
     if opened_quantity <= 0:
         return TradingPositionState.PENDING_OPEN.value
     if remaining_quantity <= 0:
@@ -122,9 +102,9 @@ def build_position_lifecycle(
     active_close_attempt_count = sum(1 for row in close_attempt_rows if _close_attempt_is_active(row))
     pending_close_intent_count = sum(1 for row in close_intent_rows if _close_intent_is_pending(row))
     active_close_count = active_close_attempt_count + pending_close_intent_count
-    reconciliation_state = _as_text(position.get("reconciliation_status")) or _as_text(position.get("reconciliation_state"))
-    remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
-    opened_quantity = _coerce_float(position.get("opened_quantity")) or 0.0
+    reconciliation_state = as_text(position.get("reconciliation_status")) or as_text(position.get("reconciliation_state"))
+    remaining_quantity = coerce_float(position.get("remaining_quantity")) or 0.0
+    opened_quantity = coerce_float(position.get("opened_quantity")) or 0.0
 
     if state == TradingPositionState.CLOSED.value:
         next_action = "none"
@@ -153,7 +133,7 @@ def build_position_lifecycle(
         "close_allowed": next_action == "evaluate_close",
         "reconciliation_state": reconciliation_state,
         "next_action": next_action,
-        "updated_at": _as_text(position.get("updated_at")),
+        "updated_at": as_text(position.get("updated_at")),
     }
 
 
@@ -175,9 +155,9 @@ def build_close_decision_lifecycle(
     decision_source: str | None = None,
     decided_at: str | None = None,
 ) -> dict[str, Any]:
-    decided_at_value = decided_at or _utc_now()
-    position_id = _as_text(position.get("position_id")) or "unknown"
-    reason = _as_text(decision.get("reason")) or "unknown"
+    decided_at_value = decided_at or utc_now_iso()
+    position_id = as_text(position.get("position_id")) or "unknown"
+    reason = as_text(decision.get("reason")) or "unknown"
     state = _close_decision_state(decision)
     details = _mapping(decision.get("decision_details"))
     policy = _mapping(details.get("policy"))
@@ -194,12 +174,12 @@ def build_close_decision_lifecycle(
         if details.get(key) is not None
     }
     evidence = {
-        "decision_source": decision_source or _as_text(decision.get("decision_source")),
-        "recipe_ref": _as_text(decision.get("recipe_ref")),
+        "decision_source": decision_source or as_text(decision.get("decision_source")),
+        "recipe_ref": as_text(decision.get("recipe_ref")),
         "limit_price": decision.get("limit_price"),
-        "limit_price_source": _as_text(decision.get("limit_price_source")),
-        "mark_state": _as_text(details.get("mark_state")),
-        "force_close_at": _as_text(details.get("force_close_at")),
+        "limit_price_source": as_text(decision.get("limit_price_source")),
+        "mark_state": as_text(details.get("mark_state")),
+        "force_close_at": as_text(details.get("force_close_at")),
         "management_recipe_refs": [str(value) for value in decision.get("management_recipe_refs") or [] if str(value or "").strip()],
     }
     return {
@@ -211,10 +191,10 @@ def build_close_decision_lifecycle(
         "reason": reason,
         "reason_codes": [reason],
         "blockers": blockers,
-        "quantity_to_close": _coerce_float(position.get("remaining_quantity")),
-        "limit_source": _as_text(decision.get("limit_price_source")),
-        "limit_price": _coerce_float(decision.get("limit_price")),
-        "mark_source": _as_text(position.get("close_mark_source")),
+        "quantity_to_close": coerce_float(position.get("remaining_quantity")),
+        "limit_source": as_text(decision.get("limit_price_source")),
+        "limit_price": coerce_float(decision.get("limit_price")),
+        "mark_source": as_text(position.get("close_mark_source")),
         "policy_snapshot": policy,
         "metrics": metrics,
         "evidence": evidence,

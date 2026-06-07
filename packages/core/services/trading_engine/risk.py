@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
-from .kernel import EngineRunRef
+from .kernel import EnginePayload, EngineRunRef, EngineSummary
 
 
 @dataclass(frozen=True)
@@ -13,7 +12,7 @@ class AdmissionRequest:
     execution_intent_id: str
     trading_strategy_id: str
     action_type: str
-    payload: Mapping[str, Any] = field(default_factory=dict)
+    payload: EnginePayload = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -24,9 +23,8 @@ class AdmissionResult:
     state: str
     reason_codes: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
-    metrics: Mapping[str, Any] = field(default_factory=dict)
+    metrics: EngineSummary = field(default_factory=dict)
 
 
 class RiskEngine(Protocol):
-    def admit_intent(self, request: AdmissionRequest) -> AdmissionResult:
-        ...
+    def admit_intent(self, request: AdmissionRequest) -> AdmissionResult: ...

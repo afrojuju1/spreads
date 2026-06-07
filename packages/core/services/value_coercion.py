@@ -4,8 +4,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def as_text(value: Any) -> str | None:
@@ -37,5 +41,6 @@ __all__ = [
     "as_text",
     "coerce_float",
     "coerce_int",
+    "utc_now",
     "utc_now_iso",
 ]

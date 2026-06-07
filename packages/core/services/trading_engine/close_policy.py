@@ -6,6 +6,7 @@ from typing import Any
 import pandas_market_calendars as mcal
 
 from core.services.option_structures import net_premium_kind
+from core.services.value_coercion import as_text, coerce_float, coerce_int
 from core.storage.serializers import parse_datetime
 
 DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE = 10
@@ -15,31 +16,6 @@ DEFAULT_EXIT_POLICY = {
     "stop_multiple": 2.0,
     "force_close_at": None,
 }
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -70,10 +46,10 @@ def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     for key in ("profit_target_pct", "stop_multiple"):
         if key not in raw_policy:
             continue
-        parsed = _coerce_float(raw_policy[key])
+        parsed = coerce_float(raw_policy[key])
         if parsed is not None:
             policy[key] = parsed
-    policy["force_close_at"] = _as_text(raw_policy.get("force_close_at"))
+    policy["force_close_at"] = as_text(raw_policy.get("force_close_at"))
     return policy
 
 
@@ -84,7 +60,7 @@ def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] |
 
     source = payload if isinstance(payload, dict) else {}
     raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
-    force_close_minutes = _coerce_int(raw_policy.get("force_close_minutes_before_close"))
+    force_close_minutes = coerce_int(raw_policy.get("force_close_minutes_before_close"))
     if force_close_minutes is None:
         force_close_minutes = DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE
 
@@ -98,7 +74,7 @@ def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] |
 
 
 def _round_money(value: Any) -> float | None:
-    parsed = _coerce_float(value)
+    parsed = coerce_float(value)
     if parsed is None:
         return None
     return round(parsed, 4)
@@ -112,7 +88,7 @@ def _profit_target_mark(
 ) -> float | None:
     if entry_value is None or premium_kind is None:
         return None
-    profit_target_pct = _coerce_float(policy.get("profit_target_pct"))
+    profit_target_pct = coerce_float(policy.get("profit_target_pct"))
     if profit_target_pct is None:
         return None
     if premium_kind == "debit":
@@ -128,7 +104,7 @@ def _stop_mark(
 ) -> float | None:
     if entry_value is None or premium_kind is None:
         return None
-    stop_multiple = _coerce_float(policy.get("stop_multiple"))
+    stop_multiple = coerce_float(policy.get("stop_multiple"))
     if stop_multiple is None:
         return None
     if premium_kind == "debit":
@@ -162,7 +138,7 @@ def _exit_policy_details(
             premium_kind=premium_kind,
             policy=policy,
         ),
-        "force_close_at": _as_text(policy.get("force_close_at")),
+        "force_close_at": as_text(policy.get("force_close_at")),
     }
 
 
@@ -176,11 +152,11 @@ def _resolve_effective_exit_mark(
         return None, "awaiting_mark"
 
     risk_policy = position.get("risk_policy") if isinstance(position.get("risk_policy"), dict) else {}
-    stale_quote_after_seconds = _coerce_float(risk_policy.get("stale_quote_after_seconds"))
+    stale_quote_after_seconds = coerce_float(risk_policy.get("stale_quote_after_seconds"))
     if stale_quote_after_seconds is None:
         return mark, "mark"
 
-    marked_at = parse_datetime(_as_text(position.get("close_marked_at")))
+    marked_at = parse_datetime(as_text(position.get("close_marked_at")))
     if marked_at is None:
         return None, "awaiting_fresh_mark"
 
@@ -199,7 +175,7 @@ def _resolve_force_close_limit_price(
     if mark is not None and mark > 0:
         return round(max(mark, 0.01), 2), "mark"
 
-    width = _coerce_float(position.get("width"))
+    width = coerce_float(position.get("width"))
     if width is not None and width > 0:
         return round(max(width, 0.01), 2), "width"
 
@@ -215,11 +191,11 @@ def evaluate_exit_policy(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     policy = normalize_exit_policy(position.get("exit_policy"))
-    force_close_at = parse_datetime(_as_text(policy.get("force_close_at")))
+    force_close_at = parse_datetime(as_text(policy.get("force_close_at")))
     current_time = now or datetime.now(UTC)
-    remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
-    entry_value = _coerce_float(position.get("entry_credit")) or _coerce_float(position.get("entry_value"))
-    premium_kind = _as_text(position.get("entry_value_kind")) or net_premium_kind(position.get("strategy") or position.get("strategy_family"))
+    remaining_quantity = coerce_float(position.get("remaining_quantity")) or 0.0
+    entry_value = coerce_float(position.get("entry_credit")) or coerce_float(position.get("entry_value"))
+    premium_kind = as_text(position.get("entry_value_kind")) or net_premium_kind(position.get("strategy") or position.get("strategy_family"))
     effective_mark, mark_state = _resolve_effective_exit_mark(
         position=position,
         mark=mark,

@@ -4,7 +4,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeAlias
+
+EngineMetadata: TypeAlias = Mapping[str, Any]
+EngineEvidence: TypeAlias = Mapping[str, Any]
+EnginePolicy: TypeAlias = Mapping[str, Any]
+EnginePayload: TypeAlias = Mapping[str, Any]
+EngineSummary: TypeAlias = Mapping[str, Any]
 
 
 class EngineComponentRole(StrEnum):
@@ -23,7 +29,7 @@ class EngineContext:
     job_run_id: str | None = None
     config_root: str | None = None
     now: datetime | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: EngineMetadata = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

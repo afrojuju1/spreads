@@ -10,8 +10,8 @@ from core.events.bus import publish_global_event_sync
 from core.services.trading_engine.close_policy import normalize_exit_policy
 from core.services.risk_manager import normalize_risk_policy, resolve_execution_kill_switch_reason
 from core.services.value_coercion import (
-    as_text as _as_text,
-    utc_now_iso as _utc_now,
+    as_text,
+    utc_now_iso,
 )
 
 CONTROL_SCHEMA_MESSAGE = "Control plane storage is not available. Run database migrations."
@@ -48,7 +48,7 @@ def _policy_version_token(payload: dict[str, Any]) -> str:
 
 
 def _default_control_record() -> dict[str, Any]:
-    now = _utc_now()
+    now = utc_now_iso()
     return {
         "control_state_id": CONTROL_STATE_ID,
         "mode": CONTROL_MODE_NORMAL,
@@ -76,8 +76,8 @@ def _build_policy_ref(row: dict[str, Any]) -> dict[str, Any]:
         "version": str(row["version_token"]),
         "source_kind": str(row["source_kind"]),
         "policy_rollout_id": str(row["policy_rollout_id"]),
-        "operator_action_id": _as_text(row.get("operator_action_id")),
-        "effective_at": _as_text(row.get("effective_at")),
+        "operator_action_id": as_text(row.get("operator_action_id")),
+        "effective_at": as_text(row.get("effective_at")),
     }
 
 
@@ -121,9 +121,9 @@ def get_control_state_snapshot(
     active_rollouts = get_active_policy_rollout_map(storage=storage)
     configured_mode = _normalize_control_mode(str(record.get("mode") or CONTROL_MODE_NORMAL))
     effective_mode = configured_mode
-    reason_code = _as_text(record.get("reason_code"))
-    note = _as_text(record.get("note"))
-    source_kind = _as_text(record.get("source_kind")) or "default"
+    reason_code = as_text(record.get("reason_code"))
+    note = as_text(record.get("note"))
+    source_kind = as_text(record.get("source_kind")) or "default"
     blockers: list[dict[str, Any]] = []
     kill_switch_reason = resolve_execution_kill_switch_reason()
     if kill_switch_reason is not None:
@@ -145,10 +145,10 @@ def get_control_state_snapshot(
         "reason_code": reason_code,
         "note": note,
         "source_kind": source_kind,
-        "configured_source_kind": _as_text(record.get("source_kind")) or "default",
-        "triggered_by_action_id": _as_text(record.get("triggered_by_action_id")),
-        "effective_at": _as_text(record.get("effective_at")) or _utc_now(),
-        "updated_at": _as_text(record.get("updated_at")) or _utc_now(),
+        "configured_source_kind": as_text(record.get("source_kind")) or "default",
+        "triggered_by_action_id": as_text(record.get("triggered_by_action_id")),
+        "effective_at": as_text(record.get("effective_at")) or utc_now_iso(),
+        "updated_at": as_text(record.get("updated_at")) or utc_now_iso(),
         "metadata": dict(record.get("metadata") or {}),
         "blockers": blockers,
         "active_policy_refs": {family: _build_policy_ref(row) for family, row in active_rollouts.items()},
@@ -232,10 +232,10 @@ def publish_control_gate_event(
         entity_type="control_state",
         entity_id=CONTROL_STATE_ID,
         payload=payload,
-        timestamp=_utc_now(),
+        timestamp=utc_now_iso(),
         source="control_plane",
         session_date=session_date,
-        correlation_id=_as_text(control.get("triggered_by_action_id")) or session_id,
+        correlation_id=as_text(control.get("triggered_by_action_id")) or session_id,
         causation_id=cycle_id or source_object_id,
     )
 
@@ -256,16 +256,16 @@ def set_control_mode(
     if control_store is None or not control_store.schema_ready():
         raise RuntimeError(CONTROL_SCHEMA_MESSAGE)
     normalized_mode = _normalize_control_mode(mode)
-    normalized_reason_code = _as_text(reason_code)
+    normalized_reason_code = as_text(reason_code)
     if normalized_reason_code is None:
         raise ValueError("reason_code is required")
-    normalized_note = _as_text(note)
+    normalized_note = as_text(note)
     requested_metadata = dict(metadata or {})
     current = dict(control_store.get_control_state(CONTROL_STATE_ID) or _default_control_record())
     if (
         str(current.get("mode") or CONTROL_MODE_NORMAL) == normalized_mode
-        and _as_text(current.get("reason_code")) == normalized_reason_code
-        and _as_text(current.get("note")) == normalized_note
+        and as_text(current.get("reason_code")) == normalized_reason_code
+        and as_text(current.get("note")) == normalized_note
     ):
         return {
             "action": "set_mode",
@@ -273,7 +273,7 @@ def set_control_mode(
             "message": f"Control mode is already {normalized_mode}.",
             "control": get_control_state_snapshot(storage=storage),
         }
-    now = _utc_now()
+    now = utc_now_iso()
     action_id = _operator_action_id()
     resulting_state = {
         "mode": normalized_mode,
@@ -297,7 +297,7 @@ def set_control_mode(
         resulting_state=resulting_state,
         note=normalized_note,
         correlation_id=action_id,
-        causation_id=_as_text(current.get("triggered_by_action_id")),
+        causation_id=as_text(current.get("triggered_by_action_id")),
         occurred_at=now,
     )
     control_state = control_store.upsert_control_state(
@@ -363,10 +363,10 @@ def create_policy_rollout(
         status="active",
         version_token=_policy_version_token(normalized_policy),
         policy=normalized_policy,
-        note=_as_text(note),
+        note=as_text(note),
         source_kind=source_kind,
         operator_action_id=operator_action_id,
-        effective_at=_utc_now(),
+        effective_at=utc_now_iso(),
         ended_at=None,
         metadata=dict(metadata or {}),
     )

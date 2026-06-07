@@ -8,6 +8,7 @@ from core.services.deployment_policy import (
     DEPLOYMENT_MODE_PAPER_AUTO,
 )
 from core.services.trading_strategies import load_active_trading_strategies
+from core.services.value_coercion import as_text, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 from .shared import (
@@ -16,10 +17,8 @@ from .shared import (
     OPEN_POSITION_STATES,
     TERMINAL_INTENT_STATES,
     _append_event,
-    _as_text,
     _intent_payload,
     _update_intent,
-    _utc_now,
     link_execution_intent_position,
     normalize_execution_intent_state,
 )
@@ -66,7 +65,7 @@ def _position_is_active_for_intent(
     intent: dict[str, Any],
 ) -> tuple[bool, str | None]:
     payload = _intent_payload(intent)
-    strategy_position_id = _as_text(intent.get("strategy_position_id")) or _as_text(payload.get("position_id"))
+    strategy_position_id = as_text(intent.get("strategy_position_id")) or as_text(payload.get("position_id"))
     if strategy_position_id is None:
         return False, "position_missing"
     position = execution_store.get_position(strategy_position_id)
@@ -100,7 +99,7 @@ def _cleanup_slot_conflicts(
     results: list[dict[str, Any]] = []
     for slot_key, intents in slots.items():
         intents.sort(
-            key=lambda row: parse_datetime(_as_text(row.get("created_at"))) or datetime.min.replace(tzinfo=UTC),
+            key=lambda row: parse_datetime(as_text(row.get("created_at"))) or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         anchor_id: str | None = None
@@ -114,7 +113,7 @@ def _cleanup_slot_conflicts(
                 continue
             if state not in {"pending", "claimed"}:
                 continue
-            if _as_text(intent.get("execution_attempt_id")):
+            if as_text(intent.get("execution_attempt_id")):
                 continue
             updated = _update_intent(
                 execution_store,
@@ -126,7 +125,7 @@ def _cleanup_slot_conflicts(
                     "dispatch_status": "revoked",
                     "revoked_by_execution_intent_id": anchor_id,
                 },
-                updated_at=_utc_now(),
+                updated_at=utc_now_iso(),
             )
             _append_event(
                 execution_store,
@@ -155,27 +154,27 @@ def _backfill_strategy_position_links(execution_store: Any, *, limit: int) -> di
     positions = [dict(row) for row in execution_store.list_positions(limit=max(int(limit), 1) * 10)]
     for position in positions:
         position_id = str(position.get("position_id") or "")
-        open_execution_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+        open_execution_attempt_id = as_text(position.get("open_execution_attempt_id"))
         if not position_id or open_execution_attempt_id is None:
             continue
         attempt = execution_store.get_attempt(open_execution_attempt_id)
         if attempt is None:
             continue
         request = attempt.get("request") if isinstance(attempt.get("request"), dict) else {}
-        execution_intent_id = _as_text(request.get("execution_intent_id"))
+        execution_intent_id = as_text(request.get("execution_intent_id"))
         if execution_intent_id is None:
             continue
         intent = execution_store.get_execution_intent(execution_intent_id)
         if intent is None:
             continue
-        if _as_text(intent.get("strategy_position_id")) == position_id:
+        if as_text(intent.get("strategy_position_id")) == position_id:
             continue
         updated = link_execution_intent_position(
             execution_store,
             intent=dict(intent),
             position_id=position_id,
-            execution_attempt_id=_as_text(intent.get("execution_attempt_id")),
-            updated_at=_utc_now(),
+            execution_attempt_id=as_text(intent.get("execution_attempt_id")),
+            updated_at=utc_now_iso(),
         )
         linked += 1
         results.append(
@@ -208,7 +207,7 @@ def _cleanup_terminal_intent_history(
         state = normalize_execution_intent_state(intent.get("state"))
         if state not in TERMINAL_INTENT_STATES:
             continue
-        created_at = parse_datetime(_as_text(intent.get("created_at")))
+        created_at = parse_datetime(as_text(intent.get("created_at")))
         if created_at is None or created_at >= threshold:
             continue
         execution_intent_id = str(intent["execution_intent_id"])
@@ -246,11 +245,11 @@ def _cleanup_inactive_strategy_intents(
         trading_strategy_id = str(intent.get("trading_strategy_id") or "")
         if trading_strategy_id in active_strategy_ids:
             continue
-        created_at = parse_datetime(_as_text(intent.get("created_at")))
+        created_at = parse_datetime(as_text(intent.get("created_at")))
         if created_at is None or created_at >= threshold:
             continue
         execution_intent_id = str(intent["execution_intent_id"])
-        if _as_text(intent.get("execution_attempt_id")):
+        if as_text(intent.get("execution_attempt_id")):
             continue
         updated = _update_intent(
             execution_store,
@@ -260,7 +259,7 @@ def _cleanup_inactive_strategy_intents(
                 "dispatch_status": "revoked",
                 "revoke_reason": "inactive_trading_strategy",
             },
-            updated_at=_utc_now(),
+            updated_at=utc_now_iso(),
         )
         _append_event(
             execution_store,

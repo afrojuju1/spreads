@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Protocol
+from typing import Protocol
 
-from .kernel import EngineRunRef
+from .kernel import EnginePolicy, EngineRunRef, EngineSummary
 
 
 @dataclass(frozen=True)
@@ -13,7 +12,7 @@ class StrategyEntryRequest:
     run_ref: EngineRunRef
     trading_strategy_id: str
     market_date: date
-    policy: Mapping[str, Any] = field(default_factory=dict)
+    policy: EnginePolicy = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -25,7 +24,7 @@ class StrategyEntryResult:
     selected_decision_ids: tuple[str, ...]
     status: str
     reason: str | None = None
-    summary: Mapping[str, Any] = field(default_factory=dict)
+    summary: EngineSummary = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -33,7 +32,7 @@ class StrategyManageRequest:
     run_ref: EngineRunRef
     trading_strategy_id: str
     market_date: date
-    policy: Mapping[str, Any] = field(default_factory=dict)
+    policy: EnginePolicy = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -43,12 +42,10 @@ class StrategyManageResult:
     selected_close_decision_ids: tuple[str, ...]
     status: str
     reason: str | None = None
-    summary: Mapping[str, Any] = field(default_factory=dict)
+    summary: EngineSummary = field(default_factory=dict)
 
 
 class StrategyEngine(Protocol):
-    def run_entry(self, request: StrategyEntryRequest) -> StrategyEntryResult:
-        ...
+    def run_entry(self, request: StrategyEntryRequest) -> StrategyEntryResult: ...
 
-    def run_manage(self, request: StrategyManageRequest) -> StrategyManageResult:
-        ...
+    def run_manage(self, request: StrategyManageRequest) -> StrategyManageResult: ...
