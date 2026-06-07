@@ -6,12 +6,20 @@ from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import yaml
 
 from core.services.config_inheritance import resolve_policy_mapping
+from core.services.payload_validation import (
+    normalize_mapping,
+    normalize_optional_text,
+    normalize_required_text,
+    normalize_text_tuple,
+    validate_payload_model,
+)
 from core.services.strategy_specs import StrategySpec, resolve_strategy_spec
 from core.services.trading_strategy_models import (
     EntrySelectionPolicy,
@@ -74,38 +82,104 @@ def _yaml_file_signature(path: Path) -> tuple[str, int, int] | None:
     return (path.name, stat.st_mtime_ns, stat.st_size)
 
 
-def _as_text(value: Any, *, field_name: str) -> str:
-    rendered = str(value or "").strip()
-    if not rendered:
-        raise ValueError(f"{field_name} is required")
-    return rendered
+class UniverseYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbols: tuple[str, ...]
+
+    @field_validator("symbols", mode="before")
+    @classmethod
+    def _normalize_symbols(cls, value: Any) -> tuple[str, ...]:
+        return normalize_text_tuple(value, uppercase=True, require_non_empty=True)
 
 
-def _as_optional_text(value: Any) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
+class StrategySourceYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    kind: Literal["static", "dynamic"] = Field(alias="type")
+    ref: str
+    max_age_seconds: int | None = None
+    max_symbols: int | None = None
+    fallback_universe_ref: str | None = None
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_kind(cls, value: Any) -> str:
+        rendered = str(value or "").strip().lower()
+        if rendered not in {STATIC_SOURCE, DYNAMIC_SOURCE}:
+            raise ValueError(f"must be one of: {STATIC_SOURCE}, {DYNAMIC_SOURCE}")
+        return rendered
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _normalize_ref(cls, value: Any) -> str:
+        return normalize_required_text(value)
+
+    @field_validator("fallback_universe_ref", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+    @field_validator("max_age_seconds", "max_symbols", mode="before")
+    @classmethod
+    def _normalize_optional_int(cls, value: Any) -> Any:
+        if value in (None, ""):
+            return None
+        return value
+
+    @field_validator("max_age_seconds", "max_symbols")
+    @classmethod
+    def _require_positive_int(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("must be positive")
+        return value
 
 
-def _as_list(value: Any, *, field_name: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list")
-    return tuple(str(item).strip() for item in value if str(item or "").strip())
+class StrategyRoutineYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    schedule: dict[str, Any] = Field(default_factory=dict)
+    selection: dict[str, Any] = Field(default_factory=dict)
+    recipes: tuple[str, ...] = Field(default_factory=tuple)
+    policy: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("schedule", "selection", "policy", mode="before")
+    @classmethod
+    def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
+        return normalize_mapping(value)
+
+    @field_validator("recipes", mode="before")
+    @classmethod
+    def _normalize_recipes(cls, value: Any) -> tuple[str, ...]:
+        return normalize_text_tuple(value)
 
 
-def _as_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{field_name} must be a mapping")
-    return dict(value)
+class TradingStrategyYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
+    trading_strategy_id: str
+    name: str
+    enabled: bool = True
+    source: StrategySourceYamlPayload
+    trade_structure: str
+    build: dict[str, Any] = Field(default_factory=dict)
+    entry: StrategyRoutineYamlPayload | None = None
+    management: StrategyRoutineYamlPayload | None = None
+    liquidity: dict[str, Any] = Field(default_factory=dict)
+    risk: dict[str, Any] = Field(default_factory=dict)
+    runtime: dict[str, Any] = Field(default_factory=dict)
+    execution: dict[str, Any] = Field(default_factory=dict)
 
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return int(value)
+    @field_validator("trading_strategy_id", "name", "trade_structure", mode="before")
+    @classmethod
+    def _normalize_required_text(cls, value: Any) -> str:
+        return normalize_required_text(value)
+
+    @field_validator("build", "liquidity", "risk", "runtime", "execution", mode="before")
+    @classmethod
+    def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
+        return normalize_mapping(value)
 
 
 def default_config_root(config_root: str | Path | None = None) -> Path:
@@ -131,17 +205,13 @@ class StrategySource:
         return self.kind == DYNAMIC_SOURCE
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any] | None) -> StrategySource:
-        mapping = _as_mapping(payload, field_name="source")
-        source_type = _as_text(mapping.get("type"), field_name="source.type").strip().lower()
-        if source_type not in {STATIC_SOURCE, DYNAMIC_SOURCE}:
-            raise ValueError(f"Unsupported source.type: {source_type}")
+    def from_payload(cls, payload: StrategySourceYamlPayload) -> StrategySource:
         return cls(
-            kind=source_type,
-            ref=_as_text(mapping.get("ref"), field_name="source.ref"),
-            max_age_seconds=_optional_int(mapping.get("max_age_seconds")),
-            max_symbols=_optional_int(mapping.get("max_symbols")),
-            fallback_universe_ref=_as_optional_text(mapping.get("fallback_universe_ref")),
+            kind=payload.kind,
+            ref=payload.ref,
+            max_age_seconds=payload.max_age_seconds,
+            max_symbols=payload.max_symbols,
+            fallback_universe_ref=payload.fallback_universe_ref,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -168,17 +238,16 @@ class StrategyRoutine:
     policy: dict[str, Any]
 
     @classmethod
-    def from_payload(cls, routine: str, payload: Mapping[str, Any] | None) -> StrategyRoutine | None:
+    def from_payload(cls, routine: str, payload: StrategyRoutineYamlPayload | None) -> StrategyRoutine | None:
         if payload is None:
             return None
-        mapping = _as_mapping(payload, field_name=routine)
         return cls(
             routine=routine,
-            schedule=RoutineSchedule.from_payload(mapping.get("schedule")),
-            enabled=bool(mapping.get("enabled", True)),
-            selection=EntrySelectionPolicy.from_payload(mapping.get("selection")),
-            recipes=_as_list(mapping.get("recipes"), field_name=f"{routine}.recipes"),
-            policy=_as_mapping(mapping.get("policy"), field_name=f"{routine}.policy"),
+            schedule=RoutineSchedule.from_payload(payload.schedule),
+            enabled=payload.enabled,
+            selection=EntrySelectionPolicy.from_payload(payload.selection),
+            recipes=payload.recipes,
+            policy=payload.policy,
         )
 
     @property
@@ -323,9 +392,9 @@ def _load_universe_symbols_cached(
     universe_ref: str,
 ) -> tuple[str, ...]:
     del signature
-    payload = _load_yaml_file(Path(path_key))
-    symbols = _as_list(payload.get("symbols"), field_name=f"{universe_ref}.symbols")
-    return tuple(str(symbol).upper() for symbol in symbols)
+    path = Path(path_key)
+    payload = validate_payload_model(UniverseYamlPayload, _load_yaml_file(path), path=path, label=f"universe {universe_ref}")
+    return payload.symbols
 
 
 def _source_symbols(
@@ -353,40 +422,39 @@ def _load_trading_strategies_cached(
     config_root = root.parent
     strategies: dict[str, TradingStrategyConfig] = {}
     for path in sorted(root.glob("*.yaml")):
-        payload = _load_yaml_file(path)
-        source = StrategySource.from_payload(payload.get("source"))
-        trade_structure = _as_text(payload.get("trade_structure"), field_name="trade_structure")
+        payload = validate_payload_model(TradingStrategyYamlPayload, _load_yaml_file(path), path=path, label="trading strategy")
+        source = StrategySource.from_payload(payload.source)
+        trade_structure = payload.trade_structure
         strategy_spec = resolve_strategy_spec(trade_structure)
-        risk_payload = _as_mapping(payload.get("risk"), field_name="risk")
         risk_limits_payload = resolve_policy_mapping(
-            risk_payload.get("limits"),
+            payload.risk.get("limits"),
             field_name="risk.limits",
             policy_kind="strategy_limits",
             config_root=config_root,
             config_path=path,
         )
         runtime_payload = resolve_policy_mapping(
-            payload.get("runtime"),
+            payload.runtime,
             field_name="runtime",
             policy_kind="strategy_runtime",
             config_root=config_root,
             config_path=path,
         )
         strategy = TradingStrategyConfig(
-            trading_strategy_id=_as_text(payload.get("trading_strategy_id"), field_name="trading_strategy_id"),
-            name=_as_text(payload.get("name"), field_name="name"),
+            trading_strategy_id=payload.trading_strategy_id,
+            name=payload.name,
             trade_structure=trade_structure,
             strategy_spec=strategy_spec,
             source=source,
-            build=strategy_spec.validate_build(payload.get("build")),
-            entry=StrategyRoutine.from_payload("entry", payload.get("entry")),
-            management=StrategyRoutine.from_payload("management", payload.get("management")),
-            liquidity=StrategyLiquidityRules.from_payload(payload.get("liquidity")),
-            position_sizing=StrategyRiskDefaults.from_payload(risk_payload.get("sizing")),
+            build=strategy_spec.validate_build(payload.build),
+            entry=StrategyRoutine.from_payload("entry", payload.entry),
+            management=StrategyRoutine.from_payload("management", payload.management),
+            liquidity=StrategyLiquidityRules.from_payload(payload.liquidity),
+            position_sizing=StrategyRiskDefaults.from_payload(payload.risk.get("sizing")),
             risk_limits=StrategyRiskLimits.from_payload(risk_limits_payload),
             runtime=StrategyRuntimeControls.from_payload(runtime_payload),
-            execution=StrategyExecutionPolicy.from_payload(payload.get("execution")),
-            enabled=bool(payload.get("enabled", True)),
+            execution=StrategyExecutionPolicy.from_payload(payload.execution),
+            enabled=payload.enabled,
             config_path=path,
             config_hash="",
             symbols=_source_symbols(source, config_root=config_root),

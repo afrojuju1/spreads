@@ -5,12 +5,16 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from core.services.config_inheritance import (
-    as_mapping as _as_mapping,
-    as_required_text as _as_text,
-    load_yaml_mapping as _load_yaml_mapping,
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from core.services.config_inheritance import load_yaml_mapping as _load_yaml_mapping
+from core.services.payload_validation import (
+    normalize_mapping,
+    normalize_optional_text,
+    normalize_required_text,
+    validate_payload_model,
 )
 from core.services.ticker_sources import VALID_TICKER_SOURCE_RECIPES
 from core.services.trading_strategies import (
@@ -24,6 +28,7 @@ VALID_SCHEDULE_TYPES = {
     "market_close_plus_minutes",
     "manual",
 }
+ScheduleType = Literal["interval_minutes", "market_open_plus_minutes", "market_close_plus_minutes", "manual"]
 
 
 def excluded_declared_job_types() -> set[str]:
@@ -35,12 +40,105 @@ def _canonical_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha1(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def _schedule_payload(value: Any, *, field_name: str) -> tuple[str, dict[str, Any]]:
-    mapping = _as_mapping(value, field_name=field_name)
-    schedule_type = _as_text(mapping.get("type"), field_name=f"{field_name}.type")
-    if schedule_type not in VALID_SCHEDULE_TYPES:
-        raise ValueError(f"Unsupported schedule type {schedule_type!r} in {field_name}")
-    return schedule_type, {key: mapping[key] for key in mapping if key != "type"}
+class ScheduleYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    schedule_type: ScheduleType = Field(alias="type")
+
+    @field_validator("schedule_type", mode="before")
+    @classmethod
+    def _normalize_schedule_type(cls, value: Any) -> str:
+        schedule_type = normalize_required_text(value).lower()
+        if schedule_type not in VALID_SCHEDULE_TYPES:
+            raise ValueError(f"must be one of: {', '.join(sorted(VALID_SCHEDULE_TYPES))}")
+        return schedule_type
+
+    def schedule_args(self) -> dict[str, Any]:
+        payload = self.model_dump(by_alias=True)
+        payload.pop("type", None)
+        return payload
+
+
+class DeclaredJobYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_key: str
+    job_type: str
+    enabled: bool = True
+    schedule: ScheduleYamlPayload
+    payload: dict[str, Any] = Field(default_factory=dict)
+    market_calendar: str = "NYSE"
+    singleton_scope: str | None = None
+
+    @field_validator("job_key", "job_type", mode="before")
+    @classmethod
+    def _normalize_required_text(cls, value: Any) -> str:
+        return normalize_required_text(value)
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def _normalize_payload(cls, value: Any) -> dict[str, Any]:
+        return normalize_mapping(value)
+
+    @field_validator("market_calendar", mode="before")
+    @classmethod
+    def _normalize_market_calendar(cls, value: Any) -> str:
+        return normalize_required_text(value or "NYSE")
+
+    @field_validator("singleton_scope", mode="before")
+    @classmethod
+    def _normalize_singleton_scope(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+
+class TickerSourceYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ticker_source_id: str
+    job_key: str
+    enabled: bool = True
+    schedule: ScheduleYamlPayload
+    market_calendar: str = "NYSE"
+    allow_off_hours: bool = False
+    recipe: str
+    recipe_args: dict[str, Any] = Field(default_factory=dict)
+    singleton_scope: str | None = None
+
+    @field_validator("ticker_source_id", "job_key", mode="before")
+    @classmethod
+    def _normalize_required_text(cls, value: Any) -> str:
+        return normalize_required_text(value)
+
+    @field_validator("recipe", mode="before")
+    @classmethod
+    def _normalize_recipe(cls, value: Any) -> str:
+        return normalize_required_text(value).lower()
+
+    @field_validator("recipe")
+    @classmethod
+    def _validate_recipe(cls, value: str) -> str:
+        if value not in VALID_TICKER_SOURCE_RECIPES:
+            raise ValueError(f"must be one of: {', '.join(sorted(VALID_TICKER_SOURCE_RECIPES))}")
+        return value
+
+    @field_validator("recipe_args", mode="before")
+    @classmethod
+    def _normalize_recipe_args(cls, value: Any) -> dict[str, Any]:
+        return normalize_mapping(value)
+
+    @field_validator("market_calendar", mode="before")
+    @classmethod
+    def _normalize_market_calendar(cls, value: Any) -> str:
+        return normalize_required_text(value or "NYSE")
+
+    @field_validator("singleton_scope", mode="before")
+    @classmethod
+    def _normalize_singleton_scope(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+
+def _schedule_payload(payload: ScheduleYamlPayload) -> tuple[str, dict[str, Any]]:
+    return payload.schedule_type, payload.schedule_args()
 
 
 @dataclass(frozen=True)
@@ -130,29 +228,29 @@ def _load_job_specs(config_root: str | Path | None = None) -> list[DeclaredJobSp
         return []
     specs: list[DeclaredJobSpec] = []
     for path in sorted(root.glob("*.yaml")):
-        raw = _load_yaml_mapping(path)
-        schedule_type, schedule = _schedule_payload(raw.get("schedule"), field_name="schedule")
-        payload = dict(raw.get("payload") or {})
+        raw = validate_payload_model(DeclaredJobYamlPayload, _load_yaml_mapping(path), path=path, label="declared job")
+        schedule_type, schedule = _schedule_payload(raw.schedule)
+        payload = dict(raw.payload)
         spec = DeclaredJobSpec(
-            job_key=_as_text(raw.get("job_key"), field_name="job_key"),
-            job_type=_as_text(raw.get("job_type"), field_name="job_type"),
-            enabled=bool(raw.get("enabled", True)),
+            job_key=raw.job_key,
+            job_type=raw.job_type,
+            enabled=raw.enabled,
             schedule_type=schedule_type,
             schedule=schedule,
             payload=payload,
-            market_calendar=str(raw.get("market_calendar") or "NYSE"),
-            singleton_scope=(None if raw.get("singleton_scope") in (None, "") else str(raw.get("singleton_scope")).strip()),
+            market_calendar=raw.market_calendar,
+            singleton_scope=raw.singleton_scope,
             config_path=path,
             config_hash=_canonical_hash(
                 {
-                    "job_key": raw.get("job_key"),
-                    "job_type": raw.get("job_type"),
-                    "enabled": bool(raw.get("enabled", True)),
+                    "job_key": raw.job_key,
+                    "job_type": raw.job_type,
+                    "enabled": raw.enabled,
                     "schedule_type": schedule_type,
                     "schedule": schedule,
                     "payload": payload,
-                    "market_calendar": str(raw.get("market_calendar") or "NYSE"),
-                    "singleton_scope": raw.get("singleton_scope"),
+                    "market_calendar": raw.market_calendar,
+                    "singleton_scope": raw.singleton_scope,
                 }
             ),
         )
@@ -169,40 +267,34 @@ def _load_ticker_source_configs(
         return []
     configs: list[TickerSourceConfig] = []
     for path in sorted(root.glob("*.yaml")):
-        raw = _load_yaml_mapping(path)
-        schedule_type, schedule = _schedule_payload(raw.get("schedule"), field_name="schedule")
-        recipe = _as_text(raw.get("recipe"), field_name="recipe").strip().lower()
-        if recipe not in VALID_TICKER_SOURCE_RECIPES:
-            raise ValueError(f"Unsupported ticker source recipe {recipe!r} in {path}")
-        recipe_args = {} if raw.get("recipe_args") is None else _as_mapping(raw.get("recipe_args"), field_name="recipe_args")
+        raw = validate_payload_model(TickerSourceYamlPayload, _load_yaml_mapping(path), path=path, label="ticker source")
+        schedule_type, schedule = _schedule_payload(raw.schedule)
+        recipe_args = dict(raw.recipe_args)
         configs.append(
             TickerSourceConfig(
-                ticker_source_id=_as_text(
-                    raw.get("ticker_source_id"),
-                    field_name="ticker_source_id",
-                ),
-                job_key=_as_text(raw.get("job_key"), field_name="job_key"),
-                recipe=recipe,
-                enabled=bool(raw.get("enabled", True)),
+                ticker_source_id=raw.ticker_source_id,
+                job_key=raw.job_key,
+                recipe=raw.recipe,
+                enabled=raw.enabled,
                 schedule_type=schedule_type,
                 schedule=schedule,
-                market_calendar=str(raw.get("market_calendar") or "NYSE"),
-                allow_off_hours=bool(raw.get("allow_off_hours", False)),
+                market_calendar=raw.market_calendar,
+                allow_off_hours=raw.allow_off_hours,
                 recipe_args=recipe_args,
-                singleton_scope=(None if raw.get("singleton_scope") in (None, "") else str(raw.get("singleton_scope")).strip()),
+                singleton_scope=raw.singleton_scope,
                 config_path=path,
                 config_hash=_canonical_hash(
                     {
-                        "ticker_source_id": raw.get("ticker_source_id"),
-                        "job_key": raw.get("job_key"),
-                        "recipe": recipe,
-                        "enabled": bool(raw.get("enabled", True)),
+                        "ticker_source_id": raw.ticker_source_id,
+                        "job_key": raw.job_key,
+                        "recipe": raw.recipe,
+                        "enabled": raw.enabled,
                         "schedule_type": schedule_type,
                         "schedule": schedule,
-                        "market_calendar": str(raw.get("market_calendar") or "NYSE"),
-                        "allow_off_hours": bool(raw.get("allow_off_hours", False)),
+                        "market_calendar": raw.market_calendar,
+                        "allow_off_hours": raw.allow_off_hours,
                         "recipe_args": recipe_args,
-                        "singleton_scope": raw.get("singleton_scope"),
+                        "singleton_scope": raw.singleton_scope,
                     }
                 ),
             )
