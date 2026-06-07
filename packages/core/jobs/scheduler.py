@@ -67,8 +67,17 @@ async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
             session_date=str(payload["session_date"]) if isinstance(payload.get("session_date"), str) else None,
             correlation_id=str(run_record["job_key"]),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "scheduler_job_run_event_publish_failed",
+            exc_info=True,
+            job_run_id=run_record.get("job_run_id"),
+            job_key=run_record.get("job_key"),
+            status=run_record.get("status"),
+            error=str(exc),
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

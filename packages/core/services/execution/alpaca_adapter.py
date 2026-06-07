@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
+from core.observability.logging import log_event
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.value_coercion import as_text
 
 from .runtimes import ALPACA_DIRECT_RUNTIME
 from .shared import BROKER_NAME
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -37,8 +41,17 @@ class AlpacaOrderAdapter:
     ) -> dict[str, Any]:
         try:
             return self.client.get_order(broker_order_id, nested=nested)
-        except Exception:
+        except Exception as exc:
             if fallback is not None:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "alpaca_order_snapshot_fallback_used",
+                    exc_info=True,
+                    broker_order_id=broker_order_id,
+                    nested=nested,
+                    error=str(exc),
+                )
                 return dict(fallback)
             raise
 
@@ -75,7 +88,15 @@ class AlpacaOrderAdapter:
         self.client.cancel_order(broker_order_id)
         try:
             return self.get_order_snapshot(broker_order_id, nested=True)
-        except Exception:
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "alpaca_cancel_snapshot_refresh_failed",
+                exc_info=True,
+                broker_order_id=broker_order_id,
+                error=str(exc),
+            )
             return None
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
@@ -12,6 +13,7 @@ from core.jobs.registry import (
     ALERT_DELIVERY_ADHOC_JOB_KEY,
     ALERT_DELIVERY_JOB_TYPE,
 )
+from core.observability.logging import log_event
 from core.services.runtime_identity import build_live_run_scope_id
 from core.storage.alert_repository import (
     ALERT_RECORD_KIND_DELIVERY,
@@ -23,6 +25,8 @@ DISCORD_DELIVERY_TARGET = "discord_webhook"
 ALERT_DELIVERY_MAX_ATTEMPTS = 5
 ALERT_DELIVERY_RETRY_BASE_SECONDS = 60
 ALERT_DELIVERY_STALE_SECONDS = 5 * 60
+
+logger = logging.getLogger(__name__)
 
 
 def _as_text(value: Any) -> str | None:
@@ -224,8 +228,21 @@ def plan_alert_delivery(
             refreshed = alert_store.get_alert_event(int(row["alert_id"]))
             if refreshed is not None:
                 row = refreshed
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "alert_delivery_enqueue_failed",
+                exc_info=True,
+                alert_id=row.get("alert_id"),
+                session_id=resolved_session_id,
+                session_date=normalized_payload.get("session_date"),
+                label=normalized_payload.get("label"),
+                symbol=normalized_payload.get("symbol"),
+                alert_type=normalized_payload.get("alert_type"),
+                cycle_id=normalized_payload.get("cycle_id"),
+                error=str(exc),
+            )
     publish_alert_event(
         topic="alert.event.created",
         row=row,

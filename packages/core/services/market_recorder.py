@@ -610,8 +610,16 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
                 jobs_store = storage.jobs
                 if jobs_store.schema_ready():
                     jobs_store.release_lease(lease_key, owner=lease_owner)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "market_recorder_lease_release_failed",
+                exc_info=True,
+                lease_key=lease_key,
+                lease_owner=lease_owner,
+                error=str(exc),
+            )
         await broker.aclose()
 
 

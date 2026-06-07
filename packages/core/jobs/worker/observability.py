@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from core.events.bus import publish_global_event_async
+from core.observability.logging import log_event
+
+logger = logging.getLogger(__name__)
 
 
 async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
@@ -25,5 +29,14 @@ async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
             session_date=payload.get("session_date") if isinstance(payload.get("session_date"), str) else None,
             correlation_id=str(run_record["job_key"]),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "worker_job_run_event_publish_failed",
+            exc_info=True,
+            job_run_id=run_record.get("job_run_id"),
+            job_key=run_record.get("job_key"),
+            status=run_record.get("status"),
+            error=str(exc),
+        )

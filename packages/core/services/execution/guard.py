@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.specs import get_declared_job_row
+from core.observability.logging import log_event
 from core.services.candidate_policy import resolve_candidate_profile
 from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_GRACE_SECONDS,
@@ -33,6 +35,8 @@ from .alpaca_adapter import create_alpaca_order_adapter
 from .policy import _attempt_exit_policy, _validate_open_timing_window
 from .shared import OPEN_STATUSES, _is_terminal_status
 
+logger = logging.getLogger(__name__)
+
 
 def _execution_submit_job_run(storage: Any, execution_attempt_id: str) -> Mapping[str, Any] | None:
     job_store = getattr(storage, "jobs", None)
@@ -40,7 +44,15 @@ def _execution_submit_job_run(storage: Any, execution_attempt_id: str) -> Mappin
         return None
     try:
         return job_store.get_job_run(resolve_execution_submit_job_run_id(execution_attempt_id))
-    except Exception:
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "execution_guard_submit_job_lookup_failed",
+            exc_info=True,
+            execution_attempt_id=execution_attempt_id,
+            error=str(exc),
+        )
         return None
 
 

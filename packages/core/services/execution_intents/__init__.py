@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -17,6 +18,7 @@ from core.services.alpaca import (
 from core.services.execution.admission import ExecutionAdmissionError
 from core.services.execution.direct_orders import submit_equity_order, submit_option_order
 from core.services.execution.position_close import submit_position_close_by_id
+from core.observability.logging import log_event
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
 from core.services.value_coercion import as_text, utc_now_iso
 from core.storage.serializers import parse_datetime
@@ -40,6 +42,8 @@ from .shared import (
     _update_intent,
     normalize_execution_intent_state,
 )
+
+logger = logging.getLogger(__name__)
 
 PRE_DISPATCH_EXPIRE_REASON = "dispatch_window_elapsed"
 
@@ -614,8 +618,17 @@ def submit_execution_intent(
                 admission_decision_id=admission_decision_id,
                 execution_attempt_id=linked_attempt_id,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "trade_admission_attempt_attach_failed",
+                exc_info=True,
+                execution_intent_id=execution_intent_id,
+                execution_attempt_id=linked_attempt_id,
+                admission_decision_id=admission_decision_id,
+                error=str(exc),
+            )
     next_state = _attempt_state(attempt)
     attempt_request = attempt.get("request") if isinstance(attempt, dict) and isinstance(attempt.get("request"), dict) else {}
     execution_admission = attempt_request.get("execution_admission")

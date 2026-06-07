@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +13,7 @@ from core.jobs.registry import (
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
 )
+from core.observability.logging import log_event
 from core.services.session_positions import (
     CLOSE_TRADE_INTENT,
     OPEN_TRADE_INTENT,
@@ -34,6 +36,26 @@ from .shared import (
     _order_intent_key,
     _resolve_completed_at,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _log_attempt_failure(event: str, *, attempt: Mapping[str, Any], exc: Exception, **fields: Any) -> None:
+    log_event(
+        logger,
+        logging.WARNING,
+        event,
+        exc_info=True,
+        execution_attempt_id=attempt.get("execution_attempt_id"),
+        session_id=attempt.get("session_id"),
+        session_date=attempt.get("session_date"),
+        underlying_symbol=attempt.get("underlying_symbol"),
+        broker_order_id=attempt.get("broker_order_id"),
+        client_order_id=attempt.get("client_order_id"),
+        status=attempt.get("status"),
+        error=str(exc),
+        **fields,
+    )
 
 
 def _require_execution_schema(execution_store: Any) -> None:
@@ -228,7 +250,13 @@ def _sync_attempt_state(
             session_date=str(attempt["session_date"]),
             persisted_orders=persisted_orders,
         )
-    except Exception:
+    except Exception as exc:
+        _log_attempt_failure(
+            "execution_fill_sync_failed",
+            attempt=attempt,
+            exc=exc,
+            broker_order_id=as_text(order_snapshot.get("id")) or attempt.get("broker_order_id"),
+        )
         fill_rows = []
     if fill_rows:
         execution_store.upsert_fills(
@@ -248,10 +276,14 @@ def _sync_attempt_state(
         error_text=None,
     )
     payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
-    sync_session_position_from_attempt(
-        execution_store=execution_store,
-        attempt=payload,
-    )
+    try:
+        sync_session_position_from_attempt(
+            execution_store=execution_store,
+            attempt=payload,
+        )
+    except Exception as exc:
+        _log_attempt_failure("execution_position_sync_failed", attempt=payload, exc=exc)
+        raise
     return _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
 
 
@@ -276,7 +308,13 @@ def _sync_equity_attempt_state(
             session_date=str(attempt["session_date"]),
             persisted_orders=persisted_orders,
         )
-    except Exception:
+    except Exception as exc:
+        _log_attempt_failure(
+            "execution_fill_sync_failed",
+            attempt=attempt,
+            exc=exc,
+            broker_order_id=as_text(order_snapshot.get("id")) or attempt.get("broker_order_id"),
+        )
         fill_rows = []
     if fill_rows:
         execution_store.upsert_fills(
@@ -306,8 +344,8 @@ def _sync_equity_attempt_state(
                 attempt=payload,
             )
             payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_attempt_failure("execution_position_sync_failed", attempt=payload, exc=exc)
     return payload
 
 
@@ -328,8 +366,8 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
             correlation_id=as_text(attempt.get("session_id")),
             causation_id=as_text(attempt.get("broker_order_id")),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_attempt_failure("execution_attempt_event_publish_failed", attempt=attempt, exc=exc, message=message)
 
 
 def _linked_execution_intent_id(attempt: Mapping[str, Any]) -> str | None:
