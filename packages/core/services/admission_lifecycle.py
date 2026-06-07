@@ -89,11 +89,8 @@ def normalize_lifecycle_admission(
         resolved_blockers.append(reason)
 
     source_id = source_object_id or _as_text(raw.get("source_object_id")) or _as_text(raw.get("execution_intent_id"))
-    admission_id = (
-        f"trade_admission:{_safe_component(admission_kind)}:"
-        f"{_safe_component(source_object_type)}:{_safe_component(source_id)}"
-    )
-    normalized = {
+    admission_id = f"trade_admission:{_safe_component(admission_kind)}:" f"{_safe_component(source_object_type)}:{_safe_component(source_id)}"
+    return {
         **raw,
         "admission_decision_id": _as_text(raw.get("admission_decision_id")) or admission_id,
         "object_type": LifecycleObject.ADMISSION.value,
@@ -117,7 +114,6 @@ def normalize_lifecycle_admission(
         "decided_at": decided_at_value,
         "evaluated_at": decided_at_value,
     }
-    return normalized
 
 
 def admission_allows_attempt(admission: Mapping[str, Any]) -> bool:

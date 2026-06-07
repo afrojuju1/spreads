@@ -736,9 +736,7 @@ def _overlay_rule_matches(
         return True
     if any(str(raw_classification.sic_code or "").startswith(prefix) for prefix in rule.sic_prefixes):
         return True
-    if any(str(raw_classification.naics_code or "").startswith(prefix) for prefix in rule.naics_prefixes):
-        return True
-    return False
+    return any(str(raw_classification.naics_code or "").startswith(prefix) for prefix in rule.naics_prefixes)
 
 
 def resolve_company_valuation_overlays(

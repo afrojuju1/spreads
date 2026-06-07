@@ -140,8 +140,7 @@ def _coerce_text_list(value: Any, *, field_name: str) -> tuple[str, ...]:
         items = [str(part).strip() for part in value]
     else:
         raise DeploymentConfigError(f"{field_name} must be a list of strings.")
-    normalized = tuple(item for item in items if item)
-    return normalized
+    return tuple(item for item in items if item)
 
 
 def _load_target(path: Path) -> DeployTarget:

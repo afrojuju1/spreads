@@ -32,14 +32,12 @@ def build_setup_summaries(results: list[SymbolScanResult]) -> tuple[str, ...]:
     for result in results:
         if result.setup is None:
             continue
-        summaries.append(
-            f"{result.args.strategy} {result.setup.status} ({result.setup.score:.1f})"
-        )
+        summaries.append(f"{result.args.strategy} {result.setup.status} ({result.setup.score:.1f})")
     return tuple(summaries)
 
 
 def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     directory = {
         "call_credit": "call_credit_spreads",
         "put_credit": "put_credit_spreads",
@@ -54,19 +52,13 @@ def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
         "iron_condor": "iron_condors",
         "combined": "combined_credit_spreads",
     }.get(strategy, "call_credit_spreads")
-    return str(
-        Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}"
-    )
+    return str(Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}")
 
 
 def default_universe_output_path(label: str, strategy: str, output_format: str) -> str:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     safe_label = label.lower().replace(" ", "_")
-    return str(
-        Path("outputs")
-        / "universe_boards"
-        / f"{safe_label}_{strategy}_{timestamp}.{output_format}"
-    )
+    return str(Path("outputs") / "universe_boards" / f"{safe_label}_{strategy}_{timestamp}.{output_format}")
 
 
 def write_latest_copy(output_path: str, latest_name: str) -> str:
@@ -96,22 +88,17 @@ def _analytics_summary(candidate: SpreadCandidate) -> str | None:
     if candidate.expected_value_dollars is not None:
         metrics.append(f"EV ${candidate.expected_value_dollars:.0f}")
     if candidate.slippage_adjusted_expected_value_dollars is not None:
-        metrics.append(
-            f"EV(nat) ${candidate.slippage_adjusted_expected_value_dollars:.0f}"
-        )
+        metrics.append(f"EV(nat) ${candidate.slippage_adjusted_expected_value_dollars:.0f}")
     if candidate.entry_slippage_dollars is not None:
         metrics.append(f"slip ${candidate.entry_slippage_dollars:.0f}")
     if candidate.model_implied_volatility is not None:
         metrics.append(f"model IV {candidate.model_implied_volatility * 100:.1f}%")
-    if (
-        candidate.average_implied_volatility is not None
-        and (
-            candidate.model_implied_volatility is None
-            or not math.isclose(
-                candidate.average_implied_volatility,
-                candidate.model_implied_volatility,
-                abs_tol=5e-4,
-            )
+    if candidate.average_implied_volatility is not None and (
+        candidate.model_implied_volatility is None
+        or not math.isclose(
+            candidate.average_implied_volatility,
+            candidate.model_implied_volatility,
+            abs_tol=5e-4,
         )
     ):
         metrics.append(f"avg IV {candidate.average_implied_volatility * 100:.1f}%")
@@ -135,9 +122,7 @@ def _net_greeks_summary(candidate: SpreadCandidate) -> str | None:
     return " | ".join(metrics)
 
 
-def build_table_rows(
-    candidates: list[SpreadCandidate], *, include_strategy: bool = False
-) -> list[list[str]]:
+def build_table_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
         row = []
@@ -154,20 +139,14 @@ def build_table_rows(
                 f"{candidate.quality_score:.1f}",
                 _format_optional_percent(candidate.probability_of_profit),
                 _format_optional_dollars(candidate.expected_value_dollars),
-                "n/a"
-                if candidate.short_delta is None
-                else f"{candidate.short_delta:.2f}",
+                "n/a" if candidate.short_delta is None else f"{candidate.short_delta:.2f}",
                 f"{candidate.short_otm_pct * 100:.1f}",
                 f"{candidate.breakeven_cushion_pct * 100:.1f}",
-                "n/a"
-                if candidate.short_vs_expected_move is None
-                else f"{candidate.short_vs_expected_move:.2f}",
+                "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
                 f"{min(candidate.short_open_interest, candidate.long_open_interest)}",
                 candidate.calendar_status,
                 candidate.data_status,
-                "n/a"
-                if candidate.calendar_days_to_nearest_event is None
-                else str(candidate.calendar_days_to_nearest_event),
+                "n/a" if candidate.calendar_days_to_nearest_event is None else str(candidate.calendar_days_to_nearest_event),
             ]
         )
         rows.append(row)
@@ -220,10 +199,7 @@ def print_human_readable(
         print("No option structures matched the current filters and calendar policy.")
         return
 
-    include_strategy = (
-        strategy == "combined"
-        or len({candidate.strategy for candidate in candidates}) > 1
-    )
+    include_strategy = strategy == "combined" or len({candidate.strategy for candidate in candidates}) > 1
     headers = [
         "Expiry",
         "DTE",
@@ -277,9 +253,7 @@ def print_human_readable(
             print(f"   data: {'; '.join(candidate.data_reasons)}")
         if candidate.calendar_sources:
             source_line = ", ".join(candidate.calendar_sources)
-            print(
-                f"   sources: {source_line} | confidence {candidate.calendar_confidence}"
-            )
+            print(f"   sources: {source_line} | confidence {candidate.calendar_confidence}")
         if candidate.macro_regime:
             print(f"   macro regime: {candidate.macro_regime}")
         if candidate.setup_score is not None:
@@ -403,9 +377,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             row["setup_reasons"] = "; ".join(candidate.setup_reasons)
             row["data_reasons"] = "; ".join(candidate.data_reasons)
             row["selection_notes"] = ", ".join(candidate.selection_notes)
-            row["order_payload"] = json.dumps(
-                candidate.order_payload, separators=(",", ":")
-            )
+            row["order_payload"] = json.dumps(candidate.order_payload, separators=(",", ":"))
             writer.writerow(row)
 
 
@@ -423,9 +395,7 @@ def write_json(
     payload = {
         "symbol": symbol,
         "spot_price": spot_price,
-        "generated_at": datetime.now(UTC)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "run_id": run_id,
         "filters": build_filter_payload(args),
         "setup": serialize_setup_context(setup),
@@ -435,9 +405,7 @@ def write_json(
         json.dump(payload, handle, indent=2)
 
 
-def build_ranked_candidate_rows(
-    candidates: list[SpreadCandidate], *, include_strategy: bool = False
-) -> list[list[str]]:
+def build_ranked_candidate_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
         row = [candidate.underlying_symbol]
@@ -453,13 +421,9 @@ def build_ranked_candidate_rows(
                 f"{candidate.quality_score:.1f}",
                 _format_optional_percent(candidate.probability_of_profit),
                 _format_optional_dollars(candidate.expected_value_dollars),
-                "n/a"
-                if candidate.short_delta is None
-                else f"{candidate.short_delta:.2f}",
+                "n/a" if candidate.short_delta is None else f"{candidate.short_delta:.2f}",
                 f"{candidate.breakeven_cushion_pct * 100:.1f}",
-                "n/a"
-                if candidate.short_vs_expected_move is None
-                else f"{candidate.short_vs_expected_move:.2f}",
+                "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
                 candidate.calendar_status,
                 candidate.data_status,
                 candidate.setup_status,
@@ -483,10 +447,7 @@ def print_ranked_candidates(
     print(f"Universe: {label}")
     print(f"Strategy: {strategy}")
     print(f"Greeks: {greeks_source}")
-    if profile == "0dte" or (
-        ranked_candidates
-        and any(candidate.profile == "0dte" for candidate in ranked_candidates)
-    ):
+    if profile == "0dte" or (ranked_candidates and any(candidate.profile == "0dte" for candidate in ranked_candidates)):
         print(f"0DTE session: {format_session_bucket(zero_dte_session_bucket())}")
     print(f"Symbols requested: {len(symbols)}")
     print(f"Top candidates: {len(ranked_candidates)}")
@@ -495,10 +456,7 @@ def print_ranked_candidates(
     print()
 
     if ranked_candidates:
-        include_strategy = (
-            strategy == "combined"
-            or len({candidate.strategy for candidate in ranked_candidates}) > 1
-        )
+        include_strategy = strategy == "combined" or len({candidate.strategy for candidate in ranked_candidates}) > 1
         headers = [
             "Symbol",
             "Expiry",
@@ -522,9 +480,7 @@ def print_ranked_candidates(
         print(
             format_table(
                 headers,
-                build_ranked_candidate_rows(
-                    ranked_candidates, include_strategy=include_strategy
-                ),
+                build_ranked_candidate_rows(ranked_candidates, include_strategy=include_strategy),
             )
         )
         print()
@@ -579,9 +535,7 @@ def write_universe_json(
         "label": label,
         "strategy": strategy,
         "symbols": symbols,
-        "generated_at": datetime.now(UTC)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "candidate_count": len(candidates),
         "failures": [asdict(failure) for failure in failures],
         "candidates": [candidate.to_payload() for candidate in candidates],
@@ -590,9 +544,7 @@ def write_universe_json(
         json.dump(payload, handle, indent=2)
 
 
-def build_stream_symbols(
-    candidates: list[SpreadCandidate], *, max_symbols: int = 16
-) -> list[str]:
+def build_stream_symbols(candidates: list[SpreadCandidate], *, max_symbols: int = 16) -> list[str]:
     symbols: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -635,9 +587,7 @@ def build_live_spread_rows(
                 f"{float(live_snapshot['midpoint_value']):.2f}",
                 f"{float(live_snapshot['natural_value']):.2f}",
                 str(len(live_snapshot.get("legs") or [])),
-                "n/a"
-                if live_snapshot.get("captured_at") is None
-                else str(live_snapshot["captured_at"]),
+                "n/a" if live_snapshot.get("captured_at") is None else str(live_snapshot["captured_at"]),
             ]
         )
     return rows
@@ -657,9 +607,7 @@ def maybe_stream_live_quotes(
         return
 
     print()
-    print(
-        f"Streaming live option quotes for {len(stream_symbols)} legs via Alpaca websocket..."
-    )
+    print(f"Streaming live option quotes for {len(stream_symbols)} legs via Alpaca websocket...")
     try:
         streamer = AlpacaOptionQuoteStreamer(
             key_id=client.headers["APCA-API-KEY-ID"],
@@ -667,9 +615,7 @@ def maybe_stream_live_quotes(
             data_base_url=client.data_base_url,
             feed=args.feed,
         )
-        live_quotes = streamer.stream_quotes(
-            stream_symbols, duration_seconds=args.stream_seconds
-        )
+        live_quotes = streamer.stream_quotes(stream_symbols, duration_seconds=args.stream_seconds)
     except Exception as exc:
         print(f"Live quote stream unavailable: {exc}")
         return

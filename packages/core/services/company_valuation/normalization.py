@@ -27,12 +27,8 @@ CANONICAL_METRIC_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "CostOfSales"),
         ("us-gaap", "CostOfRevenue"),
     ),
-    "gross_profit": (
-        ("us-gaap", "GrossProfit"),
-    ),
-    "operating_income": (
-        ("us-gaap", "OperatingIncomeLoss"),
-    ),
+    "gross_profit": (("us-gaap", "GrossProfit"),),
+    "operating_income": (("us-gaap", "OperatingIncomeLoss"),),
     "net_income": (
         ("us-gaap", "NetIncomeLoss"),
         ("us-gaap", "ProfitLoss"),
@@ -60,22 +56,14 @@ CANONICAL_METRIC_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "CashAndCashEquivalentsAtCarryingValue"),
         ("us-gaap", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"),
     ),
-    "current_assets": (
-        ("us-gaap", "AssetsCurrent"),
-    ),
+    "current_assets": (("us-gaap", "AssetsCurrent"),),
     "inventory": (
         ("us-gaap", "InventoryNet"),
         ("us-gaap", "InventoryFinishedGoods"),
     ),
-    "total_assets": (
-        ("us-gaap", "Assets"),
-    ),
-    "current_liabilities": (
-        ("us-gaap", "LiabilitiesCurrent"),
-    ),
-    "total_liabilities": (
-        ("us-gaap", "Liabilities"),
-    ),
+    "total_assets": (("us-gaap", "Assets"),),
+    "current_liabilities": (("us-gaap", "LiabilitiesCurrent"),),
+    "total_liabilities": (("us-gaap", "Liabilities"),),
     "long_term_debt": (
         ("us-gaap", "LongTermDebtNoncurrent"),
         ("us-gaap", "LongTermDebt"),
@@ -89,12 +77,8 @@ CANONICAL_METRIC_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "WeightedAverageNumberOfDilutedSharesOutstanding"),
         ("us-gaap", "WeightedAverageNumberOfShareOutstandingBasicAndDiluted"),
     ),
-    "shares_outstanding": (
-        ("dei", "EntityCommonStockSharesOutstanding"),
-    ),
-    "stock_based_compensation": (
-        ("us-gaap", "ShareBasedCompensation"),
-    ),
+    "shares_outstanding": (("dei", "EntityCommonStockSharesOutstanding"),),
+    "stock_based_compensation": (("us-gaap", "ShareBasedCompensation"),),
     "deferred_revenue": (
         ("us-gaap", "ContractWithCustomerLiabilityCurrent"),
         ("us-gaap", "DeferredRevenueCurrent"),
@@ -171,11 +155,7 @@ def filing_matches_requested_forms(
     form_type: str | None,
     requested_forms: tuple[str, ...],
 ) -> bool:
-    normalized_requested = {
-        _normalized_form_prefix(value)
-        for value in requested_forms
-        if str(value or "").strip()
-    }
+    normalized_requested = {_normalized_form_prefix(value) for value in requested_forms if str(value or "").strip()}
     if not normalized_requested:
         return True
     return _normalized_form_prefix(form_type) in normalized_requested
@@ -211,7 +191,7 @@ def extract_submission_issuer_profile(payload: dict[str, Any]) -> SubmissionIssu
 def _columnar_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if not payload:
         return []
-    keys = [str(key) for key in payload.keys()]
+    keys = [str(key) for key in payload]
     length = max((len(value) for value in payload.values() if isinstance(value, list)), default=0)
     rows: list[dict[str, Any]] = []
     for index in range(length):
@@ -356,9 +336,7 @@ def build_xbrl_fact_payloads(
                             "dimensions_json": {},
                             "value_numeric": value_numeric,
                             "value_text": value_text,
-                            "decimals": None
-                            if entry.get("decimals") in (None, "")
-                            else str(entry.get("decimals")),
+                            "decimals": None if entry.get("decimals") in (None, "") else str(entry.get("decimals")),
                             "available_at": filing_row["available_at"],
                             "fact_hash": _fact_hash(
                                 filing_id=filing_id,
@@ -437,9 +415,7 @@ def build_statement_period_snapshot_payloads(
         if duration_groups:
             typed_duration_groups: dict[str, list[tuple[date, list[dict[str, Any]]]]] = defaultdict(list)
             for period_start, duration_rows in duration_groups.items():
-                typed_duration_groups[_period_type(period_start, fiscal_period_end)].append(
-                    (period_start, duration_rows)
-                )
+                typed_duration_groups[_period_type(period_start, fiscal_period_end)].append((period_start, duration_rows))
             for period_type, typed_rows in typed_duration_groups.items():
                 if period_type == "annual":
                     chosen_period_start, chosen_rows = max(
@@ -503,8 +479,7 @@ def build_statement_period_snapshot_payloads(
             snapshots.append(
                 {
                     "snapshot_id": (
-                        f"statement_snapshot:{issuer_id}:{filing_id}:{fiscal_period_end.isoformat()}:"
-                        f"{period_start_label}:{normalization_version}"
+                        f"statement_snapshot:{issuer_id}:{filing_id}:{fiscal_period_end.isoformat()}:" f"{period_start_label}:{normalization_version}"
                     ),
                     "issuer_id": issuer_id,
                     "filing_id": filing_id,

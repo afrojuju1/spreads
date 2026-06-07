@@ -251,7 +251,7 @@ def classify_open_execution_attempt(
         "age_seconds": submitted_age_seconds,
         "queue_age_seconds": queue_age_seconds,
         "submit_job_run_id": resolve_execution_submit_job_run_id(str(attempt.get("execution_attempt_id") or "")),
-        "submit_job_status": None if not submit_job_status else submit_job_status,
+        "submit_job_status": submit_job_status if submit_job_status else None,
         "submit_job_age_seconds": submit_job_age_seconds,
         "submit_job_heartbeat_age_seconds": submit_job_heartbeat_age_seconds,
         "submission_grace_seconds": int(max(submission_grace_seconds, 1)),

@@ -209,14 +209,13 @@ def _reconcile_position(
 
     reconciliation_status = "matched" if not issues else "mismatch"
     reconciliation_note = None if not issues else "; ".join(issues)
-    updated = execution_store.update_position(
+    return execution_store.update_position(
         position_id=str(position["position_id"]),
         last_reconciled_at=reconciled_at,
         reconciliation_status=reconciliation_status,
         reconciliation_note=reconciliation_note,
         updated_at=reconciled_at,
     )
-    return updated
 
 
 @with_storage()

@@ -54,17 +54,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["worker_name"] = worker_name()
     ctx["storage"] = build_storage_context(ctx["database_url"])
     ctx["job_store"] = build_job_repository(context=ctx["storage"])
-    setattr(ctx["job_store"], "_worker_lane", ctx.get("worker_lane", "unknown"))
-    setattr(
-        ctx["job_store"],
-        "_worker_settings_name",
-        ctx.get("worker_settings_name", "unknown"),
-    )
-    setattr(
-        ctx["job_store"],
-        "_worker_queue_name",
-        ctx.get("worker_queue_name", "unknown"),
-    )
+    ctx["job_store"]._worker_lane = ctx.get("worker_lane", "unknown")
+    ctx["job_store"]._worker_settings_name = ctx.get("worker_settings_name", "unknown")
+    ctx["job_store"]._worker_queue_name = ctx.get("worker_queue_name", "unknown")
     ctx["event_bus"] = redis_async.from_url(ctx["redis_url"], decode_responses=True)
     ctx["runtime_heartbeat_task"] = asyncio.create_task(_heartbeat_runtime(ctx["job_store"], ctx["worker_name"]))
     log_event(

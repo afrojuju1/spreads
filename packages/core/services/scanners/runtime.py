@@ -362,8 +362,7 @@ def postprocess_market_slice_candidates(
     )
     all_candidates = attach_selection_notes(all_candidates, symbol_args)
     all_candidates = rank_candidates(all_candidates, symbol_args)
-    all_candidates = deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
-    return all_candidates
+    return deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
 
 
 def build_candidates_with_details_from_market_slice(

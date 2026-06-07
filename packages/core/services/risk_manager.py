@@ -836,8 +836,7 @@ def _environment_reason(
 
 
 def _candidate_timestamp(candidate: dict[str, Any], cycle: dict[str, Any]) -> datetime | None:
-    candidate_generated_at = parse_datetime(as_text(candidate.get("generated_at")) or as_text(cycle.get("generated_at")))
-    return candidate_generated_at
+    return parse_datetime(as_text(candidate.get("generated_at")) or as_text(cycle.get("generated_at")))
 
 
 def assess_position_risk(

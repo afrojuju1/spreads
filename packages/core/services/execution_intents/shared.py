@@ -326,13 +326,12 @@ def _repricing_policy(intent: dict[str, Any], attempt: dict[str, Any]) -> dict[s
     payload = _intent_payload(intent)
     request = _attempt_request(attempt)
     exit_policy = _mapping(request.get("exit_policy")) or _mapping(payload.get("exit_policy"))
-    policy = (
+    return (
         _mapping(request.get("repricing_policy"))
         or _mapping(payload.get("repricing_policy"))
         or _mapping(payload.get("repricing"))
         or _mapping(exit_policy.get("repricing"))
     )
-    return policy
 
 
 def _policy_enabled(policy: dict[str, Any]) -> bool:

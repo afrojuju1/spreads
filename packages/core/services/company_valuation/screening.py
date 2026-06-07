@@ -43,13 +43,7 @@ def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
 
 
 def _normalized_tickers(values: tuple[str, ...] | None) -> tuple[str, ...] | None:
-    normalized = tuple(
-        dict.fromkeys(
-            normalize_ticker(value)
-            for value in (values or ())
-            if str(value or "").strip()
-        )
-    )
+    normalized = tuple(dict.fromkeys(normalize_ticker(value) for value in (values or ()) if str(value or "").strip()))
     return normalized or None
 
 
@@ -62,17 +56,13 @@ def _resolved_screen_scope_tickers(
     normalized_tickers = _normalized_tickers(tickers)
     if not supported_only:
         return normalized_tickers
-    supported_tickers = _normalized_tickers(
-        supported_company_valuation_tickers(config_root)
-    )
+    supported_tickers = _normalized_tickers(supported_company_valuation_tickers(config_root))
     if not supported_tickers:
         return ()
     if not normalized_tickers:
         return supported_tickers
     supported_set = set(supported_tickers)
-    return tuple(
-        ticker for ticker in normalized_tickers if ticker in supported_set
-    )
+    return tuple(ticker for ticker in normalized_tickers if ticker in supported_set)
 
 
 def _normalized_screen_filters(
@@ -198,10 +188,8 @@ def materialize_company_valuation_screen(
         reverse=True,
     )
     template_counters: dict[str, int] = {}
-    overall_rank = 0
-    for row in ranked_rows:
+    for overall_rank, row in enumerate(ranked_rows, start=1):
         _heartbeat(heartbeat)
-        overall_rank += 1
         template_key = str(row.get("template_id") or "")
         template_counters[template_key] = template_counters.get(template_key, 0) + 1
         payload = dict(row)
@@ -265,13 +253,9 @@ def list_company_valuation_screen(
             limit=limit,
         )
     issuer_rows = repo.list_issuers(
-        issuer_ids=tuple(
-            dict.fromkeys(str(row["issuer_id"]) for row in rows if row.get("issuer_id"))
-        ),
+        issuer_ids=tuple(dict.fromkeys(str(row["issuer_id"]) for row in rows if row.get("issuer_id"))),
     )
-    issuer_map = {
-        str(issuer_row["issuer_id"]): issuer_row for issuer_row in issuer_rows
-    }
+    issuer_map = {str(issuer_row["issuer_id"]): issuer_row for issuer_row in issuer_rows}
     enriched_rows = [
         _enrich_screen_row(
             row=row,
@@ -346,12 +330,8 @@ def get_company_valuation_document(
         source_summary["template_id"] = str(issuer_row.get("template_id") or "")
         source_summary["effective_template_id"] = effective_template.template_id
         source_summary["effective_template_version"] = effective_template.template_version
-        source_summary["limited_coverage_flag"] = bool(
-            issuer_row.get("limited_coverage_flag")
-        )
-        source_summary["stressed_operator_flag"] = bool(
-            issuer_row.get("stressed_operator_flag")
-        )
+        source_summary["limited_coverage_flag"] = bool(issuer_row.get("limited_coverage_flag"))
+        source_summary["stressed_operator_flag"] = bool(issuer_row.get("stressed_operator_flag"))
         enriched_payload["source_summary"] = source_summary
         enriched_payload["support"] = resolution.support.to_payload()
         return enriched_payload

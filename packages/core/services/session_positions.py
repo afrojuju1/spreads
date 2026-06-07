@@ -628,7 +628,7 @@ def _recalculate_position(
         unrealized_pnl = None
         market_date_closed = None
 
-    updated = execution_store.update_position(
+    return execution_store.update_position(
         position_id=position_id,
         status=status,
         market_date_closed=market_date_closed,
@@ -647,7 +647,6 @@ def _recalculate_position(
         last_broker_status=last_broker_status,
         updated_at=utc_now_iso(),
     )
-    return updated
 
 
 def _sync_open_position(

@@ -56,8 +56,7 @@ def _ratio(numerator: float | None, denominator: float | None) -> float | None:
 
 
 def _period_end(snapshot: dict[str, Any]) -> date:
-    value = parse_date(snapshot["period_end"])
-    return value
+    return parse_date(snapshot["period_end"])
 
 
 def _available_at(snapshot: dict[str, Any]) -> datetime:
@@ -384,24 +383,25 @@ def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str
         statement_snapshots,
         "stockholders_equity",
     )
-    shares_outstanding = _safe_float(latest_metrics.get("shares_outstanding")) or _safe_float(
-        latest_metrics.get("diluted_weighted_average_shares")
-    ) or _latest_metric(statement_snapshots, "shares_outstanding") or _latest_metric(
-        statement_snapshots,
-        "diluted_weighted_average_shares",
+    shares_outstanding = (
+        _safe_float(latest_metrics.get("shares_outstanding"))
+        or _safe_float(latest_metrics.get("diluted_weighted_average_shares"))
+        or _latest_metric(statement_snapshots, "shares_outstanding")
+        or _latest_metric(
+            statement_snapshots,
+            "diluted_weighted_average_shares",
+        )
     )
-    diluted_shares_latest = _safe_float(
-        latest_metrics.get("diluted_weighted_average_shares")
-    ) or _latest_metric(statement_snapshots, "diluted_weighted_average_shares") or shares_outstanding
+    diluted_shares_latest = (
+        _safe_float(latest_metrics.get("diluted_weighted_average_shares"))
+        or _latest_metric(statement_snapshots, "diluted_weighted_average_shares")
+        or shares_outstanding
+    )
     diluted_shares_prior = None
     if len(quarterly) >= 5:
-        diluted_shares_prior = _safe_float(
-            _metrics(quarterly[4]).get("diluted_weighted_average_shares")
-        )
+        diluted_shares_prior = _safe_float(_metrics(quarterly[4]).get("diluted_weighted_average_shares"))
     elif len(annual) >= 2:
-        diluted_shares_prior = _safe_float(
-            _metrics(annual[1]).get("diluted_weighted_average_shares")
-        )
+        diluted_shares_prior = _safe_float(_metrics(annual[1]).get("diluted_weighted_average_shares"))
     diluted_share_growth_ttm = None
     if diluted_shares_latest is not None and diluted_shares_prior not in (None, 0):
         diluted_share_growth_ttm = (diluted_shares_latest / diluted_shares_prior) - 1.0
@@ -602,9 +602,7 @@ def _compute_ownership_features(
         )
     institutional_top_holder_pct_of_tracked = None
     if institutional_total_shares > 0.0:
-        institutional_top_holder_pct_of_tracked = (
-            institutional_top_holder_share_count / institutional_total_shares
-        )
+        institutional_top_holder_pct_of_tracked = institutional_top_holder_share_count / institutional_total_shares
 
     latest_available_at = max(
         [
@@ -731,9 +729,9 @@ def _compute_ownership_features(
             "institutional_total_shares_reported": institutional_total_shares,
             "institutional_top_holder_share_count": institutional_top_holder_share_count,
             "institutional_top_holder_pct_of_tracked": institutional_top_holder_pct_of_tracked,
-            "latest_institutional_report_period": None
-            if latest_institutional_report_period is None
-            else latest_institutional_report_period.isoformat(),
+            "latest_institutional_report_period": (
+                None if latest_institutional_report_period is None else latest_institutional_report_period.isoformat()
+            ),
             "latest_available_at": None if latest_available_at is None else latest_available_at.isoformat().replace("+00:00", "Z"),
             "ownership_special_situation_flag": ownership_special_situation_flag,
             "reason_codes": list(signal.reason_codes),
@@ -769,9 +767,7 @@ def compute_company_valuation_features(
         as_of=as_of_dt,
         repository=repository,
     )
-    filings_used = list(
-        dict.fromkeys(str(row.get("filing_id")) for row in deduped_snapshots if row.get("filing_id"))
-    )
+    filings_used = list(dict.fromkeys(str(row.get("filing_id")) for row in deduped_snapshots if row.get("filing_id")))
     template = resolve_company_valuation_effective_template(
         issuer_row=issuer_row,
         config_root=config_root,
@@ -795,9 +791,7 @@ def compute_company_valuation_features(
         "financial_features_json": financial_features,
         "ownership_features_json": ownership_features,
         "dependency_refs_json": {
-            "statement_snapshot_ids": [
-                str(row.get("snapshot_id")) for row in deduped_snapshots[:8]
-            ],
+            "statement_snapshot_ids": [str(row.get("snapshot_id")) for row in deduped_snapshots[:8]],
             "filing_ids": filings_used,
         },
         "computed_at": datetime.now(UTC),

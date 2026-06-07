@@ -537,7 +537,7 @@ def resolve_scan_reference_date(args: argparse.Namespace) -> date:
         if isinstance(raw_date, date):
             return raw_date
         return date.fromisoformat(str(raw_date))
-    return date.today()
+    return datetime.now(UTC).date()
 
 
 def resolve_scan_session_bucket(args: argparse.Namespace) -> str | None:

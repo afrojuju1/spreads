@@ -17,6 +17,7 @@
 ## Code Quality And Architecture
 
 - Prefer clean, reusable, modular code over narrow patch work.
+- For Python quality checks, use the required and advisory Ruff commands in [docs/development/python_quality.md](docs/development/python_quality.md). Keep complexity scans report-only unless a bead explicitly includes that cleanup.
 - Before implementing, check whether the change duplicates logic, creates a parallel path, or deepens a weak abstraction. If it does, prefer a small structural cleanup or shared helper/service extraction.
 - Extend one canonical path per behavior instead of maintaining near-duplicate flows.
 - Keep the current runtime boundary explicit:
