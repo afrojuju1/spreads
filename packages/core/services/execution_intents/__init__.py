@@ -99,6 +99,20 @@ def _intent_engine_ref_metadata(intent: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _repricing_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in ("original_limit_price", "previous_limit_price", "reprice_count"):
+        if payload.get(key) not in (None, ""):
+            metadata[key] = payload[key]
+    for key in ("previous_execution_attempt_id", "supersedes_execution_intent_id"):
+        value = _as_text(payload.get(key))
+        if value is not None:
+            metadata[key] = value
+    if isinstance(payload.get("repricing_policy"), dict):
+        metadata["repricing_policy"] = dict(payload["repricing_policy"])
+    return metadata
+
+
 def _trade_decision_is_active_for_intent(
     engine_facts: Any,
     intent: dict[str, Any],
@@ -440,12 +454,7 @@ def submit_execution_intent(
                         dict(option_payload["option_selection"]) if isinstance(option_payload.get("option_selection"), dict) else None
                     ),
                     "underlying_price": option_payload.get("underlying_price"),
-                    "original_limit_price": payload.get("original_limit_price"),
-                    "previous_limit_price": payload.get("previous_limit_price"),
-                    "previous_execution_attempt_id": _as_text(payload.get("previous_execution_attempt_id")),
-                    "supersedes_execution_intent_id": _as_text(payload.get("supersedes_execution_intent_id")),
-                    "reprice_count": payload.get("reprice_count"),
-                    "repricing_policy": (dict(payload["repricing_policy"]) if isinstance(payload.get("repricing_policy"), dict) else None),
+                    **_repricing_metadata(payload),
                     **engine_ref_metadata,
                 },
                 storage=storage,
@@ -458,11 +467,19 @@ def submit_execution_intent(
                 "routine": policy_ref.get("routine"),
                 "config_hash": source_intent.get("config_hash"),
                 "execution_runtime": payload.get("execution_runtime"),
+                "approval_mode": payload.get("approval_mode"),
+                "execution_mode": payload.get("execution_mode"),
+                "execution_policy": execution_policy,
+                "exit_policy": exit_policy,
+                **_repricing_metadata(payload),
+                **engine_ref_metadata,
             }
             if isinstance(payload.get("source"), dict):
                 close_request_metadata["source"] = dict(payload["source"])
             if isinstance(payload.get("close_decision"), dict):
                 close_request_metadata["close_decision"] = dict(payload["close_decision"])
+            if isinstance(payload.get("risk_policy"), dict):
+                close_request_metadata["risk_policy"] = dict(payload["risk_policy"])
             result = submit_position_close_by_id(
                 db_target=db_target,
                 position_id=str(source_intent["strategy_position_id"]),
@@ -534,14 +551,7 @@ def submit_execution_intent(
                     "source": dict(source_metadata),
                     "close_decision": (dict(option_payload["close_decision"]) if isinstance(option_payload.get("close_decision"), dict) else None),
                     "underlying_price": option_payload.get("underlying_price"),
-                    "original_limit_price": option_payload.get("original_limit_price"),
-                    "previous_limit_price": option_payload.get("previous_limit_price"),
-                    "previous_execution_attempt_id": _as_text(option_payload.get("previous_execution_attempt_id")),
-                    "supersedes_execution_intent_id": _as_text(option_payload.get("supersedes_execution_intent_id")),
-                    "reprice_count": option_payload.get("reprice_count"),
-                    "repricing_policy": (
-                        dict(option_payload["repricing_policy"]) if isinstance(option_payload.get("repricing_policy"), dict) else None
-                    ),
+                    **_repricing_metadata(option_payload),
                     "option_selection": (
                         dict(option_payload["option_selection"]) if isinstance(option_payload.get("option_selection"), dict) else None
                     ),
