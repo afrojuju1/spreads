@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -52,6 +53,87 @@ MARK_STALE_AFTER_SECONDS = 15 * 60
 TOP_POSITION_LIMIT = 5
 RECENT_ALERT_LIMIT = 200
 SOURCE_SYMBOL_LIMIT = 25
+
+
+@dataclass(frozen=True)
+class _MarketControlProjection:
+    market_date: str
+    market_session: dict[str, Any]
+    market_open: bool
+    control: dict[str, Any]
+    kill_switch_reason: str | None
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _JobsProjection:
+    payload: dict[str, Any]
+    summary: dict[str, Any]
+    details: dict[str, Any]
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _AccountProjection:
+    broker_sync_status: str
+    broker_sync: dict[str, Any]
+    account_snapshot: dict[str, Any]
+    account: dict[str, Any]
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _EngineProjection:
+    payload: dict[str, Any]
+    summary: dict[str, Any]
+    status: str
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _ExecutionProjection:
+    open_execution_attempts: list[dict[str, Any]]
+    summarized_open_execution_attempts: list[dict[str, Any]]
+    stale_open_execution_count: int
+    submit_unknown_execution_count: int
+    capacity_blocked_underlyings: list[str]
+    execution_health_status: str
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _PositionProjection:
+    open_positions: list[dict[str, Any]]
+    top_positions: list[dict[str, Any]]
+    risk_breach_count: int
+    reconciliation_mismatch_count: int
+    missing_mark_count: int
+    stale_mark_count: int
+    broker_unquoted_positions: int
+    mark_error: str | None
+    mark_health_status: str
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _AlertProjection:
+    alert_delivery: dict[str, Any]
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class _FlowProjection:
+    trading_flows: list[dict[str, Any]]
+    degraded_flows: list[dict[str, Any]]
+    statuses: tuple[str, ...]
+    attention: list[dict[str, str]]
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -655,24 +737,19 @@ def _build_trading_flows(
     return flows
 
 
-@with_storage()
-def build_trading_ops_state(
+def _project_market_control(
     *,
-    db_target: str | None = None,
-    market_date: str | None = None,
-    storage: Any | None = None,
-) -> dict[str, Any]:
-    generated_at = utc_now_iso()
-    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    storage: Any,
+    market_date: str | None,
+    now: datetime,
+) -> _MarketControlProjection:
     resolved_market_date = as_text(market_date) or now.astimezone(NEW_YORK).date().isoformat()
     market_session = _market_session_context(now=now)
-    market_open = bool(market_session.get("is_open"))
-    attention: list[dict[str, str]] = []
-    statuses: list[str] = []
-
     control = get_control_state_snapshot(storage=storage)
     control_status = _control_status(control)
-    statuses.append(control_status)
+    statuses = [control_status]
+    attention: list[dict[str, str]] = []
+
     if control_status in {"degraded", "halted"}:
         attention.append(
             _attention(
@@ -693,12 +770,40 @@ def build_trading_ops_state(
             )
         )
 
-    jobs = build_jobs_compact_state(db_target=db_target, limit=25, storage=storage)
-    job_summary = _mapping(jobs.get("summary"))
-    job_details = _mapping(jobs.get("details"))
-    statuses.append(str(jobs.get("status") or "unknown"))
-    attention.extend([dict(row) for row in _sequence(jobs.get("attention")) if isinstance(row, Mapping)])
+    return _MarketControlProjection(
+        market_date=resolved_market_date,
+        market_session=market_session,
+        market_open=bool(market_session.get("is_open")),
+        control=control,
+        kill_switch_reason=kill_switch_reason,
+        statuses=tuple(statuses),
+        attention=attention,
+    )
 
+
+def _project_jobs(
+    *,
+    db_target: str | None,
+    storage: Any,
+) -> _JobsProjection:
+    jobs = build_jobs_compact_state(db_target=db_target, limit=25, storage=storage)
+    return _JobsProjection(
+        payload=jobs,
+        summary=_mapping(jobs.get("summary")),
+        details=_mapping(jobs.get("details")),
+        statuses=(str(jobs.get("status") or "unknown"),),
+        attention=[dict(row) for row in _sequence(jobs.get("attention")) if isinstance(row, Mapping)],
+    )
+
+
+def _project_account(
+    *,
+    storage: Any,
+    now: datetime,
+    market_session: Mapping[str, Any],
+) -> _AccountProjection:
+    statuses: list[str] = []
+    attention: list[dict[str, str]] = []
     broker_store = storage.broker
     if broker_store.schema_ready():
         broker_sync_status, broker_sync = _broker_sync_payload(
@@ -755,14 +860,30 @@ def build_trading_ops_state(
             )
         )
 
+    return _AccountProjection(
+        broker_sync_status=broker_sync_status,
+        broker_sync=broker_sync,
+        account_snapshot=account_snapshot,
+        account=account,
+        statuses=tuple(statuses),
+        attention=attention,
+    )
+
+
+def _project_engine(
+    *,
+    storage: Any,
+    market_date: str,
+    now: datetime,
+) -> _EngineProjection:
     engine_ops = build_engine_ops_state(
         storage=storage,
-        market_date=resolved_market_date,
+        market_date=market_date,
         now=now,
     )
     engine_summary = _mapping(engine_ops.get("summary"))
     engine_status = str(engine_ops.get("status") or "unknown")
-    statuses.append(engine_status)
+    attention: list[dict[str, str]] = []
     if engine_status in {"degraded", "blocked"}:
         attention.append(
             _attention(
@@ -771,9 +892,24 @@ def build_trading_ops_state(
                 message="Engine facts, execution storage, or capture targets need attention.",
             )
         )
+    return _EngineProjection(
+        payload=engine_ops,
+        summary=engine_summary,
+        status=engine_status,
+        statuses=(engine_status,),
+        attention=attention,
+    )
 
+
+def _project_execution(
+    *,
+    storage: Any,
+    now: datetime,
+) -> _ExecutionProjection:
     execution_store = storage.execution
     job_store = getattr(storage, "jobs", None)
+    statuses: list[str] = []
+    attention: list[dict[str, str]] = []
     if execution_store.schema_ready():
         open_execution_attempts = [
             dict(row)
@@ -838,6 +974,27 @@ def build_trading_ops_state(
             )
         )
 
+    return _ExecutionProjection(
+        open_execution_attempts=open_execution_attempts,
+        summarized_open_execution_attempts=summarized_open_execution_attempts,
+        stale_open_execution_count=stale_open_execution_count,
+        submit_unknown_execution_count=submit_unknown_execution_count,
+        capacity_blocked_underlyings=capacity_blocked_underlyings,
+        execution_health_status=execution_health_status,
+        statuses=tuple(statuses),
+        attention=attention,
+    )
+
+
+def _project_positions(
+    *,
+    storage: Any,
+    now: datetime,
+    broker_sync: Mapping[str, Any],
+) -> _PositionProjection:
+    statuses: list[str] = []
+    attention: list[dict[str, str]] = []
+    execution_store = storage.execution
     open_positions: list[dict[str, Any]] = []
     top_positions: list[dict[str, Any]] = []
     risk_breach_count = 0
@@ -927,7 +1084,29 @@ def build_trading_ops_state(
             )
         )
 
+    return _PositionProjection(
+        open_positions=open_positions,
+        top_positions=top_positions,
+        risk_breach_count=risk_breach_count,
+        reconciliation_mismatch_count=reconciliation_mismatch_count,
+        missing_mark_count=missing_mark_count,
+        stale_mark_count=stale_mark_count,
+        broker_unquoted_positions=broker_unquoted_positions,
+        mark_error=mark_error,
+        mark_health_status=mark_health_status,
+        statuses=tuple(statuses),
+        attention=attention,
+    )
+
+
+def _project_alerts(
+    *,
+    storage: Any,
+    now: datetime,
+) -> _AlertProjection:
     alert_store = storage.alerts
+    statuses: list[str] = []
+    attention: list[dict[str, str]] = []
     if alert_store.schema_ready():
         recent_alerts = [dict(row) for row in alert_store.list_alert_events(limit=RECENT_ALERT_LIMIT)]
         alert_delivery = _alert_delivery_payload(recent_alerts, now=now)
@@ -950,15 +1129,27 @@ def build_trading_ops_state(
             "dispatching_count": 0,
             "pending_count": 0,
         }
+    return _AlertProjection(alert_delivery=alert_delivery, statuses=tuple(statuses), attention=attention)
 
+
+def _project_flows(
+    *,
+    storage: Any,
+    engine_ops: Mapping[str, Any],
+    market_date: str,
+    market_open: bool,
+    now: datetime,
+) -> _FlowProjection:
     trading_flows = _build_trading_flows(
         storage=storage,
         engine_ops=engine_ops,
-        market_date=resolved_market_date,
+        market_date=market_date,
         market_open=market_open,
         now=now,
     )
     degraded_flows = [flow for flow in trading_flows if str(flow.get("status") or "") in {"degraded", "blocked", "halted"}]
+    attention: list[dict[str, str]] = []
+    statuses: list[str] = []
     if degraded_flows:
         statuses.append("degraded")
         attention.append(
@@ -968,49 +1159,91 @@ def build_trading_ops_state(
                 message=f"{len(degraded_flows)} trading flow(s) are degraded or blocked.",
             )
         )
+    return _FlowProjection(
+        trading_flows=trading_flows,
+        degraded_flows=degraded_flows,
+        statuses=tuple(statuses),
+        attention=attention,
+    )
+
+
+@with_storage()
+def build_trading_ops_state(
+    *,
+    db_target: str | None = None,
+    market_date: str | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    generated_at = utc_now_iso()
+    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    market_control = _project_market_control(storage=storage, market_date=market_date, now=now)
+    jobs = _project_jobs(db_target=db_target, storage=storage)
+    account = _project_account(storage=storage, now=now, market_session=market_control.market_session)
+    engine = _project_engine(
+        storage=storage,
+        market_date=market_control.market_date,
+        now=now,
+    )
+    execution = _project_execution(storage=storage, now=now)
+    positions = _project_positions(storage=storage, now=now, broker_sync=account.broker_sync)
+    alerts = _project_alerts(storage=storage, now=now)
+    flows = _project_flows(
+        storage=storage,
+        engine_ops=engine.payload,
+        market_date=market_control.market_date,
+        market_open=market_control.market_open,
+        now=now,
+    )
+
+    statuses: list[str] = []
+    attention: list[dict[str, str]] = []
+    for projection in (market_control, jobs, account, engine, execution, positions, alerts, flows):
+        statuses.extend(projection.statuses)
+        attention.extend(projection.attention)
 
     trading_allowed = True
-    if kill_switch_reason is not None:
+    if market_control.kill_switch_reason is not None:
         trading_allowed = False
-    elif str(control.get("mode") or "") != "normal":
+    elif str(market_control.control.get("mode") or "") != "normal":
         trading_allowed = False
-    elif not market_open:
+    elif not market_control.market_open:
         trading_allowed = False
-    elif broker_sync_status != "healthy":
+    elif account.broker_sync_status != "healthy":
         trading_allowed = False
-    elif account_snapshot.get("status") != "ready":
+    elif account.account_snapshot.get("status") != "ready":
         trading_allowed = False
-    elif account.get("trading_blocked") or account.get("account_blocked"):
+    elif account.account.get("trading_blocked") or account.account.get("account_blocked"):
         trading_allowed = False
-    elif stale_open_execution_count or submit_unknown_execution_count:
+    elif execution.stale_open_execution_count or execution.submit_unknown_execution_count:
         trading_allowed = False
 
-    active_intent_count = sum(int(_mapping(flow.get("intent_state")).get("active_intent_count") or 0) for flow in trading_flows)
+    active_intent_count = sum(int(_mapping(flow.get("intent_state")).get("active_intent_count") or 0) for flow in flows.trading_flows)
     primary_flow = next(
-        (flow for flow in trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"), trading_flows[0] if trading_flows else {}
+        (flow for flow in flows.trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"),
+        flows.trading_flows[0] if flows.trading_flows else {},
     )
     primary_capacity = _mapping(primary_flow.get("capacity"))
     primary_position_state = _mapping(primary_flow.get("position_state"))
     summary = {
-        "market_date": resolved_market_date,
-        "market_session_status": market_session.get("status"),
-        "market_open_at": market_session.get("market_open_at"),
-        "market_close_at": market_session.get("market_close_at"),
+        "market_date": market_control.market_date,
+        "market_session_status": market_control.market_session.get("status"),
+        "market_open_at": market_control.market_session.get("market_open_at"),
+        "market_close_at": market_control.market_session.get("market_close_at"),
         "trading_allowed": trading_allowed,
-        "environment": account_snapshot.get("environment"),
-        "control_mode": control.get("mode"),
-        "scheduler_status": _mapping(job_details.get("scheduler")).get("status"),
-        "worker_lane_count": job_summary.get("worker_lane_count"),
-        "disabled_worker_lane_count": job_summary.get("disabled_worker_lane_count"),
-        "blocked_worker_lane_count": sum(1 for row in _sequence(job_details.get("worker_lanes")) if _mapping(row).get("status") == "blocked"),
-        "idle_worker_lane_count": sum(1 for row in _sequence(job_details.get("worker_lanes")) if _mapping(row).get("status") == "idle"),
-        "actionable_failed_job_count": job_summary.get("actionable_failed_count"),
-        "broker_sync_status": broker_sync.get("status"),
-        "broker_sync_age_seconds": broker_sync.get("age_seconds"),
-        "account_snapshot_status": account_snapshot.get("status"),
-        "account_snapshot_captured_at": account_snapshot.get("captured_at"),
-        "open_position_count": len(open_positions),
-        "open_execution_count": len(open_execution_attempts),
+        "environment": account.account_snapshot.get("environment"),
+        "control_mode": market_control.control.get("mode"),
+        "scheduler_status": _mapping(jobs.details.get("scheduler")).get("status"),
+        "worker_lane_count": jobs.summary.get("worker_lane_count"),
+        "disabled_worker_lane_count": jobs.summary.get("disabled_worker_lane_count"),
+        "blocked_worker_lane_count": sum(1 for row in _sequence(jobs.details.get("worker_lanes")) if _mapping(row).get("status") == "blocked"),
+        "idle_worker_lane_count": sum(1 for row in _sequence(jobs.details.get("worker_lanes")) if _mapping(row).get("status") == "idle"),
+        "actionable_failed_job_count": jobs.summary.get("actionable_failed_count"),
+        "broker_sync_status": account.broker_sync.get("status"),
+        "broker_sync_age_seconds": account.broker_sync.get("age_seconds"),
+        "account_snapshot_status": account.account_snapshot.get("status"),
+        "account_snapshot_captured_at": account.account_snapshot.get("captured_at"),
+        "open_position_count": len(positions.open_positions),
+        "open_execution_count": len(execution.open_execution_attempts),
         "active_intent_count": active_intent_count,
         "max_open_positions": primary_capacity.get("max_open_positions"),
         "max_daily_entries": primary_capacity.get("max_daily_entries"),
@@ -1021,58 +1254,58 @@ def build_trading_ops_state(
         "realized_pnl": primary_position_state.get("realized_pnl"),
         "unrealized_pnl": primary_position_state.get("unrealized_pnl"),
         "net_pnl": primary_position_state.get("net_pnl"),
-        "execution_health_status": execution_health_status,
-        "risk_breach_count": risk_breach_count,
-        "reconciliation_mismatch_count": reconciliation_mismatch_count,
-        "mark_health_status": mark_health_status,
-        "engine_status": engine_status,
-        "engine_ticker_source_run_count": coerce_int(engine_summary.get("ticker_source_run_count")) or 0,
-        "engine_candidate_run_count": coerce_int(engine_summary.get("candidate_run_count")) or 0,
-        "engine_trade_candidate_count": coerce_int(engine_summary.get("trade_candidate_count")) or 0,
-        "engine_signal_count": coerce_int(engine_summary.get("signal_count")) or 0,
-        "engine_decision_count": coerce_int(engine_summary.get("decision_count")) or 0,
-        "engine_selected_count": coerce_int(engine_summary.get("selected_count")) or 0,
-        "engine_intent_count": coerce_int(engine_summary.get("intent_count")) or 0,
-        "engine_entry_intent_count": coerce_int(engine_summary.get("entry_intent_count")) or 0,
-        "engine_management_intent_count": coerce_int(engine_summary.get("management_intent_count")) or 0,
-        "engine_open_position_count": coerce_int(engine_summary.get("open_position_count")) or 0,
-        "capture_active_target_count": coerce_int(engine_summary.get("capture_active_target_count")) or 0,
-        "capture_status": engine_summary.get("capture_status"),
+        "execution_health_status": execution.execution_health_status,
+        "risk_breach_count": positions.risk_breach_count,
+        "reconciliation_mismatch_count": positions.reconciliation_mismatch_count,
+        "mark_health_status": positions.mark_health_status,
+        "engine_status": engine.status,
+        "engine_ticker_source_run_count": coerce_int(engine.summary.get("ticker_source_run_count")) or 0,
+        "engine_candidate_run_count": coerce_int(engine.summary.get("candidate_run_count")) or 0,
+        "engine_trade_candidate_count": coerce_int(engine.summary.get("trade_candidate_count")) or 0,
+        "engine_signal_count": coerce_int(engine.summary.get("signal_count")) or 0,
+        "engine_decision_count": coerce_int(engine.summary.get("decision_count")) or 0,
+        "engine_selected_count": coerce_int(engine.summary.get("selected_count")) or 0,
+        "engine_intent_count": coerce_int(engine.summary.get("intent_count")) or 0,
+        "engine_entry_intent_count": coerce_int(engine.summary.get("entry_intent_count")) or 0,
+        "engine_management_intent_count": coerce_int(engine.summary.get("management_intent_count")) or 0,
+        "engine_open_position_count": coerce_int(engine.summary.get("open_position_count")) or 0,
+        "capture_active_target_count": coerce_int(engine.summary.get("capture_active_target_count")) or 0,
+        "capture_status": engine.summary.get("capture_status"),
     }
 
     details = {
-        "market_session": market_session,
-        "control": control,
-        "jobs": jobs,
-        "scheduler": job_details.get("scheduler"),
-        "workers": job_details.get("workers"),
-        "worker_lanes": job_details.get("worker_lanes"),
-        "running_jobs": [dict(row) for row in _sequence(job_details.get("running_jobs")) if _mapping(row).get("status") == "running"],
-        "queued_jobs": [dict(row) for row in _sequence(job_details.get("queued_jobs")) if _mapping(row).get("status") == "queued"],
-        "recent_job_runs": job_details.get("job_runs"),
-        "broker_sync": broker_sync,
-        "account_snapshot": account_snapshot,
-        "engine": engine_ops,
+        "market_session": market_control.market_session,
+        "control": market_control.control,
+        "jobs": jobs.payload,
+        "scheduler": jobs.details.get("scheduler"),
+        "workers": jobs.details.get("workers"),
+        "worker_lanes": jobs.details.get("worker_lanes"),
+        "running_jobs": [dict(row) for row in _sequence(jobs.details.get("running_jobs")) if _mapping(row).get("status") == "running"],
+        "queued_jobs": [dict(row) for row in _sequence(jobs.details.get("queued_jobs")) if _mapping(row).get("status") == "queued"],
+        "recent_job_runs": jobs.details.get("job_runs"),
+        "broker_sync": account.broker_sync,
+        "account_snapshot": account.account_snapshot,
+        "engine": engine.payload,
         "execution_runtimes": resolve_execution_runtime_capabilities(),
-        "open_execution_attempts": summarized_open_execution_attempts,
-        "open_positions": open_positions,
-        "top_positions": top_positions,
-        "trading_flows": trading_flows,
+        "open_execution_attempts": execution.summarized_open_execution_attempts,
+        "open_positions": positions.open_positions,
+        "top_positions": positions.top_positions,
+        "trading_flows": flows.trading_flows,
         "primary_trading_flow": primary_flow,
-        "alert_delivery": alert_delivery,
+        "alert_delivery": alerts.alert_delivery,
         "mark_health": {
-            "status": mark_health_status,
-            "missing_mark_count": missing_mark_count,
-            "stale_mark_count": stale_mark_count,
-            "broker_unquoted_position_count": broker_unquoted_positions,
-            "mark_error": mark_error,
+            "status": positions.mark_health_status,
+            "missing_mark_count": positions.missing_mark_count,
+            "stale_mark_count": positions.stale_mark_count,
+            "broker_unquoted_position_count": positions.broker_unquoted_positions,
+            "mark_error": positions.mark_error,
         },
         "execution_health": {
-            "status": execution_health_status,
-            "stale_open_execution_count": stale_open_execution_count,
-            "submit_unknown_execution_count": submit_unknown_execution_count,
-            "capacity_blocked_underlying_count": len(capacity_blocked_underlyings),
-            "capacity_blocked_underlyings": capacity_blocked_underlyings,
+            "status": execution.execution_health_status,
+            "stale_open_execution_count": execution.stale_open_execution_count,
+            "submit_unknown_execution_count": execution.submit_unknown_execution_count,
+            "capacity_blocked_underlying_count": len(execution.capacity_blocked_underlyings),
+            "capacity_blocked_underlyings": execution.capacity_blocked_underlyings,
         },
     }
     return {
