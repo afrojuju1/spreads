@@ -15,7 +15,7 @@ from core.services.trading_strategy_models import (
     StrategyRiskDefaults,
     VerticalSpreadBuildConfig,
 )
-from core.services.scanners.market_data import (
+from core.services.strategy_candidate_builders.market_data import (
     count_alpaca_greeks_coverage,
     count_local_greeks_coverage,
     count_snapshot_delta_coverage,

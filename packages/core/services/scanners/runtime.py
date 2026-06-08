@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from core.domain.models import (
-    DailyBar,
-    IntradayBar,
-    OptionSnapshot,
     SpreadCandidate,
     SymbolMarketSlice,
     SymbolScanResult,
@@ -16,8 +13,6 @@ from core.domain.models import (
     UniverseScanFailure,
 )
 from core.integrations.alpaca.client import AlpacaClient
-from core.integrations.calendar_events import classify_underlying_type
-from core.services.market_dates import NEW_YORK
 from core.services.candidate_fields import candidate_ranking_summary_row
 from core.services.scanners.config import (
     build_filter_payload,
@@ -25,13 +20,8 @@ from core.services.scanners.config import (
     concrete_strategies,
     resolve_symbol_scan_args,
 )
-from core.services.strategy_candidate_builders.runtime_context import candidate_reference_date, candidate_reference_datetime
+from core.services.strategy_candidate_builders.runtime_context import candidate_reference_datetime
 from core.services.strategy_specs import resolve_strategy_spec
-from core.services.scanners.market_data import (
-    build_expected_move_estimates,
-    enrich_missing_greeks,
-    group_contracts_by_expiration,
-)
 from core.services.scanners.postprocess import (
     annotate_data_quality,
     annotate_ranking_policy,
@@ -54,6 +44,7 @@ from core.services.strategy_candidate_builders.ranking import (
     rank_candidates,
     sort_candidates_for_display,
 )
+from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
 from core.storage.run_history_repository import RunHistoryRepository
 
 
@@ -104,135 +95,6 @@ def persist_scan_run(
         candidates=candidates,
     )
     return run_id
-
-
-def build_market_slice_from_loaded_data(
-    *,
-    symbol: str,
-    underlying_type: str,
-    spot_price: float,
-    daily_bars: list[DailyBar],
-    intraday_bars: list[IntradayBar],
-    call_contracts_by_expiration: dict[str, list[Any]],
-    put_contracts_by_expiration: dict[str, list[Any]],
-    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
-    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
-    greeks_provider: Any,
-    greeks_as_of: datetime,
-    greeks_source_mode: str,
-) -> SymbolMarketSlice:
-    resolved_call_snapshots = enrich_missing_greeks(
-        symbol=symbol,
-        option_type="call",
-        spot_price=spot_price,
-        contracts_by_expiration=call_contracts_by_expiration,
-        snapshots_by_expiration=call_snapshots_by_expiration,
-        greeks_provider=greeks_provider,
-        as_of=greeks_as_of,
-        source_mode=greeks_source_mode,
-    )
-    resolved_put_snapshots = enrich_missing_greeks(
-        symbol=symbol,
-        option_type="put",
-        spot_price=spot_price,
-        contracts_by_expiration=put_contracts_by_expiration,
-        snapshots_by_expiration=put_snapshots_by_expiration,
-        greeks_provider=greeks_provider,
-        as_of=greeks_as_of,
-        source_mode=greeks_source_mode,
-    )
-    expected_moves_by_expiration = build_expected_move_estimates(
-        spot_price=spot_price,
-        call_contracts_by_expiration=call_contracts_by_expiration,
-        put_contracts_by_expiration=put_contracts_by_expiration,
-        call_snapshots_by_expiration=resolved_call_snapshots,
-        put_snapshots_by_expiration=resolved_put_snapshots,
-    )
-    return SymbolMarketSlice(
-        symbol=symbol,
-        underlying_type=underlying_type,
-        spot_price=spot_price,
-        daily_bars=tuple(daily_bars),
-        intraday_bars=tuple(intraday_bars),
-        call_contracts_by_expiration=call_contracts_by_expiration,
-        put_contracts_by_expiration=put_contracts_by_expiration,
-        call_snapshots_by_expiration=resolved_call_snapshots,
-        put_snapshots_by_expiration=resolved_put_snapshots,
-        expected_moves_by_expiration=expected_moves_by_expiration,
-    )
-
-
-def build_symbol_market_slice(
-    *,
-    symbol: str,
-    symbol_args: argparse.Namespace,
-    client: AlpacaClient,
-    greeks_provider: Any,
-) -> SymbolMarketSlice:
-    normalized_symbol = symbol.upper()
-    underlying_type = classify_underlying_type(normalized_symbol)
-    reference_date = candidate_reference_date(symbol_args)
-    reference_timestamp = candidate_reference_datetime(symbol_args) or datetime.now(UTC)
-    min_expiration = (reference_date + timedelta(days=symbol_args.min_dte)).isoformat()
-    max_expiration = (reference_date + timedelta(days=symbol_args.max_dte)).isoformat()
-
-    spot_price = client.get_underlying_price(normalized_symbol, symbol_args.stock_feed)
-    daily_bars: list[DailyBar] = []
-    intraday_bars: list[IntradayBar] = []
-    if symbol_args.setup_filter == "on":
-        daily_bars = client.get_daily_bars(
-            normalized_symbol,
-            start=(reference_date - timedelta(days=120)).isoformat(),
-            end=reference_date.isoformat(),
-            stock_feed=symbol_args.stock_feed,
-        )
-        try:
-            session_start = datetime.combine(reference_date, time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
-            session_end = reference_timestamp
-            intraday_bars = client.get_intraday_bars(
-                normalized_symbol,
-                start=session_start.isoformat(),
-                end=session_end.isoformat(),
-                stock_feed=symbol_args.stock_feed,
-            )
-        except Exception:
-            intraday_bars = []
-
-    call_contracts = client.list_option_contracts(normalized_symbol, min_expiration, max_expiration, option_type="call")
-    put_contracts = client.list_option_contracts(normalized_symbol, min_expiration, max_expiration, option_type="put")
-    call_contracts_by_expiration = group_contracts_by_expiration(call_contracts)
-    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
-
-    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
-    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
-    for expiration_date in sorted(call_contracts_by_expiration):
-        call_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
-            normalized_symbol,
-            expiration_date,
-            "call",
-            symbol_args.feed,
-        )
-        put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
-            normalized_symbol,
-            expiration_date,
-            "put",
-            symbol_args.feed,
-        )
-
-    return build_market_slice_from_loaded_data(
-        symbol=normalized_symbol,
-        underlying_type=underlying_type,
-        spot_price=spot_price,
-        daily_bars=daily_bars,
-        intraday_bars=intraday_bars,
-        call_contracts_by_expiration=call_contracts_by_expiration,
-        put_contracts_by_expiration=put_contracts_by_expiration,
-        call_snapshots_by_expiration=call_snapshots_by_expiration,
-        put_snapshots_by_expiration=put_snapshots_by_expiration,
-        greeks_provider=greeks_provider,
-        greeks_as_of=reference_timestamp,
-        greeks_source_mode=symbol_args.greeks_source,
-    )
 
 
 def build_setup_context_from_market_slice(*, market_slice: SymbolMarketSlice, symbol_args: argparse.Namespace) -> UnderlyingSetupContext | None:
@@ -575,13 +437,11 @@ def merge_strategy_candidates(
 
 
 __all__ = [
-    "build_market_slice_from_loaded_data",
     "build_candidates_with_details_from_market_slice",
     "build_candidates_from_market_slice",
     "build_raw_candidates_from_market_slice",
     "build_scan_run_id",
     "build_setup_context_from_market_slice",
-    "build_symbol_market_slice",
     "count_market_slice_coverage",
     "merge_strategy_candidates",
     "postprocess_market_slice_candidates",

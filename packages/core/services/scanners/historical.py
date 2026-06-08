@@ -14,9 +14,7 @@ from core.domain.models import (
 from core.integrations.alpaca.client import AlpacaClient
 from core.integrations.calendar_events import classify_underlying_type
 from core.services.market_dates import NEW_YORK
-from core.services.scanners.market_data import group_contracts_by_expiration
-from core.services.scanners.runtime import build_market_slice_from_loaded_data
-
+from core.services.strategy_candidate_builders.market_data import build_market_slice_from_loaded_data, group_contracts_by_expiration
 
 ALPACA_OPTIONS_HISTORY_START = date(2024, 2, 1)
 _MIN_SYNTHETIC_SPREAD_RATIO = 0.01
@@ -168,11 +166,7 @@ def _historical_option_bars_by_symbol(
         end=end,
         timeframe=timeframe,
     )
-    return {
-        symbol: tuple(list(bars))
-        for symbol, bars in bars_by_symbol.items()
-        if list(bars)
-    }
+    return {symbol: tuple(list(bars)) for symbol, bars in bars_by_symbol.items() if list(bars)}
 
 
 def _snapshot_from_bars_before(
@@ -244,29 +238,15 @@ def build_historical_symbol_session_data_from_alpaca(
     include_intraday_stock_bars: bool = True,
 ) -> HistoricalSymbolSessionData:
     if session_date < ALPACA_OPTIONS_HISTORY_START:
-        raise ValueError(
-            "Alpaca historical options data is unsupported before 2024-02-01"
-        )
+        raise ValueError("Alpaca historical options data is unsupported before 2024-02-01")
 
     normalized_symbol = str(symbol).upper()
     underlying_type = classify_underlying_type(normalized_symbol)
-    min_expiration = (
-        session_date + timedelta(days=int(symbol_args.min_dte))
-    ).isoformat()
-    max_expiration = (
-        session_date + timedelta(days=int(symbol_args.max_dte))
-    ).isoformat()
+    min_expiration = (session_date + timedelta(days=int(symbol_args.min_dte))).isoformat()
+    max_expiration = (session_date + timedelta(days=int(symbol_args.max_dte))).isoformat()
     session_start, session_end = _session_window(session_date)
-    option_bars_start = (
-        session_date.isoformat()
-        if option_bar_timeframe == "1Day"
-        else _render_utc(session_start)
-    )
-    option_bars_end = (
-        session_date.isoformat()
-        if option_bar_timeframe == "1Day"
-        else _render_utc(session_end + timedelta(minutes=1))
-    )
+    option_bars_start = session_date.isoformat() if option_bar_timeframe == "1Day" else _render_utc(session_start)
+    option_bars_end = session_date.isoformat() if option_bar_timeframe == "1Day" else _render_utc(session_end + timedelta(minutes=1))
 
     daily_bars = client.get_daily_bars(
         normalized_symbol,
@@ -344,26 +324,18 @@ def build_historical_symbol_market_slice_from_session_data(
     reference_timestamp = as_of.astimezone(UTC)
     reference_date = reference_timestamp.astimezone(NEW_YORK).date()
     if reference_date != session_data.session_date:
-        raise ValueError(
-            "Historical session data date does not match requested as_of session"
-        )
+        raise ValueError("Historical session data date does not match requested as_of session")
 
     latest_daily_bar = _latest_bar(list(session_data.daily_bars))
     if latest_daily_bar is None:
-        raise ValueError(
-            f"No Alpaca daily bars available for {session_data.symbol} on {reference_date.isoformat()}"
-        )
+        raise ValueError(f"No Alpaca daily bars available for {session_data.symbol} on {reference_date.isoformat()}")
 
     as_of_text = _render_utc(reference_timestamp)
     latest_intraday_bar = _latest_timestamped_bar(
         session_data.intraday_bars,
         as_of_text=as_of_text,
     )
-    spot_price = float(
-        latest_daily_bar.close
-        if latest_intraday_bar is None
-        else latest_intraday_bar.close
-    )
+    spot_price = float(latest_daily_bar.close if latest_intraday_bar is None else latest_intraday_bar.close)
 
     return build_market_slice_from_loaded_data(
         symbol=session_data.symbol,

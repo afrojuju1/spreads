@@ -21,9 +21,9 @@ from core.services.scanners.config import (
 )
 from core.services.scanners.runtime import (
     build_candidates_with_details_from_market_slice,
-    build_symbol_market_slice,
     persist_scan_run,
 )
+from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
 from core.services.strategy_candidate_builders.single_legs import diagnose_single_leg_rejections
 from core.storage.run_history_repository import RunHistoryRepository
 
