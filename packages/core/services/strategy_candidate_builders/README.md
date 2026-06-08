@@ -1,0 +1,16 @@
+# Strategy Candidate Builders
+
+This package is the target owner for option candidate construction used by the
+DataEngine.
+
+It replaces the stale `services.scanners` boundary with typed contracts for:
+
+- strategy candidate build settings
+- market data requests and coverage summaries
+- candidate rows and diagnostics
+- builder failures and run outcomes
+- market data provider and candidate builder protocols
+
+Keep this package focused on candidate construction and diagnostics. It should
+not become a scheduler, product CLI, persistence owner, or execution path.
+
