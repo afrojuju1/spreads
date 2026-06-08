@@ -17,7 +17,6 @@ CandidateSummary: TypeAlias = Mapping[str, Any]
 
 class CandidateDiagnosticStatus(StrEnum):
     CANDIDATE_AVAILABLE = "candidate_available"
-    RUNTIME_REJECTED = "runtime_rejected"
     RANKING_REJECTED = "ranking_rejected"
     POSTPROCESS_REJECTED = "postprocess_rejected"
     DATA_UNAVAILABLE = "data_unavailable"

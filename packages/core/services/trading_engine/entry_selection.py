@@ -37,28 +37,6 @@ def group_candidate_rows(candidates: tuple[Any, ...]) -> dict[str, list[dict[str
     return grouped
 
 
-def candidate_result_runtime_filter_reason_counts(candidate_result: CandidateBuildResult) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for diagnostic in candidate_result.diagnostics:
-        if not isinstance(diagnostic, dict):
-            continue
-        rejection_counts = diagnostic.get("rejection_counts")
-        if not isinstance(rejection_counts, dict):
-            continue
-        runtime_filter = rejection_counts.get("runtime_filter")
-        if not isinstance(runtime_filter, dict):
-            continue
-        for reason, count in runtime_filter.items():
-            rendered = str(reason or "").strip()
-            if not rendered:
-                continue
-            try:
-                counts[rendered] = counts.get(rendered, 0) + int(count)
-            except (TypeError, ValueError):
-                continue
-    return dict(sorted(counts.items()))
-
-
 def _candidate_identity(candidate: Mapping[str, Any]) -> str:
     return str(candidate.get("candidate_identity") or candidate.get("structure_identity") or payload_structure_identity(dict(candidate)) or "")
 
@@ -103,7 +81,6 @@ class EntrySelectionResult:
     quality_analysis: EntryQualityAnalysis | None
     quality_summary: Mapping[str, Any]
     symbol_candidates: Mapping[str, list[dict[str, Any]]]
-    runtime_filter_reason_counts: Mapping[str, int]
     selection: Mapping[str, Any]
     selected_candidates: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     monitored_candidates: tuple[dict[str, Any], ...] = field(default_factory=tuple)
@@ -148,7 +125,6 @@ class EntrySelectionEngine:
             )
 
         symbol_candidates = group_candidate_rows(candidate_result.candidates)
-        runtime_filter_reason_counts = candidate_result_runtime_filter_reason_counts(candidate_result)
         selection = select_live_signals(
             label=label,
             cycle_id=cycle_id,
@@ -178,7 +154,6 @@ class EntrySelectionEngine:
             quality_analysis=quality_analysis,
             quality_summary=quality_summary,
             symbol_candidates=symbol_candidates,
-            runtime_filter_reason_counts=runtime_filter_reason_counts,
             selection=selection,
             selected_candidates=selected_candidates,
             monitored_candidates=monitored_candidates,
@@ -189,7 +164,6 @@ class EntrySelectionEngine:
 __all__ = [
     "EntrySelectionEngine",
     "EntrySelectionResult",
-    "candidate_result_runtime_filter_reason_counts",
     "candidate_result_summary",
     "group_candidate_rows",
 ]

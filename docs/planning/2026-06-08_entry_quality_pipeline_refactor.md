@@ -2,7 +2,7 @@
 
 Date: 2026-06-08
 
-Status: partially implemented. Beads `spr-34u.1` through `spr-34u.8` are shipped for `momentum_long_calls`; `spr-34u.9` and `spr-34u.10` remain open for cleanup and final cutover validation.
+Status: partially implemented. Beads `spr-34u.1` through `spr-34u.9` are shipped for `momentum_long_calls`; `spr-34u.10` remains open for final cutover validation.
 
 Related:
 
@@ -48,7 +48,7 @@ TickerSource / Universe
 
 The important addition is `FeatureSnapshot`. The first shipped cutover computes feature snapshots from the resolved ticker set plus existing candidate-build diagnostics/candidates, then evaluates the quality profile without adding another data-fetching path.
 
-Today, parts of source freshness, setup quality, option chain viability, liquidity, ranking, and runtime filtering are spread across source jobs, builders, ranking policy, replay filters, live selection, and admission. The refactor should centralize the facts first, then let filters evaluate those facts.
+Before the cutover, parts of source freshness, setup quality, option chain viability, liquidity, ranking, and entry eligibility were spread across source jobs, builders, ranking policy, ad hoc evaluation helpers, live selection, and admission. The refactor centralizes the facts first, then lets filters evaluate those facts.
 
 ## Why This Shape
 
@@ -316,8 +316,8 @@ This is intentionally a full cleanup path, not a compatibility wrapper.
 6. Done: add target-DTE optionable chain viability early.
 7. Done: add SPY/QQQ relative-strength and market-regime filters.
 8. Done: update ops CLI/dashboard to show filter waterfall.
-9. Remaining: remove stale duplicate gate plumbing once the pipeline is canonical.
-10. Remaining: live-validate the cutover after the remaining filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
+9. Done: remove stale duplicate gate plumbing once the pipeline is canonical.
+10. Remaining: live-validate the cutover after the filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
 
 ## First Profile
 

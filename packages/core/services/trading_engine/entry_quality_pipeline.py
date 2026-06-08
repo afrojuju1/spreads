@@ -19,20 +19,6 @@ from .entry_quality import (
     resolve_entry_quality_profile,
 )
 
-_RUNTIME_FILTER_STAGE = {
-    "strategy_family_mismatch": EntryQualityStageName.CONTRACT_FIT,
-    "symbol_out_of_scope": EntryQualityStageName.SOURCE_PREFLIGHT,
-    "dte_below_min": EntryQualityStageName.CONTRACT_FIT,
-    "dte_above_max": EntryQualityStageName.CONTRACT_FIT,
-    "short_delta_below_min": EntryQualityStageName.CONTRACT_FIT,
-    "short_delta_above_max": EntryQualityStageName.CONTRACT_FIT,
-    "width_missing": EntryQualityStageName.CONTRACT_FIT,
-    "width_not_allowed": EntryQualityStageName.CONTRACT_FIT,
-    "open_interest_below_floor": EntryQualityStageName.PREMIUM_QUALITY,
-    "relative_spread_above_ceiling": EntryQualityStageName.PREMIUM_QUALITY,
-    "return_on_risk_below_floor": EntryQualityStageName.PREMIUM_QUALITY,
-}
-
 _RAW_REJECTION_STAGE = {
     "no_expected_move": EntryQualityStageName.CONTRACT_FIT,
     "no_snapshot": EntryQualityStageName.CHAIN_VIABILITY,
@@ -178,13 +164,9 @@ def _stage_rejection_reasons(snapshot: FeatureSnapshot, stage: EntryQualityStage
     counts = _rejection_counts(snapshot)
     reasons: list[str] = []
     raw = as_mapping(counts.get("raw"))
-    runtime_filter = as_mapping(counts.get("runtime_filter"))
     ranking_policy = as_mapping(counts.get("ranking_policy"))
     for reason in _count_reasons(raw):
         if _RAW_REJECTION_STAGE.get(reason) == stage:
-            reasons.append(reason)
-    for reason in _count_reasons(runtime_filter):
-        if _RUNTIME_FILTER_STAGE.get(reason) == stage:
             reasons.append(reason)
     if stage == EntryQualityStageName.PREMIUM_QUALITY:
         reasons.extend(_count_reasons(ranking_policy))

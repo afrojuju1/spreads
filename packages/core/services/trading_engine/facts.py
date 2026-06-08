@@ -141,7 +141,7 @@ def _candidate_run_diagnostic_status(
         return "build_error"
     if statuses and statuses <= {"data_unavailable"}:
         return "data_unavailable"
-    if statuses & {"ranking_rejected", "postprocess_rejected", "runtime_rejected"}:
+    if statuses & {"ranking_rejected", "postprocess_rejected"}:
         return "filtered_out"
     if "no_raw_candidates" in statuses:
         return "no_raw_candidates"

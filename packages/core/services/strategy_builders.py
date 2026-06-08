@@ -8,10 +8,6 @@ from typing import Any
 from core.domain.models import SymbolMarketSlice, UnderlyingSetupContext
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.option_structures import candidate_legs, payload_structure_identity
-from core.services.runtime_candidate_filters import (
-    build_runtime_candidate_filter,
-    match_runtime_candidate,
-)
 from core.services.strategy_candidate_builders.market_data import AlpacaMarketSliceProvider, MarketSliceProvider, build_underlying_market_slice
 from core.services.strategy_candidate_builders.runtime import (
     build_candidates_with_details_from_market_slice,
@@ -166,7 +162,6 @@ def _combined_rejection_counts(
     *,
     raw_rejections: dict[str, Any],
     replay_details: dict[str, Any],
-    runtime_filter_reason_counts: dict[str, int],
 ) -> dict[str, Any]:
     top_counts: Counter[str] = Counter()
     sections = {
@@ -174,7 +169,6 @@ def _combined_rejection_counts(
         "data": replay_details.get("data_reason_counts") or {},
         "calendar": replay_details.get("calendar_reason_counts") or {},
         "ranking_policy": replay_details.get("ranking_policy_blocker_counts") or {},
-        "runtime_filter": runtime_filter_reason_counts,
     }
     for counts in sections.values():
         for reason, count in dict(counts or {}).items():
@@ -194,14 +188,11 @@ def _diagnostic_status(
     runtime_candidate_count: int,
     returned_candidate_count: int,
     ranking_rejections: dict[str, Any],
-    runtime_filter_reason_counts: dict[str, int],
 ) -> str:
     if returned_candidate_count > 0:
         return "candidate_available"
     if runtime_candidate_count > 0:
         return "candidate_available"
-    if runtime_filter_reason_counts:
-        return "runtime_rejected"
     if postprocess_candidate_count > 0:
         return "candidate_available"
     if ranking_rejections:
@@ -248,7 +239,6 @@ def build_entry_runtime_symbol_diagnostic(
     replay_details: dict[str, Any],
     all_rows: list[dict[str, Any]],
     returned_rows: list[dict[str, Any]],
-    runtime_filter_reason_counts: dict[str, int],
 ) -> dict[str, Any]:
     option_type = runtime.build_settings.strategy_spec.option_type
     contracts_by_expiration, snapshots_by_expiration = _market_side_maps(
@@ -281,7 +271,6 @@ def build_entry_runtime_symbol_diagnostic(
         runtime_candidate_count=runtime_candidate_count,
         returned_candidate_count=returned_candidate_count,
         ranking_rejections=ranking_rejections,
-        runtime_filter_reason_counts=runtime_filter_reason_counts,
     )
     market_data = {
         "underlying_type": market_slice.underlying_type,
@@ -322,7 +311,6 @@ def build_entry_runtime_symbol_diagnostic(
         "rejection_counts": _combined_rejection_counts(
             raw_rejections=raw_rejections,
             replay_details=replay_details,
-            runtime_filter_reason_counts=runtime_filter_reason_counts,
         ),
         "ranking_gate": {
             "status_counts": replay_details.get("ranking_policy_status_counts") or {},
@@ -359,24 +347,17 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         base_parameters=base_parameters,
         runtime=runtime,
     )
-    candidate_filter = build_runtime_candidate_filter(runtime)
     candidates, setup_context, replay_details = build_candidates_with_details_from_market_slice(
         market_slice=market_slice,
         symbol_args=runtime_parameters,
         calendar_resolver=calendar_resolver,
     )
     all_rows: list[dict[str, Any]] = []
-    filter_reason_counts: dict[str, int] = {}
     for candidate in candidates:
         row = _serialize_candidate(
             candidate,
             short_delta_target=runtime_parameters.short_delta_target,
         )
-        matched, reasons = match_runtime_candidate(row, runtime)
-        if not matched:
-            for reason in reasons:
-                filter_reason_counts[reason] = filter_reason_counts.get(reason, 0) + 1
-            continue
         row["runtime_recipe_refs"] = list(runtime.entry_recipe_refs)
         all_rows.append(row)
 
@@ -392,17 +373,14 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         replay_details=replay_details,
         all_rows=all_rows,
         returned_rows=rows,
-        runtime_filter_reason_counts=filter_reason_counts,
     )
     return {
         "symbol": symbol,
         "runtime_parameters": runtime_parameters,
-        "candidate_filter": candidate_filter,
         "setup_context": setup_context,
         "replay_details": replay_details,
         "all_rows": all_rows,
         "rows": rows,
-        "runtime_filter_reason_counts": dict(sorted(filter_reason_counts.items())),
         "diagnostic": diagnostic,
     }
 

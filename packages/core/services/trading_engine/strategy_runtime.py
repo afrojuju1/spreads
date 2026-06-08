@@ -460,7 +460,6 @@ def _signal_row_from_selection(
 def _selection_summary(
     *,
     candidate_rows_by_symbol: dict[str, list[dict[str, Any]]],
-    runtime_filter_reason_counts: dict[str, int],
     selected_rows: list[dict[str, Any]],
     selection_memory: dict[str, Any],
 ) -> dict[str, Any]:
@@ -481,7 +480,6 @@ def _selection_summary(
         "candidate_symbol_count": len(candidate_rows_by_symbol),
         "candidate_count": candidate_count,
         "signal_count": signal_count,
-        "runtime_filter_reason_counts": dict(runtime_filter_reason_counts),
         "selection_memory": dict(selection_memory),
     }
 
@@ -583,7 +581,6 @@ def _refresh_entry_runtime_signals(
     candidate_result = selection_result.candidate_result
     quality_analysis = selection_result.quality_analysis
     symbol_candidates = selection_result.symbol_candidates
-    runtime_filter_reason_counts = dict(selection_result.runtime_filter_reason_counts)
     selection = dict(selection_result.selection)
     selected_rows = [
         _signal_row_from_selection(
@@ -599,7 +596,6 @@ def _refresh_entry_runtime_signals(
     selection_memory = dict(selection.get("selection_memory") or {})
     selection_summary = _selection_summary(
         candidate_rows_by_symbol=symbol_candidates,
-        runtime_filter_reason_counts=runtime_filter_reason_counts,
         selected_rows=selected_rows,
         selection_memory=selection_memory,
     )
