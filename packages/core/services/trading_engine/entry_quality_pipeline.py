@@ -48,6 +48,16 @@ _RAW_REJECTION_STAGE = {
     "return_on_risk_below_min": EntryQualityStageName.PREMIUM_QUALITY,
 }
 
+_THRESHOLD_ALIASES = {
+    "dte_min": "min_dte",
+    "dte_max": "max_dte",
+    "short_delta_min": "delta_min",
+    "short_delta_max": "delta_max",
+    "min_delta": "delta_min",
+    "max_delta": "delta_max",
+    "max_leg_spread_pct_mid": "max_relative_spread",
+}
+
 
 def _candidate(snapshot: FeatureSnapshot, candidate: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if candidate is not None:
@@ -67,6 +77,41 @@ def _candidate_economics(snapshot: FeatureSnapshot) -> dict[str, Any]:
 
 def _chain_filters(snapshot: FeatureSnapshot) -> dict[str, Any]:
     return as_mapping(as_mapping(snapshot.chain).get("filters"))
+
+
+def _threshold_key(key: Any) -> str:
+    rendered = str(key or "").strip()
+    return _THRESHOLD_ALIASES.get(rendered, rendered)
+
+
+def _usable_threshold(value: Any) -> bool:
+    return value not in (None, "", [], {})
+
+
+def _flat_thresholds(values: Mapping[str, Any]) -> dict[str, Any]:
+    return {_threshold_key(key): value for key, value in values.items() if _usable_threshold(value) and not isinstance(value, Mapping)}
+
+
+def _policy_thresholds(context: EntryQualityContext, filter_ref: EntryFilterRef) -> dict[str, Any]:
+    policy = as_mapping(context.policy)
+    stage_policy = as_mapping(policy.get(filter_ref.stage.value))
+    thresholds: dict[str, Any] = {}
+    thresholds.update(_flat_thresholds(as_mapping(filter_ref.thresholds)))
+    thresholds.update(_flat_thresholds(as_mapping(policy.get("thresholds"))))
+    thresholds.update(_flat_thresholds(stage_policy))
+    thresholds.update(_flat_thresholds(as_mapping(stage_policy.get(filter_ref.filter_id))))
+    thresholds.update(_flat_thresholds(as_mapping(policy.get(filter_ref.filter_id))))
+    return thresholds
+
+
+def _resolved_thresholds(
+    context: EntryQualityContext,
+    filter_ref: EntryFilterRef,
+    base: Mapping[str, Any],
+) -> dict[str, Any]:
+    thresholds = {_threshold_key(key): value for key, value in base.items() if _usable_threshold(value)}
+    thresholds.update(_policy_thresholds(context, filter_ref))
+    return thresholds
 
 
 def _status(status: FilterResultStatus | str) -> FilterResultStatus:
@@ -126,8 +171,12 @@ def _stage_rejection_reasons(snapshot: FeatureSnapshot, stage: EntryQualityStage
 
 
 def _source_is_fresh(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
-    del context
     source = as_mapping(snapshot.source)
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {"max_age_seconds": source.get("max_age_seconds")},
+    )
     blockers = unique_text_list(source.get("blockers"))
     metrics = {
         "ticker_source_kind": source.get("ticker_source_kind"),
@@ -143,7 +192,7 @@ def _source_is_fresh(context: EntryQualityContext, snapshot: FeatureSnapshot, fi
             status=FilterResultStatus.BLOCK,
             reason_codes=blockers,
             metrics=metrics,
-            thresholds={"max_age_seconds": source.get("max_age_seconds")},
+            thresholds=thresholds,
             message="Ticker source was not usable for entry.",
         )
     return _result(
@@ -151,7 +200,7 @@ def _source_is_fresh(context: EntryQualityContext, snapshot: FeatureSnapshot, fi
         status=FilterResultStatus.PASS,
         reason_codes=_first_reason(source.get("reason_codes"), default="ticker_source_usable"),
         metrics=metrics,
-        thresholds={"max_age_seconds": source.get("max_age_seconds")},
+        thresholds=thresholds,
         message="Ticker source was usable.",
     )
 
@@ -299,13 +348,20 @@ def _strategy_family_matches(context: EntryQualityContext, snapshot: FeatureSnap
 
 
 def _dte_in_range(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
-    del context
     candidate = _candidate(snapshot)
     contract = _candidate_contract(snapshot)
     filters = _chain_filters(snapshot)
     dte = coerce_int(candidate.get("days_to_expiration") or candidate.get("dte") or contract.get("days_to_expiration") or contract.get("dte"))
-    minimum = coerce_int(filters.get("min_dte"))
-    maximum = coerce_int(filters.get("max_dte"))
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {
+            "min_dte": filters.get("min_dte") or filters.get("dte_min"),
+            "max_dte": filters.get("max_dte") or filters.get("dte_max"),
+        },
+    )
+    minimum = coerce_int(thresholds.get("min_dte"))
+    maximum = coerce_int(thresholds.get("max_dte"))
     metrics = {"days_to_expiration": dte}
     thresholds = {"min_dte": minimum, "max_dte": maximum}
     if not candidate:
@@ -356,15 +412,22 @@ def _dte_in_range(context: EntryQualityContext, snapshot: FeatureSnapshot, filte
 
 
 def _delta_in_range(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
-    del context
     candidate = _candidate(snapshot)
     contract = _candidate_contract(snapshot)
     filters = _chain_filters(snapshot)
     delta = coerce_float(candidate.get("short_delta") or candidate.get("delta") or contract.get("delta"))
     if delta is not None:
         delta = abs(delta)
-    minimum = coerce_float(filters.get("delta_min"))
-    maximum = coerce_float(filters.get("delta_max"))
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {
+            "delta_min": filters.get("delta_min") or filters.get("short_delta_min"),
+            "delta_max": filters.get("delta_max") or filters.get("short_delta_max"),
+        },
+    )
+    minimum = coerce_float(thresholds.get("delta_min"))
+    maximum = coerce_float(thresholds.get("delta_max"))
     metrics = {"delta": delta}
     thresholds = {"delta_min": minimum, "delta_max": maximum}
     if not candidate:
@@ -446,11 +509,15 @@ def _entry_recipe_passed(context: EntryQualityContext, snapshot: FeatureSnapshot
 
 
 def _open_interest_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
-    del context
     candidate = _candidate(snapshot)
     contract = _candidate_contract(snapshot)
     filters = _chain_filters(snapshot)
-    minimum = coerce_int(filters.get("min_open_interest"))
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {"min_open_interest": filters.get("min_open_interest")},
+    )
+    minimum = coerce_int(thresholds.get("min_open_interest"))
     open_interest = coerce_int(
         candidate.get("open_interest") or candidate.get("short_open_interest") or candidate.get("long_open_interest") or contract.get("open_interest")
     )
@@ -499,11 +566,15 @@ def _open_interest_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, f
 
 
 def _relative_spread_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
-    del context
     candidate = _candidate(snapshot)
     contract = _candidate_contract(snapshot)
     filters = _chain_filters(snapshot)
-    maximum = coerce_float(filters.get("max_relative_spread") or filters.get("max_leg_spread_pct_mid"))
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {"max_relative_spread": filters.get("max_relative_spread") or filters.get("max_leg_spread_pct_mid")},
+    )
+    maximum = coerce_float(thresholds.get("max_relative_spread"))
     relative_spread = coerce_float(
         candidate.get("relative_spread")
         or candidate.get("short_relative_spread")
@@ -555,11 +626,15 @@ def _relative_spread_ok(context: EntryQualityContext, snapshot: FeatureSnapshot,
 
 
 def _return_on_risk_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
-    del context
     candidate = _candidate(snapshot)
     economics = _candidate_economics(snapshot)
     filters = _chain_filters(snapshot)
-    minimum = coerce_float(filters.get("min_return_on_risk"))
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {"min_return_on_risk": filters.get("min_return_on_risk")},
+    )
+    minimum = coerce_float(thresholds.get("min_return_on_risk"))
     return_on_risk = coerce_float(candidate.get("return_on_risk") or economics.get("return_on_risk"))
     metrics = {"return_on_risk": return_on_risk}
     thresholds = {"min_return_on_risk": minimum}
