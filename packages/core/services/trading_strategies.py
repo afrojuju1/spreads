@@ -26,6 +26,7 @@ from core.services.trading_strategy_models import (
     RoutineSchedule,
     StrategyBuildConfig,
     StrategyExecutionPolicy,
+    StrategyEntryQualityPolicy,
     StrategyLiquidityRules,
     StrategyRiskDefaults,
     StrategyRiskLimits,
@@ -128,13 +129,20 @@ class StrategyRoutineYamlPayload(BaseModel):
     enabled: bool = True
     schedule: dict[str, Any] = Field(default_factory=dict)
     selection: dict[str, Any] = Field(default_factory=dict)
+    quality_profile: str | None = None
+    quality_overrides: dict[str, Any] = Field(default_factory=dict)
     recipes: tuple[str, ...] = Field(default_factory=tuple)
     policy: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("schedule", "selection", "policy", mode="before")
+    @field_validator("schedule", "selection", "quality_overrides", "policy", mode="before")
     @classmethod
     def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
         return normalize_mapping(value)
+
+    @field_validator("quality_profile", mode="before")
+    @classmethod
+    def _normalize_quality_profile(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
 
     @field_validator("recipes", mode="before")
     @classmethod
@@ -221,6 +229,7 @@ class StrategyRoutine:
     schedule: RoutineSchedule
     enabled: bool
     selection: EntrySelectionPolicy
+    quality: StrategyEntryQualityPolicy
     recipes: tuple[str, ...]
     policy: dict[str, Any]
 
@@ -233,6 +242,10 @@ class StrategyRoutine:
             schedule=RoutineSchedule.from_payload(payload.schedule),
             enabled=payload.enabled,
             selection=EntrySelectionPolicy.from_payload(payload.selection),
+            quality=StrategyEntryQualityPolicy.from_payload(
+                quality_profile=payload.quality_profile,
+                quality_overrides=payload.quality_overrides,
+            ),
             recipes=payload.recipes,
             policy=payload.policy,
         )
@@ -246,6 +259,7 @@ class StrategyRoutine:
             "enabled": self.enabled,
             "schedule": self.schedule.as_dict(),
             "selection": self.selection.as_dict(),
+            **self.quality.as_dict(),
             "recipes": list(self.recipes),
             "policy": dict(self.policy),
         }

@@ -16,6 +16,7 @@ build:
     max: 0.75
     target: 0.55
 entry:
+  quality_profile: momentum_long_call_v1
   schedule:
     cadence_minutes: 2
     offset_seconds: 30

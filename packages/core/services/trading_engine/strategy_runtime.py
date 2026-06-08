@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -154,6 +155,8 @@ def _quality_evidence_summary(row: dict[str, Any]) -> dict[str, Any]:
     evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
     waterfall = evidence.get("quality_waterfall") if isinstance(evidence, dict) else None
     if not isinstance(waterfall, dict):
+        if not isinstance(evidence, dict) or evidence.get("quality_profile_id") in (None, ""):
+            return {}
         return {
             "quality_profile_id": evidence.get("quality_profile_id") if isinstance(evidence, dict) else None,
             "quality_waterfall_blocked": evidence.get("quality_waterfall_blocked") if isinstance(evidence, dict) else None,
@@ -600,6 +603,27 @@ def _refresh_entry_runtime_signals(
         request=candidate_request,
         runtime=runtime_with_symbols,
     )
+    quality_summary: dict[str, Any] = {}
+    if runtime_with_symbols.quality_profile_id is not None:
+        from core.services.trading_engine.entry_quality_evidence import build_entry_quality_analysis
+
+        quality_analysis = build_entry_quality_analysis(
+            runtime=runtime_with_symbols,
+            ticker_set=ticker_set,
+            candidate_result=candidate_result,
+        )
+        quality_candidates = quality_analysis.filter_candidates([dict(row) for row in candidate_result.candidates if isinstance(row, dict)])
+        quality_summary = dict(quality_analysis.summary)
+        candidate_result = replace(
+            candidate_result,
+            candidates=quality_candidates,
+            summary={
+                **dict(candidate_result.summary or {}),
+                **quality_summary,
+                "candidate_count": len(quality_candidates),
+                "quality_blocked_candidate_count": len(candidate_result.candidates) - len(quality_candidates),
+            },
+        )
     symbol_candidates = _group_candidate_rows(candidate_result.candidates)
     runtime_filter_reason_counts = _candidate_result_runtime_filter_reason_counts(candidate_result)
     previous_promotable, previous_selection_memory = _read_previous_entry_selection(
@@ -620,6 +644,7 @@ def _refresh_entry_runtime_signals(
         signal_cycle_context={
             "ticker_set": ticker_summary,
             "candidate_build": _candidate_result_summary(candidate_result),
+            "entry_quality": quality_summary,
         },
     )
     selected_rows = [

@@ -24,6 +24,7 @@ from .entry_quality import (
     list_entry_quality_profiles,
     resolve_entry_quality_profile,
 )
+from .entry_quality_evidence import EntryQualityAnalysis, build_entry_quality_analysis
 from .entry_quality_pipeline import evaluate_entry_quality_snapshot, evaluate_momentum_long_call_snapshot
 from .feature_snapshots import build_momentum_long_call_feature_snapshots
 from .execution import ExecutionEngine
@@ -39,6 +40,7 @@ __all__ = [
     "EngineComponentRole",
     "EngineContext",
     "EngineRunRef",
+    "EntryQualityAnalysis",
     "EntryFilter",
     "EntryFilterRef",
     "EntryQualityContext",
@@ -58,6 +60,7 @@ __all__ = [
     "PostgresPortfolioEngine",
     "RiskEngine",
     "StrategyEngine",
+    "build_entry_quality_analysis",
     "build_momentum_long_call_feature_snapshots",
     "evaluate_entry_quality_snapshot",
     "evaluate_momentum_long_call_snapshot",

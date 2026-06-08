@@ -9,14 +9,7 @@ from typing import Any
 from core.services.option_structures import candidate_legs, payload_structure_identity
 from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
-from core.services.trading_engine.entry_quality import (
-    EntryQualityContext,
-    EntryQualityWaterfall,
-    FeatureSnapshot,
-    MOMENTUM_LONG_CALL_PROFILE_ID,
-)
-from core.services.trading_engine.entry_quality_pipeline import evaluate_momentum_long_call_snapshot
-from core.services.trading_engine.feature_snapshots import build_momentum_long_call_feature_snapshots
+from core.services.trading_engine.entry_quality_evidence import build_entry_quality_analysis, quality_key
 from core.services.trading_strategy_runtime import EntryRuntime
 from core.value_coercion import coerce_float, coerce_int, unique_text_list, utc_now_iso as _utc_now
 
@@ -109,144 +102,6 @@ def _candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
-def _quality_context(runtime: EntryRuntime) -> EntryQualityContext:
-    return EntryQualityContext(
-        trading_strategy_id=runtime.trading_strategy_id,
-        trade_structure=runtime.trade_structure,
-        quality_profile_id=MOMENTUM_LONG_CALL_PROFILE_ID,
-    )
-
-
-def _quality_key(
-    *,
-    symbol: str,
-    candidate_identity: str | None,
-) -> tuple[str, str]:
-    return symbol.upper(), str(candidate_identity or "")
-
-
-def _quality_key_for_candidate(candidate: Mapping[str, Any]) -> tuple[str, str] | None:
-    symbol = str(candidate.get("underlying_symbol") or "").upper()
-    if not symbol:
-        return None
-    return _quality_key(symbol=symbol, candidate_identity=_candidate_identity(candidate))
-
-
-def _quality_key_for_snapshot(snapshot: FeatureSnapshot) -> tuple[str, str]:
-    candidate = snapshot.candidate if isinstance(snapshot.candidate, Mapping) else {}
-    return _quality_key(
-        symbol=snapshot.symbol,
-        candidate_identity=_candidate_identity(candidate) if candidate else snapshot.metadata.get("candidate_identity"),
-    )
-
-
-def _quality_reason_counts(waterfalls: Sequence[EntryQualityWaterfall], *, statuses: set[str]) -> dict[str, int]:
-    counts: Counter[str] = Counter()
-    for waterfall in waterfalls:
-        for result in waterfall.results:
-            if result.status.value not in statuses:
-                continue
-            for reason in result.reason_codes:
-                counts[reason] += 1
-    return dict(counts.most_common(12))
-
-
-def _quality_stage_counts(waterfalls: Sequence[EntryQualityWaterfall]) -> dict[str, dict[str, int]]:
-    counts: dict[str, dict[str, int]] = {}
-    for waterfall in waterfalls:
-        for stage, stage_counts in waterfall.stage_counts().items():
-            target = counts.setdefault(stage, {})
-            for status, count in stage_counts.items():
-                target[status] = target.get(status, 0) + int(count)
-    return counts
-
-
-def _quality_summary(waterfalls: Sequence[EntryQualityWaterfall]) -> dict[str, Any]:
-    rows = tuple(waterfalls)
-    return {
-        "quality_profile_id": MOMENTUM_LONG_CALL_PROFILE_ID,
-        "quality_snapshot_count": len(rows),
-        "quality_blocked_snapshot_count": sum(1 for waterfall in rows if waterfall.blocked),
-        "filter_stage_counts": _quality_stage_counts(rows),
-        "top_quality_blockers": _quality_reason_counts(rows, statuses={"block"}),
-        "top_quality_watch_reasons": _quality_reason_counts(rows, statuses={"watch"}),
-    }
-
-
-def _build_quality_waterfalls(
-    *,
-    runtime: EntryRuntime,
-    ticker_set: ResolvedTickerSet,
-    candidate_result: CandidateBuildResult | None,
-) -> tuple[
-    dict[tuple[str, str], EntryQualityWaterfall],
-    dict[str, EntryQualityWaterfall],
-    dict[tuple[str, str], FeatureSnapshot],
-    dict[str, Any],
-]:
-    if candidate_result is None:
-        return {}, {}, {}, _quality_summary(())
-
-    context = _quality_context(runtime)
-    snapshots = build_momentum_long_call_feature_snapshots(
-        ticker_set=ticker_set,
-        candidate_result=candidate_result,
-    )
-    by_candidate: dict[tuple[str, str], EntryQualityWaterfall] = {}
-    by_symbol: dict[str, EntryQualityWaterfall] = {}
-    snapshots_by_candidate: dict[tuple[str, str], FeatureSnapshot] = {}
-    all_waterfalls: list[EntryQualityWaterfall] = []
-    for snapshot in snapshots:
-        waterfall = evaluate_momentum_long_call_snapshot(
-            context=context,
-            snapshot=snapshot,
-        )
-        all_waterfalls.append(waterfall)
-        key = _quality_key_for_snapshot(snapshot)
-        if key[1]:
-            by_candidate[key] = waterfall
-            snapshots_by_candidate[key] = snapshot
-        by_symbol.setdefault(snapshot.symbol, waterfall)
-    return by_candidate, by_symbol, snapshots_by_candidate, _quality_summary(all_waterfalls)
-
-
-def _quality_waterfall_for_signal(
-    *,
-    runtime: EntryRuntime,
-    signal_row: Mapping[str, Any],
-    by_candidate: Mapping[tuple[str, str], EntryQualityWaterfall],
-    by_symbol: Mapping[str, EntryQualityWaterfall],
-    snapshots_by_candidate: Mapping[tuple[str, str], FeatureSnapshot],
-) -> EntryQualityWaterfall | None:
-    candidate = _candidate_payload(signal_row)
-    key = _quality_key_for_candidate(candidate)
-    if key is not None:
-        existing = by_candidate.get(key)
-        base = snapshots_by_candidate.get(key)
-        if base is not None:
-            return evaluate_momentum_long_call_snapshot(
-                context=_quality_context(runtime),
-                snapshot=base,
-                candidate=signal_row,
-            )
-        if existing is not None:
-            return existing
-    symbol = str(signal_row.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
-    return by_symbol.get(symbol)
-
-
-def _waterfall_evidence(waterfall: EntryQualityWaterfall | None) -> dict[str, Any]:
-    if waterfall is None:
-        return {
-            "quality_profile_id": MOMENTUM_LONG_CALL_PROFILE_ID,
-            "quality_waterfall": None,
-        }
-    return {
-        "quality_profile_id": waterfall.profile_id,
-        "quality_waterfall": waterfall.as_dict(),
-    }
-
-
 def _diagnostic_rows(candidate_result: CandidateBuildResult | None, *, observed_at: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for raw in tuple(() if candidate_result is None else candidate_result.diagnostics):
@@ -336,17 +191,39 @@ def persist_entry_engine_facts(
     candidate_rows = [dict(row) for row in tuple(() if candidate_result is None else candidate_result.candidates) if isinstance(row, Mapping)]
     diagnostic_rows = _diagnostic_rows(candidate_result, observed_at=generated_at)
     candidate_run_id = None if candidate_result is None else candidate_result.candidate_run_id
-    quality_by_candidate, quality_by_symbol, quality_snapshots_by_candidate, quality_summary = _build_quality_waterfalls(
-        runtime=runtime,
-        ticker_set=ticker_set,
-        candidate_result=candidate_result,
+    quality_analysis = (
+        build_entry_quality_analysis(
+            runtime=runtime,
+            ticker_set=ticker_set,
+            candidate_result=candidate_result,
+        )
+        if runtime.quality_profile_id is not None
+        else None
+    )
+    quality_summary = dict(
+        quality_analysis.summary
+        if quality_analysis is not None
+        else {
+            "quality_profile_id": None,
+            "quality_snapshot_count": 0,
+            "quality_blocked_snapshot_count": 0,
+            "filter_stage_counts": {},
+            "top_quality_blockers": {},
+            "top_quality_watch_reasons": {},
+        }
     )
     diagnostic_rows = [
         {
             **row,
             "evidence": {
                 **dict(row.get("evidence") or {}),
-                **_waterfall_evidence(quality_by_symbol.get(str(row.get("underlying_symbol") or row.get("symbol") or "").upper())),
+                **(
+                    {}
+                    if quality_analysis is None
+                    else quality_analysis.evidence_for_waterfall(
+                        quality_analysis.by_symbol.get(str(row.get("underlying_symbol") or row.get("symbol") or "").upper())
+                    )
+                ),
             },
         }
         for row in diagnostic_rows
@@ -357,7 +234,8 @@ def persist_entry_engine_facts(
             candidate_count=len(candidate_rows),
             diagnostics=diagnostic_rows,
         )
-        candidate_summary.update(quality_summary)
+        if quality_summary["quality_profile_id"] is not None:
+            candidate_summary.update(quality_summary)
         engine_facts.upsert_candidate_run(
             candidate_run_id=candidate_result.candidate_run_id,
             run_key=run_key,
@@ -381,9 +259,15 @@ def persist_entry_engine_facts(
                     "ticker_source_id": ticker_set.source.ref,
                     "symbols": list(ticker_set.symbols),
                 },
-                "quality_profile_id": quality_summary["quality_profile_id"],
-                "filter_stage_counts": quality_summary["filter_stage_counts"],
-                "top_quality_blockers": quality_summary["top_quality_blockers"],
+                **(
+                    {}
+                    if quality_summary["quality_profile_id"] is None
+                    else {
+                        "quality_profile_id": quality_summary["quality_profile_id"],
+                        "filter_stage_counts": quality_summary["filter_stage_counts"],
+                        "top_quality_blockers": quality_summary["top_quality_blockers"],
+                    }
+                ),
             },
             updated_at=now,
         )
@@ -410,7 +294,9 @@ def persist_entry_engine_facts(
                 continue
             trade_candidate_id = _stable_id("trade_candidate", candidate_run_id, symbol, identity)
             trade_candidate_ids_by_identity[identity] = trade_candidate_id
-            quality_waterfall = quality_by_candidate.get(_quality_key(symbol=symbol, candidate_identity=identity))
+            quality_waterfall = (
+                None if quality_analysis is None else quality_analysis.by_candidate.get(quality_key(symbol=symbol, candidate_identity=identity))
+            )
             engine_facts.upsert_trade_candidate(
                 trade_candidate_id=trade_candidate_id,
                 candidate_run_id=candidate_run_id,
@@ -441,7 +327,7 @@ def persist_entry_engine_facts(
                     "candidate_run_id": candidate_run_id,
                     "ranking_policy_status": candidate.get("ranking_policy_status"),
                     "scoring_state": candidate.get("scoring_state"),
-                    **_waterfall_evidence(quality_waterfall),
+                    **({} if quality_analysis is None else quality_analysis.evidence_for_waterfall(quality_waterfall)),
                 },
                 updated_at=now,
             )
@@ -469,13 +355,7 @@ def persist_entry_engine_facts(
             candidate_identity=identity,
         )
         signal_state = _signal_state(signal_row)
-        signal_waterfall = _quality_waterfall_for_signal(
-            runtime=runtime,
-            signal_row=signal_row,
-            by_candidate=quality_by_candidate,
-            by_symbol=quality_by_symbol,
-            snapshots_by_candidate=quality_snapshots_by_candidate,
-        )
+        signal_waterfall = None if quality_analysis is None else quality_analysis.waterfall_for_signal(signal_row)
         engine_facts.upsert_trade_signal(
             trade_signal_id=trade_signal_id,
             idempotency_key=idempotency_key,
@@ -511,7 +391,7 @@ def persist_entry_engine_facts(
                 "trade_candidate_id": trade_candidate_id,
                 "selection_state": signal_row.get("selection_state"),
                 "candidate_identity": identity,
-                **_waterfall_evidence(signal_waterfall),
+                **({} if quality_analysis is None else quality_analysis.evidence_for_waterfall(signal_waterfall)),
             },
             metrics={
                 **dict(signal_row.get("strategy_metrics") or {}),
@@ -526,9 +406,15 @@ def persist_entry_engine_facts(
                 "underlying_symbol": symbol,
                 "candidate_identity": identity,
                 "signal_state": signal_state,
-                "quality_profile_id": MOMENTUM_LONG_CALL_PROFILE_ID,
-                "quality_waterfall_stage_counts": ({} if signal_waterfall is None else signal_waterfall.stage_counts()),
-                "quality_waterfall_blocked": None if signal_waterfall is None else signal_waterfall.blocked,
+                **(
+                    {}
+                    if quality_analysis is None
+                    else {
+                        "quality_profile_id": quality_analysis.profile_id,
+                        "quality_waterfall_stage_counts": ({} if signal_waterfall is None else signal_waterfall.stage_counts()),
+                        "quality_waterfall_blocked": None if signal_waterfall is None else signal_waterfall.blocked,
+                    }
+                ),
             }
         )
 
@@ -539,9 +425,15 @@ def persist_entry_engine_facts(
         "trade_candidate_count": len(trade_candidate_ids_by_identity),
         "candidate_diagnostic_count": len(diagnostic_rows),
         "top_rejection_counts": _diagnostic_top_counts(diagnostic_rows),
-        "quality_profile_id": quality_summary["quality_profile_id"],
-        "filter_stage_counts": quality_summary["filter_stage_counts"],
-        "top_quality_blockers": quality_summary["top_quality_blockers"],
+        **(
+            {}
+            if quality_summary["quality_profile_id"] is None
+            else {
+                "quality_profile_id": quality_summary["quality_profile_id"],
+                "filter_stage_counts": quality_summary["filter_stage_counts"],
+                "top_quality_blockers": quality_summary["top_quality_blockers"],
+            }
+        ),
         "trade_signal_count": len(trade_signal_refs),
         "trade_signals": trade_signal_refs,
     }

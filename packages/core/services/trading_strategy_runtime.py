@@ -101,6 +101,23 @@ class EntryRuntime:
             return {}
         return dict(self.strategy.entry.trigger_policy)
 
+    @property
+    def quality_profile_id(self) -> str | None:
+        configured = None if self.strategy.entry is None else self.strategy.entry.quality.profile_id
+        if configured is None:
+            return None
+        profile_id = configured
+        from core.services.trading_engine.entry_quality import resolve_entry_quality_profile
+
+        resolve_entry_quality_profile(profile_id)
+        return profile_id
+
+    @property
+    def quality_overrides(self) -> dict[str, Any]:
+        if self.strategy.entry is None:
+            return {}
+        return dict(self.strategy.entry.quality.overrides)
+
 
 @dataclass(frozen=True)
 class ManagementRuntime:

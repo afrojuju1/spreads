@@ -541,6 +541,32 @@ class StrategyExecutionPolicy:
 
 
 @dataclass(frozen=True)
+class StrategyEntryQualityPolicy:
+    profile_id: str | None = None
+    overrides: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(
+        cls,
+        *,
+        quality_profile: Any = None,
+        quality_overrides: Mapping[str, Any] | None = None,
+    ) -> StrategyEntryQualityPolicy:
+        return cls(
+            profile_id=_optional_text(quality_profile),
+            overrides=dict(_require_mapping(quality_overrides, field_name="entry.quality_overrides")),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.profile_id is not None:
+            payload["quality_profile"] = self.profile_id
+        if self.overrides:
+            payload["quality_overrides"] = dict(self.overrides)
+        return payload
+
+
+@dataclass(frozen=True)
 class StrategyRiskLimits:
     max_open_positions: int
     max_daily_actions: int
