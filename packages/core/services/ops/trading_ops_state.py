@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -29,6 +29,7 @@ from core.services.trading_engine.portfolio_runtime import describe_position_exi
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.storage.engine_models import CandidateRunModel, CandidateSymbolDiagnosticModel, TickerSourceObservationModel, TickerSourceRunModel
+from core.storage.serializers import parse_date
 from core.value_coercion import (
     as_list,
     as_mapping,
@@ -399,14 +400,21 @@ def _candidate_run_payload(row: CandidateRunModel, *, diagnostics: list[dict[str
     }
 
 
+def _market_date_window(market_date: str) -> tuple[datetime, datetime]:
+    start = datetime.combine(parse_date(market_date), datetime.min.time(), tzinfo=UTC)
+    return start, start + timedelta(days=1)
+
+
 def _latest_flow_facts(
     *,
     storage: Any,
+    market_date: str,
     ticker_source_ids: set[str],
     strategy_ids: set[str],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     if not storage.engine_facts.schema_ready():
         return {}, {}
+    start, end = _market_date_window(market_date)
     latest_sources: dict[str, TickerSourceRunModel] = {}
     latest_candidates: dict[str, CandidateRunModel] = {}
     with storage.engine_facts.session_factory() as session:
@@ -414,6 +422,8 @@ def _latest_flow_facts(
             row = session.scalars(
                 select(TickerSourceRunModel)
                 .where(TickerSourceRunModel.ticker_source_id == ticker_source_id)
+                .where(TickerSourceRunModel.generated_at >= start)
+                .where(TickerSourceRunModel.generated_at < end)
                 .order_by(TickerSourceRunModel.generated_at.desc(), TickerSourceRunModel.ticker_source_run_id.asc())
                 .limit(1)
             ).first()
@@ -424,6 +434,8 @@ def _latest_flow_facts(
                 select(CandidateRunModel)
                 .where(CandidateRunModel.trading_strategy_id == strategy_id)
                 .where(CandidateRunModel.routine == "entry")
+                .where(CandidateRunModel.generated_at >= start)
+                .where(CandidateRunModel.generated_at < end)
                 .order_by(CandidateRunModel.generated_at.desc(), CandidateRunModel.candidate_run_id.asc())
                 .limit(1)
             ).first()
@@ -502,28 +514,48 @@ def _source_state(
     if stale and status == "healthy":
         status = "degraded"
     symbols = _symbols_from_ticker_source_run(ticker_source_run)
+    symbol_count = coerce_int(ticker_source_run.get("selected_count")) or len(symbols)
+    empty = status == "healthy" and symbol_count == 0
     return {
         "status": status,
         "raw_status": raw_status,
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
         "stale": stale,
-        "symbol_count": coerce_int(ticker_source_run.get("selected_count")) or len(symbols),
+        "symbol_count": symbol_count,
         "symbols": symbols[:25],
         "latest_run": dict(ticker_source_run),
-        "reason": "source_stale" if stale else None,
+        "reason": "source_stale" if stale else "source_empty" if empty else None,
     }
 
 
 def _candidate_state(
     *,
     candidate_run: Mapping[str, Any] | None,
+    source_state: Mapping[str, Any] | None,
     cadence_minutes: int | None,
     market_open: bool,
     now: datetime,
 ) -> dict[str, Any]:
     max_age_seconds = None if cadence_minutes is None else max(cadence_minutes * 60 * 2, 300)
     if candidate_run is None:
+        source_status = str((source_state or {}).get("status") or "unknown")
+        source_symbol_count = coerce_int((source_state or {}).get("symbol_count"))
+        if market_open and source_status == "healthy" and source_symbol_count == 0:
+            return {
+                "status": "healthy",
+                "raw_status": "source_empty",
+                "age_seconds": None,
+                "max_age_seconds": max_age_seconds,
+                "symbol_count": 0,
+                "candidate_count": 0,
+                "diagnostic_status": "no_source_symbols",
+                "symbol_status_counts": {},
+                "top_rejection_counts": {},
+                "diagnostics": [],
+                "latest_run": None,
+                "reason": "source_has_no_symbols",
+            }
         return {
             "status": "degraded" if market_open else "idle",
             "age_seconds": None,
@@ -648,6 +680,7 @@ def _build_trading_flows(
     strategies = [strategy for strategy in load_active_trading_strategies().values() if strategy.enabled]
     latest_sources, latest_candidates = _latest_flow_facts(
         storage=storage,
+        market_date=market_date,
         ticker_source_ids={strategy.source.ref for strategy in strategies},
         strategy_ids={strategy.trading_strategy_id for strategy in strategies},
     )
@@ -666,6 +699,7 @@ def _build_trading_flows(
         )
         candidate_state = _candidate_state(
             candidate_run=latest_entry,
+            source_state=source_state,
             cadence_minutes=entry_cadence_minutes,
             market_open=market_open and entry_due,
             now=now,
