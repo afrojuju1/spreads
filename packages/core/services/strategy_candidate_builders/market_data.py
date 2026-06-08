@@ -256,26 +256,26 @@ def build_market_slice_from_loaded_data(
 def build_symbol_market_slice(
     *,
     symbol: str,
-    symbol_args: Any,
+    parameters: Any,
     client: AlpacaClient,
     greeks_provider: Any,
 ) -> SymbolMarketSlice:
     normalized_symbol = symbol.upper()
     underlying_type = classify_underlying_type(normalized_symbol)
-    reference_date = candidate_reference_date(symbol_args)
-    reference_timestamp = candidate_reference_datetime(symbol_args) or datetime.now(UTC)
-    min_expiration = (reference_date + timedelta(days=symbol_args.min_dte)).isoformat()
-    max_expiration = (reference_date + timedelta(days=symbol_args.max_dte)).isoformat()
+    reference_date = candidate_reference_date(parameters)
+    reference_timestamp = candidate_reference_datetime(parameters) or datetime.now(UTC)
+    min_expiration = (reference_date + timedelta(days=parameters.min_dte)).isoformat()
+    max_expiration = (reference_date + timedelta(days=parameters.max_dte)).isoformat()
 
-    spot_price = client.get_underlying_price(normalized_symbol, symbol_args.stock_feed)
+    spot_price = client.get_underlying_price(normalized_symbol, parameters.stock_feed)
     daily_bars: list[DailyBar] = []
     intraday_bars: list[IntradayBar] = []
-    if symbol_args.setup_filter == "on":
+    if parameters.setup_filter == "on":
         daily_bars = client.get_daily_bars(
             normalized_symbol,
             start=(reference_date - timedelta(days=120)).isoformat(),
             end=reference_date.isoformat(),
-            stock_feed=symbol_args.stock_feed,
+            stock_feed=parameters.stock_feed,
         )
         try:
             session_start = datetime.combine(reference_date, time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
@@ -284,7 +284,7 @@ def build_symbol_market_slice(
                 normalized_symbol,
                 start=session_start.isoformat(),
                 end=session_end.isoformat(),
-                stock_feed=symbol_args.stock_feed,
+                stock_feed=parameters.stock_feed,
             )
         except Exception as exc:
             log_event(
@@ -295,7 +295,7 @@ def build_symbol_market_slice(
                 symbol=normalized_symbol,
                 start=session_start.isoformat(),
                 end=session_end.isoformat(),
-                stock_feed=symbol_args.stock_feed,
+                stock_feed=parameters.stock_feed,
                 error=str(exc),
             )
             intraday_bars = []
@@ -312,13 +312,13 @@ def build_symbol_market_slice(
             normalized_symbol,
             expiration_date,
             "call",
-            symbol_args.feed,
+            parameters.feed,
         )
         put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
             normalized_symbol,
             expiration_date,
             "put",
-            symbol_args.feed,
+            parameters.feed,
         )
 
     return build_market_slice_from_loaded_data(
@@ -333,7 +333,7 @@ def build_symbol_market_slice(
         put_snapshots_by_expiration=put_snapshots_by_expiration,
         greeks_provider=greeks_provider,
         greeks_as_of=reference_timestamp,
-        greeks_source_mode=symbol_args.greeks_source,
+        greeks_source_mode=parameters.greeks_source,
     )
 
 

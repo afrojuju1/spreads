@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import argparse
 from dataclasses import replace
+from typing import Any
 
 from core.common import clamp
 from core.domain.models import SpreadCandidate
@@ -33,7 +33,7 @@ def _normalized_score(
 
 def _probability_of_profit_score(
     candidate: SpreadCandidate,
-    args: argparse.Namespace,
+    args: Any,
 ) -> float | None:
     floor = getattr(args, "ranking_min_probability_of_profit", None)
     if floor is None:
@@ -57,7 +57,7 @@ def _expected_value_score(
 
 def _entry_slippage_score(
     candidate: SpreadCandidate,
-    args: argparse.Namespace,
+    args: Any,
 ) -> float | None:
     value = candidate.entry_slippage_dollars
     ceiling = getattr(args, "ranking_max_entry_slippage_dollars", None)
@@ -70,7 +70,7 @@ def _entry_slippage_score(
 
 def _model_implied_volatility_score(
     candidate: SpreadCandidate,
-    args: argparse.Namespace,
+    args: Any,
 ) -> float | None:
     value = candidate.model_implied_volatility
     floor = getattr(args, "ranking_min_model_implied_volatility", None)
@@ -95,7 +95,7 @@ def _model_implied_volatility_score(
 
 def _analytics_score(
     candidate: SpreadCandidate,
-    args: argparse.Namespace,
+    args: Any,
 ) -> float | None:
     components = (
         (
@@ -143,7 +143,7 @@ def _analytics_score(
     return sum(weight * score for weight, score in weighted_components) / total_weight
 
 
-def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
+def score_candidate(candidate: SpreadCandidate, args: Any) -> float:
     premium_kind = net_premium_kind(candidate.strategy)
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
     session_bucket = candidate_session_bucket(args) if args.profile == "0dte" else None
@@ -252,7 +252,7 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
     return round(base_score * calendar_multiplier * setup_multiplier * data_multiplier * 100.0, 1)
 
 
-def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
+def rank_candidates(candidates: list[SpreadCandidate], args: Any) -> list[SpreadCandidate]:
     ranked = [replace(candidate, quality_score=score_candidate(candidate, args)) for candidate in candidates]
     return sort_candidates_for_display(ranked)
 

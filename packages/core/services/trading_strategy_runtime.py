@@ -8,6 +8,7 @@ from typing import Any
 from core.services.candidate_policy import resolve_strategy_min_return_on_risk
 from core.services.option_structures import normalize_strategy_family
 from core.services.strategy_specs import StrategySpec
+from core.services.strategy_candidate_builders.settings import RANKING_POLICY_ARG_KEYS
 from core.services.trading_strategies import (
     TradingStrategyConfig,
     load_active_trading_strategies,
@@ -37,21 +38,6 @@ def _float_tuple(values: Any) -> tuple[float, ...]:
     if not isinstance(values, list):
         return ()
     return tuple(float(value) for value in values if value not in (None, ""))
-
-
-RANKING_POLICY_ARG_KEYS = (
-    "ranking_min_probability_of_profit",
-    "ranking_min_expected_value_dollars",
-    "ranking_min_slippage_adjusted_expected_value_dollars",
-    "ranking_max_entry_slippage_dollars",
-    "ranking_min_model_implied_volatility",
-    "ranking_max_model_implied_volatility",
-    "ranking_weight_probability_of_profit",
-    "ranking_weight_expected_value_dollars",
-    "ranking_weight_slippage_adjusted_expected_value_dollars",
-    "ranking_weight_entry_slippage_dollars",
-    "ranking_weight_model_implied_volatility",
-)
 
 
 @dataclass(frozen=True)

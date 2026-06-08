@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import argparse
 import math
+from typing import Any
 
 from core.common import clamp
 from core.domain.models import OptionSnapshot
@@ -11,7 +11,7 @@ from core.services.strategy_candidate_builders.runtime_context import (
 )
 
 
-def effective_min_credit(width: float, args: argparse.Namespace) -> float:
+def effective_min_credit(width: float, args: Any) -> float:
     threshold = args.min_credit
     if args.profile != "0dte":
         return threshold
@@ -23,7 +23,7 @@ def effective_min_credit(width: float, args: argparse.Namespace) -> float:
     return max(threshold, 0.15)
 
 
-def days_from_reference(expiration_date: str, args: argparse.Namespace) -> int:
+def days_from_reference(expiration_date: str, args: Any) -> int:
     from datetime import date
 
     return (date.fromisoformat(expiration_date) - candidate_reference_date(args)).days

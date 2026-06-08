@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import argparse
 from collections import Counter
+from typing import Any
 
 from core.domain.models import (
     ExpectedMoveEstimate,
@@ -89,7 +89,7 @@ def _evaluate_single_leg_contract(
     contract: OptionContract,
     snapshot: OptionSnapshot | None,
     expected_move: ExpectedMoveEstimate | None,
-    args: argparse.Namespace,
+    args: Any,
 ) -> tuple[str | None, dict[str, float]]:
     if expected_move is None or expected_move.amount <= 0:
         return "no_expected_move", {}
@@ -187,7 +187,7 @@ def diagnose_single_leg_rejections(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
     example_limit: int = 3,
 ) -> dict[str, object]:
     option_type = strategy_option_type(strategy)
@@ -251,7 +251,7 @@ def build_single_legs(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
     option_type = strategy_option_type(strategy)
@@ -372,7 +372,7 @@ def build_long_calls(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     return build_single_legs(
         symbol=symbol,
@@ -392,7 +392,7 @@ def build_long_puts(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     return build_single_legs(
         symbol=symbol,
@@ -412,7 +412,7 @@ def build_short_calls(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     return build_single_legs(
         symbol=symbol,
@@ -432,7 +432,7 @@ def build_short_puts(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     return build_single_legs(
         symbol=symbol,

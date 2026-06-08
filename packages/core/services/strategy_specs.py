@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -11,8 +10,6 @@ from core.services.trading_strategy_models import (
     IronCondorBuildConfig,
     LongVolBuildConfig,
     StrategyBuildConfig,
-    StrategyLiquidityRules,
-    StrategyRiskDefaults,
     VerticalSpreadBuildConfig,
 )
 from core.services.strategy_candidate_builders.market_data import (
@@ -22,7 +19,7 @@ from core.services.strategy_candidate_builders.market_data import (
 )
 
 CoverageCounter = Callable[[SymbolMarketSlice], tuple[int, int, int, int]]
-CandidateBuilder = Callable[[SymbolMarketSlice, argparse.Namespace], list[SpreadCandidate]]
+CandidateBuilder = Callable[[SymbolMarketSlice, Any], list[SpreadCandidate]]
 BuildValidator = Callable[[Mapping[str, Any] | None], StrategyBuildConfig]
 
 
@@ -58,7 +55,7 @@ def _dual_side_coverage(
 
 def _build_call_verticals(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.verticals import build_vertical_spreads
 
@@ -75,7 +72,7 @@ def _build_call_verticals(
 
 def _build_put_verticals(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.verticals import build_vertical_spreads
 
@@ -92,7 +89,7 @@ def _build_put_verticals(
 
 def _build_iron_condor_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.iron_condors import build_iron_condors
 
@@ -110,7 +107,7 @@ def _build_iron_condor_candidates(
 
 def _build_long_straddle_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.long_vol import build_long_straddles
 
@@ -128,7 +125,7 @@ def _build_long_straddle_candidates(
 
 def _build_long_strangle_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.long_vol import build_long_strangles
 
@@ -146,7 +143,7 @@ def _build_long_strangle_candidates(
 
 def _build_long_call_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.single_legs import build_long_calls
 
@@ -162,7 +159,7 @@ def _build_long_call_candidates(
 
 def _build_long_put_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.single_legs import build_long_puts
 
@@ -178,7 +175,7 @@ def _build_long_put_candidates(
 
 def _build_short_call_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.single_legs import build_short_calls
 
@@ -194,7 +191,7 @@ def _build_short_call_candidates(
 
 def _build_short_put_candidates(
     market_slice: SymbolMarketSlice,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
 ) -> list[SpreadCandidate]:
     from core.services.strategy_candidate_builders.single_legs import build_short_puts
 
@@ -233,7 +230,7 @@ class StrategySpec:
         self,
         *,
         market_slice: SymbolMarketSlice,
-        symbol_args: argparse.Namespace,
+        symbol_args: Any,
     ) -> list[SpreadCandidate]:
         return self.candidate_builder(market_slice, symbol_args)
 
@@ -243,31 +240,6 @@ class StrategySpec:
         market_slice: SymbolMarketSlice,
     ) -> tuple[int, int, int, int]:
         return self.coverage_counter(market_slice)
-
-    def apply_scan_overrides(
-        self,
-        *,
-        args: argparse.Namespace,
-        build: StrategyBuildConfig,
-        liquidity: StrategyLiquidityRules,
-        risk: StrategyRiskDefaults,
-    ) -> argparse.Namespace:
-        args.strategy = self.scanner_strategy
-        builder_params = build.as_builder_params()
-        for key, value in builder_params.items():
-            if key == "width_points":
-                if value:
-                    args.min_width = min(float(item) for item in value)
-                    args.max_width = max(float(item) for item in value)
-                continue
-            setattr(args, key, value)
-        if liquidity.min_open_interest is not None:
-            args.min_open_interest = liquidity.min_open_interest
-        if liquidity.max_leg_spread_pct_mid is not None:
-            args.max_relative_spread = liquidity.max_leg_spread_pct_mid
-        if risk.min_return_on_risk is not None:
-            args.min_return_on_risk = risk.min_return_on_risk
-        return args
 
 
 _SPEC_LIST = (

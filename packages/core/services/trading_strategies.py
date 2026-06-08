@@ -38,19 +38,6 @@ NEW_YORK = ZoneInfo("America/New_York")
 
 STATIC_SOURCE = "static"
 DYNAMIC_SOURCE = "dynamic"
-RANKING_POLICY_ARG_KEYS = (
-    "ranking_min_probability_of_profit",
-    "ranking_min_expected_value_dollars",
-    "ranking_min_slippage_adjusted_expected_value_dollars",
-    "ranking_max_entry_slippage_dollars",
-    "ranking_min_model_implied_volatility",
-    "ranking_max_model_implied_volatility",
-    "ranking_weight_probability_of_profit",
-    "ranking_weight_expected_value_dollars",
-    "ranking_weight_slippage_adjusted_expected_value_dollars",
-    "ranking_weight_entry_slippage_dollars",
-    "ranking_weight_model_implied_volatility",
-)
 
 
 def _canonical_hash(payload: dict[str, Any]) -> str:

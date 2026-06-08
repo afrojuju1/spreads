@@ -351,7 +351,7 @@ def scan_symbol_live(
     symbol_args, underlying_type = resolve_symbol_scan_args(symbol=symbol, base_args=base_args)
     market_slice = build_symbol_market_slice(
         symbol=symbol,
-        symbol_args=symbol_args,
+        parameters=symbol_args,
         client=client,
         greeks_provider=greeks_provider,
     )

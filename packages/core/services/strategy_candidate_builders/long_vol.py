@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import argparse
+from typing import Any
 
 from core.common import clamp
 from core.domain.models import (
@@ -30,7 +30,7 @@ def build_long_straddles(
     call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
     delta_min = max(float(getattr(args, "short_delta_min", 0.3) or 0.3), 0.0)
@@ -202,7 +202,7 @@ def build_long_strangles(
     call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
     delta_window = max(args.short_delta_max - args.short_delta_min, 0.05)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -125,7 +124,7 @@ def _net_greek(
 def _time_to_expiry_years(
     *,
     expiration_date: str,
-    args: argparse.Namespace,
+    args: Any,
 ) -> float:
     reference_at = candidate_reference_datetime(args) or datetime.now(UTC)
     expiry_at = option_expiry_close(expiration_date)
@@ -323,7 +322,7 @@ def build_structure_analytics(
     candidate: SpreadCandidate,
     *,
     snapshots_by_symbol: Mapping[str, OptionSnapshot],
-    args: argparse.Namespace,
+    args: Any,
 ) -> StructureAnalytics:
     normalized_legs = normalize_legs(
         candidate.legs,
@@ -403,7 +402,7 @@ def attach_structure_analytics(
     candidate: SpreadCandidate,
     *,
     snapshots_by_symbol: Mapping[str, OptionSnapshot],
-    args: argparse.Namespace,
+    args: Any,
 ) -> SpreadCandidate:
     analytics = build_structure_analytics(
         candidate,

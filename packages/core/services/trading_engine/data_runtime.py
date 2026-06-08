@@ -5,8 +5,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from core.services.scanners.config import parse_args as parse_scanner_args
 from core.services.strategy_builders import build_entry_runtime_candidates_with_diagnostics, runtime_owner_key
+from core.services.strategy_candidate_builders.settings import CandidateBuildParameters
 from core.services.ticker_sources import resolve_ticker_source_symbols
 from core.services.trading_engine.data import (
     CaptureTargetDeclaration,
@@ -142,7 +142,7 @@ class PostgresDataEngine:
             )
 
         runtime = entry_runtime_with_symbols(runtime, symbols)
-        base_scanner_args = self._entry_scanner_args(
+        base_parameters = self._entry_candidate_build_parameters(
             runtime=runtime,
             symbols=symbols,
             request=request,
@@ -158,20 +158,20 @@ class PostgresDataEngine:
         client = AlpacaClient(
             key_id=key_id,
             secret_key=secret_key,
-            trading_base_url=infer_trading_base_url(key_id, base_scanner_args.trading_base_url),
-            data_base_url=base_scanner_args.data_base_url,
+            trading_base_url=infer_trading_base_url(key_id, base_parameters.trading_base_url),
+            data_base_url=base_parameters.data_base_url,
         )
         calendar_resolver = build_calendar_event_resolver(
             key_id=key_id,
             secret_key=secret_key,
-            data_base_url=base_scanner_args.data_base_url,
+            data_base_url=base_parameters.data_base_url,
             database_url=self.context.db_target,
         )
         greeks_provider = build_local_greeks_provider()
         try:
             candidates_by_owner, diagnostics_by_owner = build_entry_runtime_candidates_with_diagnostics(
                 entry_runtimes=[runtime],
-                base_scanner_args=base_scanner_args,
+                base_parameters=base_parameters,
                 client=client,
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
@@ -198,7 +198,7 @@ class PostgresDataEngine:
                 "label": entry_engine_label(runtime),
                 "scanner_strategy": runtime.build_settings.scanner_strategy,
                 "scanner_profile": runtime.build_settings.scanner_profile,
-                "greeks_source": getattr(base_scanner_args, "greeks_source", DEFAULT_GREEKS_SOURCE),
+                "greeks_source": base_parameters.greeks_source,
             },
         )
 
@@ -294,31 +294,30 @@ class PostgresDataEngine:
     def _candidate_run_id(request: CandidateBuildRequest) -> str:
         return f"candidate_run:{request.run_ref.run_id}"
 
-    def _entry_scanner_args(
+    def _entry_candidate_build_parameters(
         self,
         *,
         runtime: EntryRuntime,
         symbols: tuple[str, ...],
         request: CandidateBuildRequest,
-    ) -> Any:
-        args = parse_scanner_args([])
-        args.symbol = None
-        args.symbols = ",".join(symbols)
-        args.symbols_file = None
-        args.universe = None
-        args.strategy = runtime.build_settings.scanner_strategy
-        args.profile = runtime.build_settings.scanner_profile
-        args.greeks_source = str(request.greeks_source or DEFAULT_GREEKS_SOURCE)
-        args.top = self._candidate_limit(request)
-        args.per_symbol_top = max(int(request.per_symbol_top or 1), 1)
-        args.history_db = self.context.db_target
-        args.session_label = engine_snapshot_label(
-            universe_label=entry_engine_label(runtime),
+    ) -> CandidateBuildParameters:
+        greeks_source = str(request.greeks_source or DEFAULT_GREEKS_SOURCE)
+        return CandidateBuildParameters(
+            symbols=symbols,
             strategy=runtime.build_settings.scanner_strategy,
             profile=runtime.build_settings.scanner_profile,
-            greeks_source=args.greeks_source,
+            greeks_source=greeks_source,
+            top=self._candidate_limit(request),
+            per_symbol_top=max(int(request.per_symbol_top or 1), 1),
+            history_db=self.context.db_target,
+            config_root=str(self.context.config_root),
+            session_label=engine_snapshot_label(
+                universe_label=entry_engine_label(runtime),
+                strategy=runtime.build_settings.scanner_strategy,
+                profile=runtime.build_settings.scanner_profile,
+                greeks_source=greeks_source,
+            ),
         )
-        return args
 
 
 __all__ = [

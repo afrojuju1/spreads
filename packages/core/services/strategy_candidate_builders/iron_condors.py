@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import argparse
+from typing import Any
 
 from core.common import clamp
 from core.domain.models import (
@@ -29,7 +29,7 @@ def build_iron_condors(
     call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
     common_expirations = sorted(set(call_contracts_by_expiration).intersection(put_contracts_by_expiration))

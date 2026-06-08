@@ -1,30 +1,28 @@
 from __future__ import annotations
 
-import argparse
 from collections import Counter
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from core.integrations.alpaca.client import AlpacaClient
 from core.domain.models import SymbolMarketSlice, UnderlyingSetupContext
-from core.services.trading_strategy_runtime import EntryRuntime, StrategyBuildSettings
+from core.integrations.alpaca.client import AlpacaClient
 from core.services.option_structures import candidate_legs, payload_structure_identity
 from core.services.runtime_candidate_filters import (
     build_runtime_candidate_filter,
     match_runtime_candidate,
-)
-from core.services.scanners.config import (
-    RANKING_POLICY_ARG_KEYS,
-    clone_args,
-    resolve_profile_value,
-    resolve_symbol_scan_args,
 )
 from core.services.scanners.runtime import (
     build_candidates_with_details_from_market_slice,
     persist_scan_run,
 )
 from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
+from core.services.strategy_candidate_builders.settings import (
+    CandidateBuildParameters,
+    build_market_slice_parameters,
+    resolve_symbol_candidate_build_parameters,
+)
 from core.services.strategy_candidate_builders.single_legs import diagnose_single_leg_rejections
+from core.services.trading_strategy_runtime import EntryRuntime
 from core.storage.run_history_repository import RunHistoryRepository
 
 
@@ -32,91 +30,40 @@ def runtime_owner_key(runtime: EntryRuntime) -> tuple[str, str]:
     return runtime.trading_strategy_id, "entry"
 
 
-def _apply_build_settings(
-    args: argparse.Namespace,
-    settings: StrategyBuildSettings,
-) -> argparse.Namespace:
-    args.strategy = settings.scanner_strategy
-    args.profile = settings.scanner_profile
-    args.min_dte = settings.dte_min
-    args.max_dte = settings.dte_max
-    args.short_delta_min = settings.short_delta_min
-    args.short_delta_max = settings.short_delta_max
-    args.short_delta_target = resolve_profile_value(
-        settings.short_delta_target,
-        getattr(args, "short_delta_target", None),
-    )
-    if (
-        args.short_delta_target is None
-        and settings.short_delta_min is not None
-        and settings.short_delta_max is not None
-        and settings.short_delta_min <= settings.short_delta_max
-    ):
-        args.short_delta_target = (float(settings.short_delta_min) + float(settings.short_delta_max)) / 2.0
-    if settings.width_points:
-        args.min_width = min(settings.width_points)
-        args.max_width = max(settings.width_points)
-    args.min_open_interest = resolve_profile_value(settings.min_open_interest, getattr(args, "min_open_interest", None))
-    args.max_relative_spread = resolve_profile_value(settings.max_leg_spread_pct_mid, getattr(args, "max_relative_spread", None))
-    args.min_return_on_risk = resolve_profile_value(settings.min_return_on_risk, getattr(args, "min_return_on_risk", None))
-    args.min_fill_ratio = resolve_profile_value(settings.min_fill_ratio, getattr(args, "min_fill_ratio", None))
-    args.min_short_vs_expected_move_ratio = resolve_profile_value(
-        settings.min_short_vs_expected_move_ratio,
-        getattr(args, "min_short_vs_expected_move_ratio", None),
-    )
-    args.min_breakeven_vs_expected_move_ratio = resolve_profile_value(
-        settings.min_breakeven_vs_expected_move_ratio,
-        getattr(args, "min_breakeven_vs_expected_move_ratio", None),
-    )
-    for key in RANKING_POLICY_ARG_KEYS:
-        setattr(
-            args,
-            key,
-            resolve_profile_value(
-                settings.ranking_policy.get(key),
-                getattr(args, key, None),
-            ),
-        )
-    return args
-
-
-def build_runtime_scan_args(
+def build_runtime_candidate_parameters(
     *,
     symbol: str,
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     runtime: EntryRuntime,
-) -> argparse.Namespace:
-    raw_args = clone_args(base_scanner_args)
-    raw_args.symbol = symbol
-    raw_args.symbols = symbol
-    raw_args.symbols_file = None
-    raw_args.universe = None
-    raw_args.per_symbol_top = max(int(getattr(raw_args, "per_symbol_top", 1) or 1), 1)
-    raw_args.top = max(int(getattr(raw_args, "top", 10) or 10), raw_args.per_symbol_top)
-    configured_args = _apply_build_settings(raw_args, runtime.build_settings)
-    symbol_args, _underlying_type = resolve_symbol_scan_args(
+) -> CandidateBuildParameters:
+    parameters, _underlying_type = resolve_symbol_candidate_build_parameters(
         symbol=symbol,
-        base_args=configured_args,
+        base_parameters=base_parameters,
+        settings=runtime.build_settings,
+        config_root=base_parameters.config_root,
     )
-    return symbol_args
+    return parameters
 
 
-def build_market_slice_args(
+def build_symbol_market_slice_parameters(
     *,
     symbol: str,
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     runtimes: list[EntryRuntime],
-) -> argparse.Namespace:
-    raw_args = clone_args(base_scanner_args)
-    raw_args.symbol = symbol
-    raw_args.symbols = symbol
-    raw_args.symbols_file = None
-    raw_args.universe = None
-    dte_mins = [int(runtime.build_settings.dte_min) for runtime in runtimes if runtime.build_settings.dte_min is not None]
-    dte_maxes = [int(runtime.build_settings.dte_max) for runtime in runtimes if runtime.build_settings.dte_max is not None]
-    raw_args.min_dte = min(dte_mins) if dte_mins else int(getattr(raw_args, "min_dte", 0) or 0)
-    raw_args.max_dte = max(dte_maxes) if dte_maxes else int(getattr(raw_args, "max_dte", 30) or 30)
-    return raw_args
+) -> CandidateBuildParameters:
+    runtime_parameters = [
+        build_runtime_candidate_parameters(
+            symbol=symbol,
+            base_parameters=base_parameters,
+            runtime=runtime,
+        )
+        for runtime in runtimes
+    ]
+    return build_market_slice_parameters(
+        symbol=symbol,
+        base_parameters=base_parameters,
+        runtime_parameters=runtime_parameters,
+    )
 
 
 def _serialize_candidate(
@@ -262,7 +209,7 @@ def _single_leg_diagnostics(
     *,
     runtime: EntryRuntime,
     market_slice: SymbolMarketSlice,
-    runtime_args: argparse.Namespace,
+    runtime_parameters: CandidateBuildParameters,
 ) -> dict[str, Any]:
     strategy_family = runtime.build_settings.strategy_spec.strategy_family
     if strategy_family not in {"long_call", "long_put", "short_call", "short_put"}:
@@ -278,7 +225,7 @@ def _single_leg_diagnostics(
         contracts_by_expiration=contracts_by_expiration,
         snapshots_by_expiration=snapshots_by_expiration,
         expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
-        args=runtime_args,
+        args=runtime_parameters,
     )
 
 
@@ -287,7 +234,7 @@ def build_entry_runtime_symbol_diagnostic(
     runtime: EntryRuntime,
     symbol: str,
     market_slice: SymbolMarketSlice,
-    runtime_args: argparse.Namespace,
+    runtime_parameters: CandidateBuildParameters,
     setup_context: UnderlyingSetupContext | None,
     replay_details: dict[str, Any],
     all_rows: list[dict[str, Any]],
@@ -308,7 +255,7 @@ def build_entry_runtime_symbol_diagnostic(
     single_leg_diagnostics = _single_leg_diagnostics(
         runtime=runtime,
         market_slice=market_slice,
-        runtime_args=runtime_args,
+        runtime_parameters=runtime_parameters,
     )
     raw_rejections = dict(single_leg_diagnostics.get("reject_counts") or {})
     ranking_rejections = dict(replay_details.get("ranking_policy_blocker_counts") or {})
@@ -333,14 +280,14 @@ def build_entry_runtime_symbol_diagnostic(
         "expected_move_count": len(market_slice.expected_moves_by_expiration),
         "expirations": sorted(contracts_by_expiration),
         "filters": {
-            "min_dte": getattr(runtime_args, "min_dte", None),
-            "max_dte": getattr(runtime_args, "max_dte", None),
-            "delta_min": getattr(runtime_args, "short_delta_min", None),
-            "delta_max": getattr(runtime_args, "short_delta_max", None),
-            "min_open_interest": getattr(runtime_args, "min_open_interest", None),
-            "max_relative_spread": getattr(runtime_args, "max_relative_spread", None),
-            "min_return_on_risk": getattr(runtime_args, "min_return_on_risk", None),
-            "min_credit": getattr(runtime_args, "min_credit", None),
+            "min_dte": runtime_parameters.min_dte,
+            "max_dte": runtime_parameters.max_dte,
+            "delta_min": runtime_parameters.short_delta_min,
+            "delta_max": runtime_parameters.short_delta_max,
+            "min_open_interest": runtime_parameters.min_open_interest,
+            "max_relative_spread": runtime_parameters.max_relative_spread,
+            "min_return_on_risk": runtime_parameters.min_return_on_risk,
+            "min_credit": runtime_parameters.min_credit,
         },
     }
     return {
@@ -386,22 +333,22 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     *,
     runtime: EntryRuntime,
     symbol: str,
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     calendar_resolver: Any,
     market_slice: Any,
     per_runtime_limit: int = 6,
     history_store: RunHistoryRepository | None = None,
     session_label: str | None = None,
 ) -> dict[str, Any]:
-    runtime_args = build_runtime_scan_args(
+    runtime_parameters = build_runtime_candidate_parameters(
         symbol=symbol,
-        base_scanner_args=base_scanner_args,
+        base_parameters=base_parameters,
         runtime=runtime,
     )
     candidate_filter = build_runtime_candidate_filter(runtime)
     candidates, setup_context, replay_details = build_candidates_with_details_from_market_slice(
         market_slice=market_slice,
-        symbol_args=runtime_args,
+        symbol_args=runtime_parameters,
         calendar_resolver=calendar_resolver,
     )
     matched_candidates: list[Any] = []
@@ -410,7 +357,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     for candidate in candidates:
         row = _serialize_candidate(
             candidate,
-            short_delta_target=getattr(runtime_args, "short_delta_target", None),
+            short_delta_target=runtime_parameters.short_delta_target,
         )
         matched, reasons = match_runtime_candidate(row, runtime)
         if not matched:
@@ -425,7 +372,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     if history_store is not None and matched_candidates:
         run_id = persist_scan_run(
             history_store=history_store,
-            symbol_args=runtime_args,
+            symbol_args=runtime_parameters,
             market_slice=market_slice,
             setup_context=setup_context,
             candidates=matched_candidates,
@@ -443,7 +390,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         runtime=runtime,
         symbol=symbol,
         market_slice=market_slice,
-        runtime_args=runtime_args,
+        runtime_parameters=runtime_parameters,
         setup_context=setup_context,
         replay_details=replay_details,
         all_rows=all_rows,
@@ -452,7 +399,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     )
     return {
         "symbol": symbol,
-        "runtime_args": runtime_args,
+        "runtime_parameters": runtime_parameters,
         "candidate_filter": candidate_filter,
         "setup_context": setup_context,
         "replay_details": replay_details,
@@ -467,7 +414,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
 def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
     *,
     entry_runtimes: list[EntryRuntime],
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     calendar_resolver: Any,
     market_slices_by_symbol: dict[str, Any],
     per_runtime_limit: int = 6,
@@ -489,7 +436,7 @@ def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
             result = build_entry_runtime_symbol_candidates_from_market_slice(
                 runtime=runtime,
                 symbol=symbol,
-                base_scanner_args=base_scanner_args,
+                base_parameters=base_parameters,
                 calendar_resolver=calendar_resolver,
                 market_slice=market_slice,
                 per_runtime_limit=per_runtime_limit,
@@ -509,7 +456,7 @@ def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
 def build_entry_runtime_candidates_from_market_slices(
     *,
     entry_runtimes: list[EntryRuntime],
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     calendar_resolver: Any,
     market_slices_by_symbol: dict[str, Any],
     per_runtime_limit: int = 6,
@@ -518,7 +465,7 @@ def build_entry_runtime_candidates_from_market_slices(
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime, _diagnostics_by_runtime = build_entry_runtime_candidates_with_diagnostics_from_market_slices(
         entry_runtimes=entry_runtimes,
-        base_scanner_args=base_scanner_args,
+        base_parameters=base_parameters,
         calendar_resolver=calendar_resolver,
         market_slices_by_symbol=market_slices_by_symbol,
         per_runtime_limit=per_runtime_limit,
@@ -531,7 +478,7 @@ def build_entry_runtime_candidates_from_market_slices(
 def build_entry_runtime_candidates_with_diagnostics(
     *,
     entry_runtimes: list[EntryRuntime],
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
@@ -546,21 +493,21 @@ def build_entry_runtime_candidates_with_diagnostics(
 
     market_slices_by_symbol: dict[str, Any] = {}
     for symbol, runtimes in runtimes_by_symbol.items():
-        market_slice_args = build_market_slice_args(
+        market_slice_parameters = build_symbol_market_slice_parameters(
             symbol=symbol,
-            base_scanner_args=base_scanner_args,
+            base_parameters=base_parameters,
             runtimes=runtimes,
         )
         market_slices_by_symbol[symbol] = build_symbol_market_slice(
             symbol=symbol,
-            symbol_args=market_slice_args,
+            parameters=market_slice_parameters,
             client=client,
             greeks_provider=greeks_provider,
         )
 
     return build_entry_runtime_candidates_with_diagnostics_from_market_slices(
         entry_runtimes=entry_runtimes,
-        base_scanner_args=base_scanner_args,
+        base_parameters=base_parameters,
         calendar_resolver=calendar_resolver,
         market_slices_by_symbol=market_slices_by_symbol,
         per_runtime_limit=per_runtime_limit,
@@ -572,7 +519,7 @@ def build_entry_runtime_candidates_with_diagnostics(
 def build_entry_runtime_candidates(
     *,
     entry_runtimes: list[EntryRuntime],
-    base_scanner_args: argparse.Namespace,
+    base_parameters: CandidateBuildParameters,
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
@@ -582,7 +529,7 @@ def build_entry_runtime_candidates(
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime, _diagnostics_by_runtime = build_entry_runtime_candidates_with_diagnostics(
         entry_runtimes=entry_runtimes,
-        base_scanner_args=base_scanner_args,
+        base_parameters=base_parameters,
         client=client,
         calendar_resolver=calendar_resolver,
         greeks_provider=greeks_provider,
@@ -600,7 +547,7 @@ __all__ = [
     "build_entry_runtime_candidates_from_market_slices",
     "build_entry_runtime_symbol_diagnostic",
     "build_entry_runtime_symbol_candidates_from_market_slice",
-    "build_market_slice_args",
-    "build_runtime_scan_args",
+    "build_runtime_candidate_parameters",
+    "build_symbol_market_slice_parameters",
     "runtime_owner_key",
 ]

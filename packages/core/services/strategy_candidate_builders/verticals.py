@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import argparse
+from typing import Any
 
 from core.common import clamp
 from core.domain.models import (
@@ -30,7 +30,7 @@ def build_vertical_spreads(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
     option_type = strategy_option_type(strategy)
@@ -267,7 +267,7 @@ def build_credit_spreads(
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     return build_vertical_spreads(
         symbol=symbol,
