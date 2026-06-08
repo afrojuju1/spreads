@@ -57,6 +57,7 @@ class VendorHttpClient:
     retry_backoff_seconds: float = 0.5
     retryable_status_codes: frozenset[int] = DEFAULT_RETRYABLE_STATUS_CODES
     user_agent: str = DEFAULT_USER_AGENT
+    follow_redirects: bool = False
 
     def request_json(
         self,
@@ -160,6 +161,7 @@ class VendorHttpClient:
         headers: Mapping[str, str],
     ) -> VendorHttpResponse:
         request_kwargs: dict[str, Any] = {
+            "follow_redirects": self.follow_redirects,
             "headers": headers,
             "params": params,
             "timeout": httpx.Timeout(float(self.timeout_seconds)),

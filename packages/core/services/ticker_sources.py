@@ -17,7 +17,7 @@ from core.services.trading_strategies import build_entry_strategy_symbols, load_
 from core.value_coercion import utc_now_iso as _iso_now
 
 VALID_TICKER_SOURCE_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter"})
-FINVIZ_HTTP = VendorHttpClient(timeout_seconds=30, user_agent="spreads-finviz-feed/1.0")
+FINVIZ_HTTP = VendorHttpClient(timeout_seconds=30, user_agent="spreads-finviz-feed/1.0", follow_redirects=True)
 
 
 def _as_optional_text(value: Any) -> str | None:
@@ -619,7 +619,11 @@ def _load_finviz_csv_text(
     cookie_value = _as_optional_text(os.environ.get(cookie_name))
     if cookie_value is not None:
         headers["Cookie"] = cookie_value
-    client = FINVIZ_HTTP if timeout_seconds == 30 else VendorHttpClient(timeout_seconds=timeout_seconds, user_agent="spreads-finviz-feed/1.0")
+    client = (
+        FINVIZ_HTTP
+        if timeout_seconds == 30
+        else VendorHttpClient(timeout_seconds=timeout_seconds, user_agent="spreads-finviz-feed/1.0", follow_redirects=True)
+    )
     return client.request_text("GET", source_value, "", headers=headers).lstrip("\ufeff")
 
 
