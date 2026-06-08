@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
-import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.services.account_capacity import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
 )
+from core.services.config_inheritance import load_yaml_mapping
 from core.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
@@ -32,6 +33,7 @@ from core.services.option_structures import (
     position_legs,
 )
 from core.services.positions import enrich_position_row
+from core.services.payload_validation import format_validation_error
 from core.services.runtime_identity import parse_live_run_scope_id
 from core.services.trading_strategies import default_config_root
 from core.value_coercion import (
@@ -80,20 +82,33 @@ INT_POLICY_KEYS = {
 }
 FLOAT_POLICY_KEYS = OPTIONAL_FLOAT_POLICY_KEYS
 BOOL_POLICY_KEYS = {"enabled", "allow_live"}
-REQUIRED_BASELINE_RISK_POLICY_KEYS = BOOL_POLICY_KEYS | INT_POLICY_KEYS | FLOAT_POLICY_KEYS
+
+
+class BaselineRiskPolicyYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    allow_live: bool
+    max_open_positions_per_session: int = Field(gt=0)
+    max_open_positions_per_underlying: int = Field(gt=0)
+    max_open_positions_per_underlying_strategy: int = Field(gt=0)
+    max_contracts_per_position: int = Field(gt=0)
+    max_contracts_per_session: int = Field(gt=0)
+    max_position_notional: float | None = Field(ge=0)
+    max_session_notional: float | None = Field(ge=0)
+    max_position_max_loss: float | None = Field(ge=0)
+    max_session_max_loss: float | None = Field(ge=0)
+    stale_quote_after_seconds: float = Field(gt=0)
 
 
 @lru_cache(maxsize=1)
 def _baseline_risk_policy() -> dict[str, Any]:
     path = default_config_root() / "policies" / "risk" / f"{BASELINE_RISK_POLICY_NAME}.yaml"
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError(f"Expected mapping payload in {path}")
-    missing = sorted(REQUIRED_BASELINE_RISK_POLICY_KEYS - set(raw))
-    if missing:
-        rendered = ", ".join(missing)
-        raise ValueError(f"Baseline risk policy {path} is missing: {rendered}")
-    return dict(raw)
+    try:
+        payload = BaselineRiskPolicyYamlPayload.model_validate(load_yaml_mapping(path))
+    except ValidationError as exc:
+        raise ValueError(f"Invalid baseline risk policy config in {path}: {format_validation_error(exc)}") from exc
+    return payload.model_dump()
 
 
 def _candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:

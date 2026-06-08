@@ -10,8 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from dotenv import dotenv_values
+
+from core.services.config_inheritance import load_yaml_mapping
+from core.services.payload_validation import format_validation_error, normalize_optional_text, normalize_required_text, normalize_text_tuple
+from core.value_coercion import as_text
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEPLOY_TARGETS_ROOT = REPO_ROOT / "packages" / "config" / "deploy_targets"
@@ -43,6 +47,81 @@ ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 class DeploymentConfigError(ValueError):
     """Raised when deployment target configuration is invalid."""
+
+
+class DeployTargetYamlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    mode: Literal["local", "ssh"]
+    description: str | None = None
+    deploy_root: str = "."
+    compose_file: str = "docker-compose.prod.yml"
+    env_file: str | None = None
+    compose_project_name: str | None = None
+    bind_host: str = "127.0.0.1"
+    api_port: int = Field(default=58080, gt=0)
+    postgres_port: int = Field(default=55432, gt=0)
+    redis_port: int = Field(default=56379, gt=0)
+    web_port: int = Field(default=53000, gt=0)
+    worker_runtime_replicas: int = Field(default=1, gt=0)
+    worker_data_replicas: int = Field(default=2, gt=0)
+    worker_valuation_replicas: int = Field(default=0, ge=0)
+    worker_research_replicas: int = Field(default=0, ge=0)
+    web_enabled: bool = True
+    postgres_volume_name: str | None = None
+    docker_log_driver: str = "local"
+    docker_log_max_size: str = "10m"
+    docker_log_max_file: int = Field(default=5, gt=0)
+    backup_retention_days: int = Field(default=7, gt=0)
+    health_check_minutes: int = Field(default=5, gt=0)
+    excluded_job_types: tuple[str, ...] = Field(default_factory=tuple)
+    market_recorder_owner_env: str | None = None
+    ssh_host: str | None = None
+
+    @field_validator(
+        "name",
+        "description",
+        "env_file",
+        "compose_project_name",
+        "postgres_volume_name",
+        "market_recorder_owner_env",
+        "ssh_host",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+    @field_validator(
+        "deploy_root",
+        "compose_file",
+        "bind_host",
+        "docker_log_driver",
+        "docker_log_max_size",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_required_text(cls, value: Any) -> str:
+        return normalize_required_text(value)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Any) -> str:
+        return normalize_required_text(value).lower()
+
+    @field_validator("excluded_job_types", mode="before")
+    @classmethod
+    def _normalize_excluded_job_types(cls, value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            return tuple(part.strip() for part in value.split(",") if part.strip())
+        return normalize_text_tuple(value)
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> DeployTargetYamlPayload:
+        if self.mode == "ssh" and self.ssh_host is None:
+            raise ValueError("ssh_host is required for ssh targets")
+        return self
 
 
 @dataclass(frozen=True)
@@ -97,124 +176,43 @@ class DeployTarget:
         return f"spreads-compose-{self.name}.service"
 
 
-def _normalize_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    payload = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(payload, dict):
-        raise DeploymentConfigError(f"Deployment target file is not a mapping: {path}")
-    return payload
-
-
-def _coerce_positive_int(value: Any, *, field_name: str) -> int:
-    try:
-        resolved = int(value)
-    except (TypeError, ValueError) as exc:
-        raise DeploymentConfigError(f"{field_name} must be an integer.") from exc
-    if resolved <= 0:
-        raise DeploymentConfigError(f"{field_name} must be greater than 0.")
-    return resolved
-
-
-def _coerce_non_negative_int(value: Any, *, field_name: str) -> int:
-    try:
-        resolved = int(value)
-    except (TypeError, ValueError) as exc:
-        raise DeploymentConfigError(f"{field_name} must be an integer.") from exc
-    if resolved < 0:
-        raise DeploymentConfigError(f"{field_name} must be greater than or equal to 0.")
-    return resolved
-
-
-def _coerce_text_list(value: Any, *, field_name: str) -> tuple[str, ...]:
-    if value in (None, "", ()):
-        return ()
-    if isinstance(value, str):
-        items = [part.strip() for part in value.split(",")]
-    elif isinstance(value, (list, tuple)):
-        items = [str(part).strip() for part in value]
-    else:
-        raise DeploymentConfigError(f"{field_name} must be a list of strings.")
-    return tuple(item for item in items if item)
-
-
 def _load_target(path: Path) -> DeployTarget:
-    payload = _load_yaml(path)
-    mode = str(payload.get("mode") or "").strip().lower()
-    if mode not in {"local", "ssh"}:
-        raise DeploymentConfigError(f"{path.name}: unsupported mode {mode!r}.")
-    name = _normalize_text(payload.get("name")) or path.stem
-    ssh_host = _normalize_text(payload.get("ssh_host"))
-    if mode == "ssh" and ssh_host is None:
-        raise DeploymentConfigError(f"{path.name}: ssh_host is required for ssh targets.")
+    try:
+        raw_payload = load_yaml_mapping(path)
+    except ValueError as exc:
+        raise DeploymentConfigError(str(exc)) from exc
+    try:
+        payload = DeployTargetYamlPayload.model_validate(raw_payload)
+    except ValidationError as exc:
+        raise DeploymentConfigError(f"Invalid deployment target config in {path}: {format_validation_error(exc)}") from exc
+    name = payload.name or path.stem
     return DeployTarget(
         name=name,
-        mode=mode,
-        description=_normalize_text(payload.get("description")) or "",
-        deploy_root=_normalize_text(payload.get("deploy_root")) or ".",
-        compose_file=_normalize_text(payload.get("compose_file")) or "docker-compose.prod.yml",
-        env_file=_normalize_text(payload.get("env_file")) or f".env.deploy.{name}",
-        compose_project_name=_normalize_text(payload.get("compose_project_name")) or f"spreads-{name}",
-        bind_host=_normalize_text(payload.get("bind_host")) or "127.0.0.1",
-        api_port=_coerce_positive_int(
-            payload.get("api_port", 58080),
-            field_name="api_port",
-        ),
-        postgres_port=_coerce_positive_int(
-            payload.get("postgres_port", 55432),
-            field_name="postgres_port",
-        ),
-        redis_port=_coerce_positive_int(
-            payload.get("redis_port", 56379),
-            field_name="redis_port",
-        ),
-        web_port=_coerce_positive_int(
-            payload.get("web_port", 53000),
-            field_name="web_port",
-        ),
-        worker_runtime_replicas=_coerce_positive_int(
-            payload.get("worker_runtime_replicas", 1),
-            field_name="worker_runtime_replicas",
-        ),
-        worker_data_replicas=_coerce_positive_int(
-            payload.get("worker_data_replicas", 2),
-            field_name="worker_data_replicas",
-        ),
-        worker_valuation_replicas=_coerce_non_negative_int(
-            payload.get("worker_valuation_replicas", 0),
-            field_name="worker_valuation_replicas",
-        ),
-        worker_research_replicas=_coerce_non_negative_int(
-            payload.get("worker_research_replicas", 0),
-            field_name="worker_research_replicas",
-        ),
-        web_enabled=bool(payload.get("web_enabled", True)),
-        postgres_volume_name=_normalize_text(payload.get("postgres_volume_name")) or f"spreads_{name.replace('-', '_')}_postgres_data",
-        docker_log_driver=_normalize_text(payload.get("docker_log_driver")) or "local",
-        docker_log_max_size=_normalize_text(payload.get("docker_log_max_size")) or "10m",
-        docker_log_max_file=_coerce_positive_int(
-            payload.get("docker_log_max_file", 5),
-            field_name="docker_log_max_file",
-        ),
-        backup_retention_days=_coerce_positive_int(
-            payload.get("backup_retention_days", 7),
-            field_name="backup_retention_days",
-        ),
-        health_check_minutes=_coerce_positive_int(
-            payload.get("health_check_minutes", 5),
-            field_name="health_check_minutes",
-        ),
-        excluded_job_types=_coerce_text_list(
-            payload.get("excluded_job_types"),
-            field_name="excluded_job_types",
-        ),
-        market_recorder_owner_env=_normalize_text(payload.get("market_recorder_owner_env")),
-        ssh_host=ssh_host,
+        mode=payload.mode,
+        description=payload.description or "",
+        deploy_root=payload.deploy_root,
+        compose_file=payload.compose_file,
+        env_file=payload.env_file or f".env.deploy.{name}",
+        compose_project_name=payload.compose_project_name or f"spreads-{name}",
+        bind_host=payload.bind_host,
+        api_port=payload.api_port,
+        postgres_port=payload.postgres_port,
+        redis_port=payload.redis_port,
+        web_port=payload.web_port,
+        worker_runtime_replicas=payload.worker_runtime_replicas,
+        worker_data_replicas=payload.worker_data_replicas,
+        worker_valuation_replicas=payload.worker_valuation_replicas,
+        worker_research_replicas=payload.worker_research_replicas,
+        web_enabled=payload.web_enabled,
+        postgres_volume_name=payload.postgres_volume_name or f"spreads_{name.replace('-', '_')}_postgres_data",
+        docker_log_driver=payload.docker_log_driver,
+        docker_log_max_size=payload.docker_log_max_size,
+        docker_log_max_file=payload.docker_log_max_file,
+        backup_retention_days=payload.backup_retention_days,
+        health_check_minutes=payload.health_check_minutes,
+        excluded_job_types=payload.excluded_job_types,
+        market_recorder_owner_env=payload.market_recorder_owner_env,
+        ssh_host=payload.ssh_host,
     )
 
 
@@ -238,7 +236,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
     payload = dotenv_values(path)
     resolved: dict[str, str] = {}
     for key, value in payload.items():
-        text = _normalize_text(value)
+        text = as_text(value)
         if key and text is not None:
             resolved[str(key)] = text
     return resolved
@@ -249,7 +247,7 @@ def _merged_secret_sources(target: DeployTarget) -> dict[str, str]:
     merged.update(_load_env_file(REPO_ROOT / ".env"))
     merged.update(_load_env_file(target.local_overlay_env_path))
     for key, value in os.environ.items():
-        text = _normalize_text(value)
+        text = as_text(value)
         if text is not None:
             merged[key] = text
     return merged
@@ -261,7 +259,7 @@ def _secret_value(
     default: str | None = None,
 ) -> str | None:
     for key in keys:
-        text = _normalize_text(merged.get(key))
+        text = as_text(merged.get(key))
         if text is not None:
             return text
     return default
@@ -270,7 +268,7 @@ def _secret_value(
 def _web_allowed_dev_origins(target: DeployTarget) -> str:
     origins = ["localhost", "127.0.0.1"]
     for value in (target.bind_host, target.ssh_host, target.name):
-        normalized = _normalize_text(value)
+        normalized = as_text(value)
         if normalized is None or normalized == "0.0.0.0":
             continue
         origins.append(normalized)
@@ -369,11 +367,11 @@ def build_deploy_env_values(
         "SPREADS_TRADINGAGENTS_DIR": str(tradingagents_container_dir),
         "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(tradingagents_uv_environment),
         "OLLAMA_BASE_URL": str(ollama_base_url),
-        "SPREADS_MARKET_RECORDER_OWNER_ENV": str(_normalize_text(target.market_recorder_owner_env) or ""),
+        "SPREADS_MARKET_RECORDER_OWNER_ENV": str(as_text(target.market_recorder_owner_env) or ""),
     }
 
     if require_secrets:
-        missing = [key for key in REQUIRED_SECRET_KEYS if _normalize_text(env_values.get(key)) in {None, "replace-me"}]
+        missing = [key for key in REQUIRED_SECRET_KEYS if as_text(env_values.get(key)) in {None, "replace-me"}]
         if missing:
             raise DeploymentConfigError("Missing required deployment secrets: " + ", ".join(sorted(missing)))
     return env_values
