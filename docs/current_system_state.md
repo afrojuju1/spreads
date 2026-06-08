@@ -190,6 +190,7 @@ Current entry selection runtime:
 
 - DataEngine builds `FeatureSnapshot` rows from the resolved ticker set and candidate-build result through a registry keyed by `trade_structure` and `quality_profile_id`.
 - Candidate generation consumes normalized `SymbolMarketSlice` inputs through `MarketSliceProvider`; live Alpaca calls are isolated behind `AlpacaMarketSliceProvider`.
+- Candidate diagnostics enrich `underlying_setup` with SPY/QQQ relative-strength and broad-market regime facts from lightweight underlying benchmark slices. Sector ETF comparison is intentionally deferred until sector mapping exists cleanly.
 - `EntryQualityPipeline` resolves configured quality-profile thresholds and operator overrides, evaluates pre-selection quality for candidate filtering, and evaluates post-selection readiness only after live signal fields exist.
 - `EntrySelectionEngine` owns quality analysis, candidate quality filtering, runtime filter counts, live signal selection, and selected/monitored/rejected candidate output. It does not inspect account buying power, broker positions, or execution runtime state.
 - Entry admission in `services/risk_manager.py` is the first account-aware boundary. It emits stable `capacity_admission`, `execution_readiness`, `reason_codes`, and `blockers` evidence; final execution readiness is explicitly deferred to the execution submit path.
@@ -200,7 +201,7 @@ Current live entry-quality profile:
 
 - `momentum_long_call_v1` for `momentum_long_calls`
 
-Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. Early optionable chain viability, relative-strength/regime filters, richer ops waterfall rendering, duplicate gate cleanup, and final quality-pipeline cutover validation remain tracked under the `spr-34u` beads. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
+Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. `momentum_long_call_v1` includes target-DTE chain viability plus SPY/QQQ relative-strength and market-regime filters. Richer ops waterfall rendering, duplicate gate cleanup, and final quality-pipeline cutover validation remain tracked under the `spr-34u` beads. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
 
 Active entry facts are persisted through:
 

@@ -69,14 +69,20 @@ def _single_leg_reject_example(
     snapshot: OptionSnapshot | None,
     expiration_date: str,
 ) -> dict[str, object]:
+    bid = None if snapshot is None else snapshot.bid
+    ask = None if snapshot is None else snapshot.ask
     return {
         "contract": contract.symbol,
         "expiration": expiration_date,
         "strike": contract.strike_price,
         "open_interest": contract.open_interest,
-        "bid": None if snapshot is None else snapshot.bid,
-        "ask": None if snapshot is None else snapshot.ask,
+        "bid": bid,
+        "ask": ask,
+        "bid_size": None if snapshot is None else snapshot.bid_size,
+        "ask_size": None if snapshot is None else snapshot.ask_size,
         "delta": None if snapshot is None else snapshot.delta,
+        "option_volume": None if snapshot is None else snapshot.daily_volume,
+        "bid_ask_spread": None if bid is None or ask is None else round(max(ask - bid, 0.0), 4),
         "relative_spread": None if snapshot is None else relative_spread(snapshot),
     }
 
@@ -224,6 +230,10 @@ def diagnose_single_leg_rejections(
                             "expiration": expiration_date,
                             "strike": contract.strike_price,
                             "open_interest": contract.open_interest,
+                            "option_volume": None if snapshot is None else snapshot.daily_volume,
+                            "bid_ask_spread": None if snapshot is None else round(max(snapshot.ask - snapshot.bid, 0.0), 4),
+                            "bid_size": None if snapshot is None else snapshot.bid_size,
+                            "ask_size": None if snapshot is None else snapshot.ask_size,
                             "delta": None if snapshot is None else snapshot.delta,
                             "midpoint": None if snapshot is None else snapshot.midpoint,
                             "return_on_risk": metrics.get("return_on_risk"),

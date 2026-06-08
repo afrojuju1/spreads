@@ -343,16 +343,58 @@ MOMENTUM_LONG_CALL_V1 = EntryQualityProfile(
             EntryQualityStageName.SOURCE_PREFLIGHT,
             ("source_is_fresh",),
         ),
-        _stage(
-            EntryQualityStageName.UNDERLYING_SETUP,
-            ("setup_context_usable",),
+        EntryQualityStage(
+            stage=EntryQualityStageName.UNDERLYING_SETUP,
+            filters=(
+                _filter_ref("setup_context_usable", EntryQualityStageName.UNDERLYING_SETUP),
+                EntryFilterRef(
+                    filter_id="relative_strength_supportive",
+                    stage=EntryQualityStageName.UNDERLYING_SETUP,
+                    thresholds={
+                        "min_benchmark_count": 2,
+                        "min_supportive_benchmark_count": 1,
+                        "min_relative_strength_5d_pct": 0.0,
+                        "min_relative_strength_intraday_pct": -0.002,
+                    },
+                ),
+                EntryFilterRef(
+                    filter_id="market_regime_supportive",
+                    stage=EntryQualityStageName.UNDERLYING_SETUP,
+                    thresholds={
+                        "min_benchmark_count": 2,
+                        "min_supportive_benchmark_count": 1,
+                        "min_benchmark_5d_return_pct": -0.01,
+                        "min_benchmark_intraday_return_pct": -0.006,
+                        "max_benchmark_5d_drawdown_pct": -0.03,
+                        "max_benchmark_intraday_drawdown_pct": -0.012,
+                        "min_blocking_benchmark_count": 2,
+                    },
+                ),
+            ),
         ),
-        _stage(
-            EntryQualityStageName.CHAIN_VIABILITY,
-            (
-                "chain_data_available",
-                "option_snapshots_available",
-                "greeks_available",
+        EntryQualityStage(
+            stage=EntryQualityStageName.CHAIN_VIABILITY,
+            filters=(
+                _filter_ref("chain_data_available", EntryQualityStageName.CHAIN_VIABILITY),
+                _filter_ref("option_snapshots_available", EntryQualityStageName.CHAIN_VIABILITY),
+                _filter_ref("greeks_available", EntryQualityStageName.CHAIN_VIABILITY),
+                EntryFilterRef(
+                    filter_id="target_dte_chain_usable",
+                    stage=EntryQualityStageName.CHAIN_VIABILITY,
+                    thresholds={
+                        "min_target_dte_expirations": 1,
+                        "min_target_dte_contracts": 1,
+                        "min_chain_snapshot_count": 1,
+                        "min_delta_snapshot_count": 1,
+                        "min_snapshot_coverage_ratio": 0.2,
+                        "min_delta_coverage_ratio": 0.2,
+                        "min_viable_contracts": 1,
+                        "min_open_interest": 500,
+                        "min_bid_ask_size": 1,
+                        "max_relative_spread": 0.10,
+                        "max_quote_age_seconds": 180,
+                    },
+                ),
             ),
         ),
         _stage(

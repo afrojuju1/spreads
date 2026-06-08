@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, replace
+from typing import Any
 
 from core.common import clamp
 from core.domain.models import (
     DailyBar,
     IntradayBar,
     SpreadCandidate,
+    SymbolMarketSlice,
     UnderlyingSetupContext,
 )
 from core.services.strategy_specs import strategy_direction
@@ -43,6 +46,105 @@ def dedupe_reasons(reasons: list[str]) -> tuple[str, ...]:
         seen.add(reason)
         deduped.append(reason)
     return tuple(deduped)
+
+
+def _rounded(value: float | None) -> float | None:
+    return None if value is None else round(value, 6)
+
+
+def _daily_return_pct(bars: Sequence[DailyBar], *, lookback_sessions: int = 5) -> float | None:
+    rows = list(bars or [])
+    if len(rows) <= lookback_sessions:
+        return None
+    base = rows[-(lookback_sessions + 1)].close
+    latest = rows[-1].close
+    if base <= 0:
+        return None
+    return latest / base - 1.0
+
+
+def _intraday_return_pct(*, spot_price: float, bars: Sequence[IntradayBar]) -> float | None:
+    rows = list(bars or [])
+    if not rows or rows[0].open <= 0:
+        return None
+    return spot_price / rows[0].open - 1.0
+
+
+def _spot_vs_sma20_pct(*, spot_price: float, bars: Sequence[DailyBar]) -> float | None:
+    rows = list(bars or [])
+    if len(rows) < 20:
+        return None
+    sma20 = average([bar.close for bar in rows[-20:]])
+    if not sma20:
+        return None
+    return (spot_price - sma20) / sma20
+
+
+def _benchmark_setup_summary(market_slice: SymbolMarketSlice) -> dict[str, Any]:
+    return {
+        "symbol": market_slice.symbol,
+        "return_5d_pct": _rounded(_daily_return_pct(market_slice.daily_bars)),
+        "intraday_return_pct": _rounded(
+            _intraday_return_pct(
+                spot_price=market_slice.spot_price,
+                bars=market_slice.intraday_bars,
+            )
+        ),
+        "spot_vs_sma20_pct": _rounded(
+            _spot_vs_sma20_pct(
+                spot_price=market_slice.spot_price,
+                bars=market_slice.daily_bars,
+            )
+        ),
+        "daily_bar_count": len(market_slice.daily_bars),
+        "intraday_bar_count": len(market_slice.intraday_bars),
+    }
+
+
+def build_relative_strength_market_context(
+    *,
+    market_slice: SymbolMarketSlice,
+    benchmark_slices: Mapping[str, SymbolMarketSlice] | None,
+    benchmark_symbols: Sequence[str] = ("SPY", "QQQ"),
+) -> dict[str, Any]:
+    symbol_summary = _benchmark_setup_summary(market_slice)
+    symbol_return_5d = symbol_summary.get("return_5d_pct")
+    symbol_intraday_return = symbol_summary.get("intraday_return_pct")
+    by_benchmark: dict[str, Any] = {}
+    for symbol in benchmark_symbols:
+        benchmark_symbol = str(symbol or "").upper().strip()
+        benchmark_slice = None if benchmark_slices is None else benchmark_slices.get(benchmark_symbol)
+        if benchmark_slice is None:
+            continue
+        benchmark_summary = _benchmark_setup_summary(benchmark_slice)
+        benchmark_return_5d = benchmark_summary.get("return_5d_pct")
+        benchmark_intraday_return = benchmark_summary.get("intraday_return_pct")
+        benchmark_summary["relative_return_5d_pct"] = (
+            None if symbol_return_5d is None or benchmark_return_5d is None else _rounded(float(symbol_return_5d) - float(benchmark_return_5d))
+        )
+        benchmark_summary["relative_intraday_return_pct"] = (
+            None
+            if symbol_intraday_return is None or benchmark_intraday_return is None
+            else _rounded(float(symbol_intraday_return) - float(benchmark_intraday_return))
+        )
+        by_benchmark[benchmark_symbol] = benchmark_summary
+    available_relative_5d = sum(1 for row in by_benchmark.values() if row.get("relative_return_5d_pct") is not None)
+    available_regime_5d = sum(1 for row in by_benchmark.values() if row.get("return_5d_pct") is not None)
+    return {
+        "relative_strength": {
+            "symbol": market_slice.symbol,
+            "benchmark_symbols": [str(symbol).upper() for symbol in benchmark_symbols],
+            "symbol_return_5d_pct": symbol_return_5d,
+            "symbol_intraday_return_pct": symbol_intraday_return,
+            "available_benchmark_count": available_relative_5d,
+            "by_benchmark": by_benchmark,
+        },
+        "market_regime": {
+            "benchmark_symbols": [str(symbol).upper() for symbol in benchmark_symbols],
+            "available_benchmark_count": available_regime_5d,
+            "by_benchmark": by_benchmark,
+        },
+    }
 
 
 def analyze_daily_setup(
@@ -451,5 +553,6 @@ def serialize_setup_context(
 __all__ = [
     "analyze_underlying_setup",
     "attach_underlying_setup",
+    "build_relative_strength_market_context",
     "serialize_setup_context",
 ]

@@ -225,6 +225,47 @@ def group_contracts_by_expiration(
     return grouped
 
 
+def _load_underlying_setup_bars(
+    *,
+    symbol: str,
+    parameters: Any,
+    client: AlpacaClient,
+    reference_date: Any,
+    reference_timestamp: datetime,
+) -> tuple[list[DailyBar], list[IntradayBar]]:
+    if parameters.setup_filter != "on":
+        return [], []
+    daily_bars = client.get_daily_bars(
+        symbol,
+        start=(reference_date - timedelta(days=120)).isoformat(),
+        end=reference_date.isoformat(),
+        stock_feed=parameters.stock_feed,
+    )
+    session_start = datetime.combine(reference_date, time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
+    session_end = reference_timestamp
+    try:
+        intraday_bars = client.get_intraday_bars(
+            symbol,
+            start=session_start.isoformat(),
+            end=session_end.isoformat(),
+            stock_feed=parameters.stock_feed,
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "candidate_market_slice_intraday_bars_failed",
+            exc_info=True,
+            symbol=symbol,
+            start=session_start.isoformat(),
+            end=session_end.isoformat(),
+            stock_feed=parameters.stock_feed,
+            error=str(exc),
+        )
+        intraday_bars = []
+    return daily_bars, intraday_bars
+
+
 def build_market_slice_from_loaded_data(
     *,
     symbol: str,
@@ -296,37 +337,13 @@ def build_symbol_market_slice(
     max_expiration = (reference_date + timedelta(days=parameters.max_dte)).isoformat()
 
     spot_price = client.get_underlying_price(normalized_symbol, parameters.stock_feed)
-    daily_bars: list[DailyBar] = []
-    intraday_bars: list[IntradayBar] = []
-    if parameters.setup_filter == "on":
-        daily_bars = client.get_daily_bars(
-            normalized_symbol,
-            start=(reference_date - timedelta(days=120)).isoformat(),
-            end=reference_date.isoformat(),
-            stock_feed=parameters.stock_feed,
-        )
-        try:
-            session_start = datetime.combine(reference_date, time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
-            session_end = reference_timestamp
-            intraday_bars = client.get_intraday_bars(
-                normalized_symbol,
-                start=session_start.isoformat(),
-                end=session_end.isoformat(),
-                stock_feed=parameters.stock_feed,
-            )
-        except Exception as exc:
-            log_event(
-                logger,
-                logging.WARNING,
-                "candidate_market_slice_intraday_bars_failed",
-                exc_info=True,
-                symbol=normalized_symbol,
-                start=session_start.isoformat(),
-                end=session_end.isoformat(),
-                stock_feed=parameters.stock_feed,
-                error=str(exc),
-            )
-            intraday_bars = []
+    daily_bars, intraday_bars = _load_underlying_setup_bars(
+        symbol=normalized_symbol,
+        parameters=parameters,
+        client=client,
+        reference_date=reference_date,
+        reference_timestamp=reference_timestamp,
+    )
 
     call_contracts = client.list_option_contracts(normalized_symbol, min_expiration, max_expiration, option_type="call")
     put_contracts = client.list_option_contracts(normalized_symbol, min_expiration, max_expiration, option_type="put")
@@ -365,12 +382,44 @@ def build_symbol_market_slice(
     )
 
 
+def build_underlying_market_slice(
+    *,
+    symbol: str,
+    parameters: Any,
+    client: AlpacaClient,
+) -> SymbolMarketSlice:
+    normalized_symbol = symbol.upper()
+    reference_date = candidate_reference_date(parameters)
+    reference_timestamp = candidate_reference_datetime(parameters) or datetime.now(UTC)
+    spot_price = client.get_underlying_price(normalized_symbol, parameters.stock_feed)
+    daily_bars, intraday_bars = _load_underlying_setup_bars(
+        symbol=normalized_symbol,
+        parameters=parameters,
+        client=client,
+        reference_date=reference_date,
+        reference_timestamp=reference_timestamp,
+    )
+    return SymbolMarketSlice(
+        symbol=normalized_symbol,
+        underlying_type=classify_underlying_type(normalized_symbol),
+        spot_price=spot_price,
+        daily_bars=tuple(daily_bars),
+        intraday_bars=tuple(intraday_bars),
+        call_contracts_by_expiration={},
+        put_contracts_by_expiration={},
+        call_snapshots_by_expiration={},
+        put_snapshots_by_expiration={},
+        expected_moves_by_expiration={},
+    )
+
+
 __all__ = [
     "AlpacaMarketSliceProvider",
     "MarketSliceProvider",
     "build_expected_move_estimates",
     "build_market_slice_from_loaded_data",
     "build_symbol_market_slice",
+    "build_underlying_market_slice",
     "count_alpaca_greeks_coverage",
     "count_local_greeks_coverage",
     "count_snapshot_delta_coverage",

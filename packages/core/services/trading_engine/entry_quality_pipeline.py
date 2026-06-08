@@ -48,6 +48,15 @@ _RAW_REJECTION_STAGE = {
     "return_on_risk_below_min": EntryQualityStageName.PREMIUM_QUALITY,
 }
 
+_CHAIN_USABILITY_REASON_MAP = {
+    "no_expected_move": "target_dte_expected_move_missing",
+    "no_snapshot": "target_dte_snapshots_unusable",
+    "no_delta": "target_dte_greeks_unusable",
+    "bid_or_ask_size_zero": "target_dte_quote_size_unusable",
+    "open_interest_below_min": "target_dte_open_interest_unusable",
+    "relative_spread_above_max": "target_dte_relative_spread_unusable",
+}
+
 _THRESHOLD_ALIASES = {
     "dte_min": "min_dte",
     "dte_max": "max_dte",
@@ -153,6 +162,18 @@ def _rejection_counts(snapshot: FeatureSnapshot) -> dict[str, Any]:
     return as_mapping(as_mapping(snapshot.chain).get("rejection_counts"))
 
 
+def _raw_rejection_counts(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(_rejection_counts(snapshot).get("raw"))
+
+
+def _chain_examples(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(as_mapping(snapshot.chain).get("examples"))
+
+
+def _diagnostic_evidence(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(snapshot.metadata.get("diagnostic_evidence"))
+
+
 def _stage_rejection_reasons(snapshot: FeatureSnapshot, stage: EntryQualityStageName) -> tuple[str, ...]:
     counts = _rejection_counts(snapshot)
     reasons: list[str] = []
@@ -168,6 +189,83 @@ def _stage_rejection_reasons(snapshot: FeatureSnapshot, stage: EntryQualityStage
     if stage == EntryQualityStageName.PREMIUM_QUALITY:
         reasons.extend(_count_reasons(ranking_policy))
     return tuple(dict.fromkeys(reasons))
+
+
+def _ratio(numerator: int | None, denominator: int | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return round(max(float(numerator), 0.0) / max(float(denominator), 1.0), 4)
+
+
+def _candidate_min_quote_size(candidate: Mapping[str, Any]) -> int | None:
+    values = [
+        coerce_int(candidate.get("min_quote_size")),
+        coerce_int(candidate.get("short_bid_size")),
+        coerce_int(candidate.get("short_ask_size")),
+        coerce_int(candidate.get("long_bid_size")),
+        coerce_int(candidate.get("long_ask_size")),
+        coerce_int(candidate.get("bid_size")),
+        coerce_int(candidate.get("ask_size")),
+    ]
+    resolved = [value for value in values if value is not None]
+    return min(resolved) if resolved else None
+
+
+def _candidate_bid_ask_spread(candidate: Mapping[str, Any], contract: Mapping[str, Any]) -> float | None:
+    spread = coerce_float(
+        candidate.get("bid_ask_spread") or candidate.get("spread_width") or contract.get("bid_ask_spread") or contract.get("spread_width")
+    )
+    if spread is not None:
+        return spread
+    bid = coerce_float(candidate.get("short_bid") or candidate.get("long_bid") or candidate.get("bid") or contract.get("bid_price"))
+    ask = coerce_float(candidate.get("short_ask") or candidate.get("long_ask") or candidate.get("ask") or contract.get("ask_price"))
+    if bid is None or ask is None:
+        return None
+    return round(max(ask - bid, 0.0), 4)
+
+
+def _candidate_option_volume(candidate: Mapping[str, Any], contract: Mapping[str, Any]) -> int | None:
+    values = [
+        coerce_int(candidate.get("short_volume")),
+        coerce_int(candidate.get("long_volume")),
+        coerce_int(candidate.get("option_volume")),
+        coerce_int(candidate.get("volume")),
+        coerce_int(contract.get("option_volume")),
+        coerce_int(contract.get("volume")),
+    ]
+    resolved = [value for value in values if value is not None]
+    return min(resolved) if resolved else None
+
+
+def _setup_metrics(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(as_mapping(snapshot.underlying).get("setup_metrics"))
+
+
+def _threshold_int(thresholds: Mapping[str, Any], filter_ref: EntryFilterRef, key: str) -> int | None:
+    value = coerce_int(thresholds.get(key))
+    if value is not None:
+        return value
+    return coerce_int(as_mapping(filter_ref.thresholds).get(key))
+
+
+def _threshold_float(thresholds: Mapping[str, Any], filter_ref: EntryFilterRef, key: str) -> float | None:
+    value = coerce_float(thresholds.get(key))
+    if value is not None:
+        return value
+    return coerce_float(as_mapping(filter_ref.thresholds).get(key))
+
+
+def _benchmark_rows(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(symbol).upper(): as_mapping(row) for symbol, row in as_mapping(payload.get("by_benchmark")).items()}
+
+
+def _benchmark_values(rows: Mapping[str, Mapping[str, Any]], field: str) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for symbol, row in rows.items():
+        value = coerce_float(row.get(field))
+        if value is not None:
+            values[symbol] = value
+    return values
 
 
 def _source_is_fresh(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
@@ -242,6 +340,168 @@ def _setup_context_usable(context: EntryQualityContext, snapshot: FeatureSnapsho
     )
 
 
+def _relative_strength_supportive(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    thresholds = _resolved_thresholds(context, filter_ref, {})
+    minimum_benchmark_count = _threshold_int(thresholds, filter_ref, "min_benchmark_count")
+    minimum_supportive_count = _threshold_int(thresholds, filter_ref, "min_supportive_benchmark_count")
+    minimum_relative_5d = _threshold_float(thresholds, filter_ref, "min_relative_strength_5d_pct")
+    minimum_relative_intraday = _threshold_float(thresholds, filter_ref, "min_relative_strength_intraday_pct")
+    relative_strength = as_mapping(_setup_metrics(snapshot).get("relative_strength"))
+    rows = _benchmark_rows(relative_strength)
+    relative_5d = _benchmark_values(rows, "relative_return_5d_pct")
+    relative_intraday = _benchmark_values(rows, "relative_intraday_return_pct")
+    available_count = len(relative_5d)
+    supportive: list[str] = []
+    below_5d: list[str] = []
+    below_intraday: list[str] = []
+    for symbol, value_5d in relative_5d.items():
+        intraday_value = relative_intraday.get(symbol)
+        passes_5d = minimum_relative_5d is None or value_5d >= minimum_relative_5d
+        passes_intraday = minimum_relative_intraday is None or intraday_value is None or intraday_value >= minimum_relative_intraday
+        if passes_5d and passes_intraday:
+            supportive.append(symbol)
+        if not passes_5d:
+            below_5d.append(symbol)
+        if intraday_value is not None and not passes_intraday:
+            below_intraday.append(symbol)
+    metrics = {
+        "benchmark_symbols": list(relative_strength.get("benchmark_symbols") or rows.keys()),
+        "available_benchmark_count": available_count,
+        "supportive_benchmark_count": len(supportive),
+        "supportive_benchmarks": supportive,
+        "relative_return_5d_pct_by_benchmark": relative_5d,
+        "relative_intraday_return_pct_by_benchmark": relative_intraday,
+        "symbol_return_5d_pct": relative_strength.get("symbol_return_5d_pct"),
+        "symbol_intraday_return_pct": relative_strength.get("symbol_intraday_return_pct"),
+    }
+    resolved_thresholds = {
+        "min_benchmark_count": minimum_benchmark_count,
+        "min_supportive_benchmark_count": minimum_supportive_count,
+        "min_relative_strength_5d_pct": minimum_relative_5d,
+        "min_relative_strength_intraday_pct": minimum_relative_intraday,
+    }
+    if not rows or available_count < (minimum_benchmark_count or 0):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("relative_strength_benchmark_data_missing",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Relative strength versus SPY/QQQ could not be fully proven.",
+        )
+    if len(supportive) >= (minimum_supportive_count or 1):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.PASS,
+            reason_codes=("relative_strength_supportive",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Underlying showed supportive relative strength versus SPY/QQQ.",
+        )
+    reasons = ["relative_strength_below_benchmarks"]
+    if len(below_5d) == available_count:
+        reasons.append("relative_strength_5d_below_min")
+    if relative_intraday and len(below_intraday) == len(relative_intraday):
+        reasons.append("relative_strength_intraday_below_min")
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.BLOCK,
+        reason_codes=tuple(reasons),
+        metrics=metrics,
+        thresholds=resolved_thresholds,
+        message="Underlying lagged SPY/QQQ beyond the profile threshold.",
+    )
+
+
+def _market_regime_supportive(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    thresholds = _resolved_thresholds(context, filter_ref, {})
+    minimum_benchmark_count = _threshold_int(thresholds, filter_ref, "min_benchmark_count")
+    minimum_supportive_count = _threshold_int(thresholds, filter_ref, "min_supportive_benchmark_count")
+    minimum_benchmark_5d = _threshold_float(thresholds, filter_ref, "min_benchmark_5d_return_pct")
+    minimum_benchmark_intraday = _threshold_float(thresholds, filter_ref, "min_benchmark_intraday_return_pct")
+    maximum_5d_drawdown = _threshold_float(thresholds, filter_ref, "max_benchmark_5d_drawdown_pct")
+    maximum_intraday_drawdown = _threshold_float(thresholds, filter_ref, "max_benchmark_intraday_drawdown_pct")
+    minimum_blocking_count = _threshold_int(thresholds, filter_ref, "min_blocking_benchmark_count")
+    market_regime = as_mapping(_setup_metrics(snapshot).get("market_regime"))
+    rows = _benchmark_rows(market_regime)
+    returns_5d = _benchmark_values(rows, "return_5d_pct")
+    intraday_returns = _benchmark_values(rows, "intraday_return_pct")
+    available_count = len(returns_5d)
+    supportive: list[str] = []
+    drawdown_5d: list[str] = []
+    drawdown_intraday: list[str] = []
+    for symbol, value_5d in returns_5d.items():
+        intraday_value = intraday_returns.get(symbol)
+        if maximum_5d_drawdown is not None and value_5d <= maximum_5d_drawdown:
+            drawdown_5d.append(symbol)
+        if maximum_intraday_drawdown is not None and intraday_value is not None and intraday_value <= maximum_intraday_drawdown:
+            drawdown_intraday.append(symbol)
+        passes_5d = minimum_benchmark_5d is None or value_5d >= minimum_benchmark_5d
+        passes_intraday = minimum_benchmark_intraday is None or intraday_value is None or intraday_value >= minimum_benchmark_intraday
+        if passes_5d and passes_intraday:
+            supportive.append(symbol)
+    blocking_symbols = tuple(dict.fromkeys((*drawdown_5d, *drawdown_intraday)))
+    metrics = {
+        "benchmark_symbols": list(market_regime.get("benchmark_symbols") or rows.keys()),
+        "available_benchmark_count": available_count,
+        "supportive_benchmark_count": len(supportive),
+        "supportive_benchmarks": supportive,
+        "blocking_benchmark_count": len(blocking_symbols),
+        "blocking_benchmarks": list(blocking_symbols),
+        "benchmark_return_5d_pct": returns_5d,
+        "benchmark_intraday_return_pct": intraday_returns,
+    }
+    resolved_thresholds = {
+        "min_benchmark_count": minimum_benchmark_count,
+        "min_supportive_benchmark_count": minimum_supportive_count,
+        "min_benchmark_5d_return_pct": minimum_benchmark_5d,
+        "min_benchmark_intraday_return_pct": minimum_benchmark_intraday,
+        "max_benchmark_5d_drawdown_pct": maximum_5d_drawdown,
+        "max_benchmark_intraday_drawdown_pct": maximum_intraday_drawdown,
+        "min_blocking_benchmark_count": minimum_blocking_count,
+    }
+    if not rows or available_count < (minimum_benchmark_count or 0):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("market_regime_benchmark_data_missing",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Broad-market regime could not be fully proven from SPY/QQQ.",
+        )
+    if len(blocking_symbols) >= (minimum_blocking_count or available_count + 1):
+        reasons = ["market_regime_broad_drawdown"]
+        if drawdown_5d:
+            reasons.append("market_regime_5d_drawdown")
+        if drawdown_intraday:
+            reasons.append("market_regime_intraday_drawdown")
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=tuple(reasons),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="SPY/QQQ regime was too weak for new long-call entries.",
+        )
+    if len(supportive) >= (minimum_supportive_count or 1):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.PASS,
+            reason_codes=("market_regime_supportive",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="SPY/QQQ regime was supportive enough for long-call entries.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.WATCH,
+        reason_codes=("market_regime_not_supportive",),
+        metrics=metrics,
+        thresholds=resolved_thresholds,
+        message="SPY/QQQ regime was not supportive, but did not hit drawdown blockers.",
+    )
+
+
 def _chain_data_available(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
     del context
     chain = as_mapping(snapshot.chain)
@@ -312,6 +572,159 @@ def _greeks_available(context: EntryQualityContext, snapshot: FeatureSnapshot, f
         reason_codes=("greeks_available",),
         metrics=metrics,
         message="Required option Greeks were available.",
+    )
+
+
+def _target_dte_chain_usable(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    chain = as_mapping(snapshot.chain)
+    filters = _chain_filters(snapshot)
+    diagnostic_evidence = _diagnostic_evidence(snapshot)
+    raw_counts = _raw_rejection_counts(snapshot)
+    candidate = _candidate(snapshot)
+    contract = _candidate_contract(snapshot)
+    thresholds = _resolved_thresholds(
+        context,
+        filter_ref,
+        {
+            "min_open_interest": filters.get("min_open_interest"),
+            "max_relative_spread": filters.get("max_relative_spread") or filters.get("max_leg_spread_pct_mid"),
+            "max_quote_age_seconds": filters.get("max_quote_age_seconds"),
+            "min_option_volume": filters.get("min_option_volume"),
+            "max_bid_ask_spread": filters.get("max_bid_ask_spread") or filters.get("max_absolute_spread"),
+        },
+    )
+    minimum_expirations = coerce_int(thresholds.get("min_target_dte_expirations"))
+    minimum_contracts = coerce_int(thresholds.get("min_target_dte_contracts"))
+    minimum_snapshots = coerce_int(thresholds.get("min_chain_snapshot_count"))
+    minimum_delta_snapshots = coerce_int(thresholds.get("min_delta_snapshot_count"))
+    minimum_snapshot_ratio = coerce_float(thresholds.get("min_snapshot_coverage_ratio"))
+    minimum_delta_ratio = coerce_float(thresholds.get("min_delta_coverage_ratio"))
+    minimum_viable_contracts = coerce_int(thresholds.get("min_viable_contracts"))
+    minimum_open_interest = coerce_int(thresholds.get("min_open_interest"))
+    minimum_bid_ask_size = coerce_int(thresholds.get("min_bid_ask_size"))
+    minimum_option_volume = coerce_int(thresholds.get("min_option_volume"))
+    maximum_relative_spread = coerce_float(thresholds.get("max_relative_spread"))
+    maximum_bid_ask_spread = coerce_float(thresholds.get("max_bid_ask_spread"))
+    maximum_quote_age_seconds = coerce_int(thresholds.get("max_quote_age_seconds"))
+    expiration_count = coerce_int(chain.get("expiration_count")) or 0
+    contract_count = coerce_int(chain.get("contract_count")) or 0
+    snapshot_count = coerce_int(chain.get("snapshot_count")) or 0
+    delta_snapshot_count = coerce_int(chain.get("delta_snapshot_count")) or 0
+    expected_move_count = coerce_int(chain.get("expected_move_count")) or 0
+    examples = _chain_examples(snapshot)
+    raw_passes = list(examples.get("raw_passes") or [])
+    raw_pass_count = coerce_int(diagnostic_evidence.get("raw_pass_count"))
+    if raw_pass_count is None and raw_passes:
+        raw_pass_count = len(raw_passes)
+    snapshot_coverage_ratio = _ratio(snapshot_count, contract_count)
+    delta_coverage_ratio = _ratio(delta_snapshot_count, snapshot_count)
+    candidate_relative_spread = coerce_float(
+        candidate.get("relative_spread")
+        or candidate.get("short_relative_spread")
+        or candidate.get("long_relative_spread")
+        or contract.get("relative_spread")
+    )
+    candidate_open_interest = coerce_int(
+        candidate.get("open_interest") or candidate.get("short_open_interest") or candidate.get("long_open_interest") or contract.get("open_interest")
+    )
+    candidate_bid_ask_spread = _candidate_bid_ask_spread(candidate, contract)
+    candidate_option_volume = _candidate_option_volume(candidate, contract)
+    candidate_min_quote_size = _candidate_min_quote_size(candidate)
+    chain_rejection_counts = {
+        reason: count
+        for reason, value in raw_counts.items()
+        if reason in _CHAIN_USABILITY_REASON_MAP and (count := coerce_int(value)) not in (None, 0)
+    }
+    metrics = {
+        "expiration_count": expiration_count,
+        "contract_count": contract_count,
+        "snapshot_count": snapshot_count,
+        "delta_snapshot_count": delta_snapshot_count,
+        "expected_move_count": expected_move_count,
+        "snapshot_coverage_ratio": snapshot_coverage_ratio,
+        "delta_coverage_ratio": delta_coverage_ratio,
+        "raw_pass_count": raw_pass_count,
+        "candidate_count_for_symbol": coerce_int(snapshot.metadata.get("candidate_count_for_symbol")),
+        "candidate_open_interest": candidate_open_interest,
+        "candidate_relative_spread": candidate_relative_spread,
+        "candidate_bid_ask_spread": candidate_bid_ask_spread,
+        "candidate_option_volume": candidate_option_volume,
+        "candidate_min_quote_size": candidate_min_quote_size,
+        "raw_chain_rejection_counts": chain_rejection_counts,
+    }
+    resolved_thresholds = {
+        "min_target_dte_expirations": minimum_expirations,
+        "min_target_dte_contracts": minimum_contracts,
+        "min_chain_snapshot_count": minimum_snapshots,
+        "min_delta_snapshot_count": minimum_delta_snapshots,
+        "min_snapshot_coverage_ratio": minimum_snapshot_ratio,
+        "min_delta_coverage_ratio": minimum_delta_ratio,
+        "min_viable_contracts": minimum_viable_contracts,
+        "min_open_interest": minimum_open_interest,
+        "min_bid_ask_size": minimum_bid_ask_size,
+        "min_option_volume": minimum_option_volume,
+        "max_relative_spread": maximum_relative_spread,
+        "max_bid_ask_spread": maximum_bid_ask_spread,
+        "max_quote_age_seconds": maximum_quote_age_seconds,
+    }
+    blockers: list[str] = []
+    if minimum_expirations is not None and expiration_count < minimum_expirations:
+        blockers.append("target_dte_expiration_count_below_min")
+    if minimum_contracts is not None and contract_count < minimum_contracts:
+        blockers.append("target_dte_contract_count_below_min")
+    if minimum_snapshots is not None and snapshot_count < minimum_snapshots:
+        blockers.append("target_dte_snapshot_count_below_min")
+    if minimum_delta_snapshots is not None and delta_snapshot_count < minimum_delta_snapshots:
+        blockers.append("target_dte_delta_snapshot_count_below_min")
+    if expected_move_count <= 0:
+        blockers.append("target_dte_expected_move_missing")
+    if minimum_snapshot_ratio is not None and snapshot_coverage_ratio is not None and snapshot_coverage_ratio < minimum_snapshot_ratio:
+        blockers.append("target_dte_snapshot_coverage_below_min")
+    if minimum_delta_ratio is not None and delta_coverage_ratio is not None and delta_coverage_ratio < minimum_delta_ratio:
+        blockers.append("target_dte_delta_coverage_below_min")
+    if minimum_viable_contracts is not None and raw_pass_count is not None and raw_pass_count < minimum_viable_contracts:
+        blockers.append("target_dte_chain_no_viable_contracts")
+        for reason, _count in sorted(chain_rejection_counts.items(), key=lambda item: (-int(item[1]), item[0])):
+            mapped = _CHAIN_USABILITY_REASON_MAP[reason]
+            if mapped not in blockers:
+                blockers.append(mapped)
+    if candidate:
+        if minimum_open_interest is not None and (candidate_open_interest is None or candidate_open_interest < minimum_open_interest):
+            blockers.append("target_dte_candidate_open_interest_below_min")
+        if minimum_bid_ask_size is not None and (candidate_min_quote_size is None or candidate_min_quote_size < minimum_bid_ask_size):
+            blockers.append("target_dte_candidate_quote_size_below_min")
+        if minimum_option_volume is not None and (candidate_option_volume is None or candidate_option_volume < minimum_option_volume):
+            blockers.append("target_dte_candidate_option_volume_below_min")
+        if maximum_relative_spread is not None and candidate_relative_spread is not None and candidate_relative_spread > maximum_relative_spread:
+            blockers.append("target_dte_candidate_relative_spread_above_max")
+        if maximum_bid_ask_spread is not None and candidate_bid_ask_spread is not None and candidate_bid_ask_spread > maximum_bid_ask_spread:
+            blockers.append("target_dte_candidate_bid_ask_spread_above_max")
+    blockers = list(dict.fromkeys(blockers))
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Target-DTE option chain was not mechanically usable for momentum long calls.",
+        )
+    if raw_pass_count is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("target_dte_chain_viability_unknown",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Target-DTE chain viability could not be proven from diagnostics.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("target_dte_chain_usable",),
+        metrics=metrics,
+        thresholds=resolved_thresholds,
+        message="Target-DTE option chain had usable coverage and at least one viable contract.",
     )
 
 
@@ -829,9 +1242,12 @@ def _selection_live_ready(context: EntryQualityContext, snapshot: FeatureSnapsho
 _FILTERS = {
     "source_is_fresh": _source_is_fresh,
     "setup_context_usable": _setup_context_usable,
+    "relative_strength_supportive": _relative_strength_supportive,
+    "market_regime_supportive": _market_regime_supportive,
     "chain_data_available": _chain_data_available,
     "option_snapshots_available": _option_snapshots_available,
     "greeks_available": _greeks_available,
+    "target_dte_chain_usable": _target_dte_chain_usable,
     "strategy_family_matches": _strategy_family_matches,
     "dte_in_range": _dte_in_range,
     "delta_in_range": _delta_in_range,

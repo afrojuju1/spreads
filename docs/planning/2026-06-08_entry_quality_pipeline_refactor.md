@@ -2,7 +2,7 @@
 
 Date: 2026-06-08
 
-Status: partially implemented. Beads `spr-34u.1` through `spr-34u.5` are shipped for `momentum_long_calls`; `spr-34u.6` through `spr-34u.10` remain open for new filters, ops rendering, cleanup, and final cutover validation.
+Status: partially implemented. Beads `spr-34u.1` through `spr-34u.7` are shipped for `momentum_long_calls`; `spr-34u.8` through `spr-34u.10` remain open for ops rendering, cleanup, and final cutover validation.
 
 Related:
 
@@ -173,13 +173,13 @@ Examples:
 
 ## Existing Gate Migration
 
-The active `momentum_long_call_v1` profile starts with the gates Spreads already runs today. New relative-strength, market-regime, optionability, and EV filters are separate implementation beads so the cutover does not pretend future checks are active.
+The active `momentum_long_call_v1` profile now carries the migrated gates plus target-DTE chain viability and SPY/QQQ relative-strength/regime filters. EV and richer premium-quality work remain separate future beads so the current cutover does not pretend those checks are active.
 
 | Stage | Active filter ids | Existing evidence / reason codes |
 | --- | --- | --- |
 | `source_preflight` | `source_is_fresh` | `ResolvedTickerSet.blockers`, `ticker_source_ready`, `ticker_source_fallback`, stale/missing source reasons |
-| `underlying_setup` | `setup_context_usable` | setup status/score/reasons from candidate-builder diagnostics; unfavorable setup is watch unless current scoring blocks it |
-| `chain_viability` | `chain_data_available`, `option_snapshots_available`, `greeks_available` | `data_unavailable`, `no_snapshot`, `no_delta`, contract/snapshot/delta counts |
+| `underlying_setup` | `setup_context_usable`, `relative_strength_supportive`, `market_regime_supportive` | setup status/score/reasons from candidate-builder diagnostics; SPY/QQQ benchmark return and relative-strength metrics; unfavorable setup is watch unless current scoring blocks it |
+| `chain_viability` | `chain_data_available`, `option_snapshots_available`, `greeks_available`, `target_dte_chain_usable` | `data_unavailable`, `no_snapshot`, `no_delta`, target-DTE contract/snapshot/delta counts, raw viable-contract count, open-interest/size/spread chain blockers |
 | `contract_fit` | `strategy_family_matches`, `dte_in_range`, `delta_in_range`, `entry_recipe_passed` | `strategy_family_mismatch`, `dte_below_min`, `dte_above_max`, `short_delta_below_min`, `short_delta_above_max`, `delta_outside_range`, recipe failure reasons |
 | `premium_quality` | `open_interest_ok`, `relative_spread_ok`, `return_on_risk_ok`, `ranking_policy_passed` | `open_interest_below_min`, `open_interest_below_floor`, `relative_spread_above_max`, `relative_spread_above_ceiling`, `return_on_risk_below_min`, `return_on_risk_below_floor`, ranking policy blockers |
 | `selection` | `selection_score_ok`, `selection_live_ready` | `scoring_state`, `scoring_blockers`, `execution_blockers`, `selection_state`, `eligibility` from live selection |
@@ -313,8 +313,8 @@ This is intentionally a full cleanup path, not a compatibility wrapper.
 3. Done: move existing source/setup/chain/contract/ranking/runtime gates into the pipeline with no intended behavior change.
 4. Done: persist the quality waterfall on candidate diagnostics and candidate evidence.
 5. Done: cut over `momentum_long_calls` entry to `quality_profile: momentum_long_call_v1`.
-6. Remaining: add `optionable_chain_viability` early.
-7. Remaining: add `relative_strength_market_regime`.
+6. Done: add target-DTE optionable chain viability early.
+7. Done: add SPY/QQQ relative-strength and market-regime filters.
 8. Remaining: update ops CLI/dashboard to show filter waterfall.
 9. Remaining: remove stale duplicate gate plumbing once the pipeline is canonical.
 10. Remaining: live-validate the cutover after the remaining filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
@@ -376,7 +376,7 @@ Also do not add `max_premium` as a blunt quality filter. For long calls, high de
 ## Open Questions
 
 1. Should `watch` candidates drive capture targets even when they are not selectable?
-2. Should `relative_strength_market_regime` compare against SPY/QQQ only at first, or include sector ETFs when sector mapping is available?
-3. Should profile overrides be allowed only for numeric thresholds, or also for enabling/disabling individual filters?
+2. Should sector ETF comparison be added after clean sector mapping exists?
+3. Should profile overrides remain numeric-threshold only, or eventually allow enabling/disabling individual filters?
 
 Recommended answer for question 3: numeric thresholds only at first.
