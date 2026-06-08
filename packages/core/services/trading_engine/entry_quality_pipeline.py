@@ -844,6 +844,26 @@ _FILTERS = {
     "selection_live_ready": _selection_live_ready,
 }
 
+PRE_SELECTION_ENTRY_QUALITY_STAGES = (
+    EntryQualityStageName.SOURCE_PREFLIGHT,
+    EntryQualityStageName.UNDERLYING_SETUP,
+    EntryQualityStageName.CHAIN_VIABILITY,
+    EntryQualityStageName.CONTRACT_FIT,
+    EntryQualityStageName.PREMIUM_QUALITY,
+)
+
+POST_SELECTION_ENTRY_QUALITY_STAGES = (EntryQualityStageName.SELECTION,)
+
+
+def _stage_names(
+    values: Sequence[EntryQualityStageName | str] | None,
+    *,
+    profile: EntryQualityProfile,
+) -> tuple[EntryQualityStageName, ...]:
+    if values is None:
+        return tuple(stage.stage for stage in profile.stages)
+    return tuple(value if isinstance(value, EntryQualityStageName) else EntryQualityStageName(str(value)) for value in values)
+
 
 def evaluate_entry_quality_snapshot(
     *,
@@ -851,18 +871,26 @@ def evaluate_entry_quality_snapshot(
     snapshot: FeatureSnapshot,
     profile: EntryQualityProfile | None = None,
     candidate: Mapping[str, Any] | None = None,
+    stage_names: Sequence[EntryQualityStageName | str] | None = None,
+    evaluation_phase: str = "full",
 ) -> EntryQualityWaterfall:
     resolved_profile = profile or resolve_entry_quality_profile(context.quality_profile_id)
+    included_stages = _stage_names(stage_names, profile=resolved_profile)
+    included_stage_set = set(included_stages)
     waterfall = EntryQualityWaterfall(
         profile_id=resolved_profile.profile_id,
         metadata={
             "symbol": snapshot.symbol,
             "trade_structure": context.trade_structure,
             "candidate_attached": snapshot.candidate is not None or candidate is not None,
+            "evaluation_phase": evaluation_phase,
+            "included_stages": [stage.value for stage in included_stages],
         },
     )
     active_snapshot = snapshot if candidate is None else snapshot.with_candidate(candidate)
     for stage in resolved_profile.stages:
+        if stage.stage not in included_stage_set:
+            continue
         for filter_ref in stage.filters:
             evaluator = _FILTERS.get(filter_ref.filter_id)
             if evaluator is None:
@@ -884,6 +912,8 @@ def evaluate_momentum_long_call_snapshot(
     context: EntryQualityContext,
     snapshot: FeatureSnapshot,
     candidate: Mapping[str, Any] | None = None,
+    stage_names: Sequence[EntryQualityStageName | str] | None = None,
+    evaluation_phase: str = "full",
 ) -> EntryQualityWaterfall:
     profile = resolve_entry_quality_profile(MOMENTUM_LONG_CALL_PROFILE_ID)
     return evaluate_entry_quality_snapshot(
@@ -891,10 +921,14 @@ def evaluate_momentum_long_call_snapshot(
         snapshot=snapshot,
         profile=profile,
         candidate=candidate,
+        stage_names=stage_names,
+        evaluation_phase=evaluation_phase,
     )
 
 
 __all__ = [
+    "POST_SELECTION_ENTRY_QUALITY_STAGES",
+    "PRE_SELECTION_ENTRY_QUALITY_STAGES",
     "evaluate_entry_quality_snapshot",
     "evaluate_momentum_long_call_snapshot",
 ]

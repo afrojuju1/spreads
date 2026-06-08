@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from core.services.option_structures import payload_structure_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality import EntryQualityContext, EntryQualityWaterfall, FeatureSnapshot
-from core.services.trading_engine.entry_quality_pipeline import evaluate_entry_quality_snapshot
+from core.services.trading_engine.entry_quality_pipeline import PRE_SELECTION_ENTRY_QUALITY_STAGES, evaluate_entry_quality_snapshot
 from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 
 if TYPE_CHECKING:
@@ -123,6 +123,7 @@ class EntryQualityAnalysis:
                     context=self.context,
                     snapshot=base,
                     candidate=signal_row,
+                    evaluation_phase="post_selection",
                 )
             if existing is not None:
                 return existing
@@ -178,6 +179,8 @@ def build_entry_quality_analysis(
         waterfall = evaluate_entry_quality_snapshot(
             context=context,
             snapshot=snapshot,
+            stage_names=PRE_SELECTION_ENTRY_QUALITY_STAGES,
+            evaluation_phase="pre_selection",
         )
         all_waterfalls.append(waterfall)
         key = quality_key_for_snapshot(snapshot)

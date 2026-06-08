@@ -25,7 +25,12 @@ from .entry_quality import (
     resolve_entry_quality_profile,
 )
 from .entry_quality_evidence import EntryQualityAnalysis, build_entry_quality_analysis
-from .entry_quality_pipeline import evaluate_entry_quality_snapshot, evaluate_momentum_long_call_snapshot
+from .entry_quality_pipeline import (
+    POST_SELECTION_ENTRY_QUALITY_STAGES,
+    PRE_SELECTION_ENTRY_QUALITY_STAGES,
+    evaluate_entry_quality_snapshot,
+    evaluate_momentum_long_call_snapshot,
+)
 from .feature_snapshots import (
     FEATURE_SNAPSHOT_BUILDER_REGISTRY,
     FeatureSnapshotBuilder,
@@ -66,6 +71,8 @@ __all__ = [
     "FilterResultStatus",
     "MOMENTUM_LONG_CALL_PROFILE_ID",
     "MOMENTUM_LONG_CALL_V1",
+    "POST_SELECTION_ENTRY_QUALITY_STAGES",
+    "PRE_SELECTION_ENTRY_QUALITY_STAGES",
     "PortfolioEngine",
     "PostgresDataEngine",
     "PostgresPortfolioEngine",
