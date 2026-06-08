@@ -32,9 +32,7 @@ def build_iron_condors(
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
-    common_expirations = sorted(
-        set(call_contracts_by_expiration).intersection(put_contracts_by_expiration)
-    )
+    common_expirations = sorted(set(call_contracts_by_expiration).intersection(put_contracts_by_expiration))
     delta_window = max(args.short_delta_max - args.short_delta_min, 0.08)
 
     for expiration_date in common_expirations:
@@ -54,24 +52,10 @@ def build_iron_condors(
         put_snapshots = put_snapshots_by_expiration.get(expiration_date, {})
         expected_move = expected_moves_by_expiration.get(expiration_date)
 
-        call_contract_by_strike = {
-            round(contract.strike_price, 4): contract for contract in call_contracts
-        }
+        call_contract_by_strike = {round(contract.strike_price, 4): contract for contract in call_contracts}
 
-        short_calls = [
-            contract
-            for contract in call_contracts
-            if contract.strike_price > spot_price
-        ]
-        short_puts = list(
-            reversed(
-                [
-                    contract
-                    for contract in put_contracts
-                    if contract.strike_price < spot_price
-                ]
-            )
-        )
+        short_calls = [contract for contract in call_contracts if contract.strike_price > spot_price]
+        short_puts = list(reversed([contract for contract in put_contracts if contract.strike_price < spot_price]))
 
         for short_put in short_puts:
             short_put_snapshot = put_snapshots.get(short_put.symbol)
@@ -100,9 +84,7 @@ def build_iron_condors(
                     long_put.open_interest < args.min_open_interest
                     or long_put_snapshot.bid_size <= 0
                     or long_put_snapshot.ask_size <= 0
-                    or relative_spread_exceeds(
-                        long_put_snapshot, args.max_relative_spread
-                    )
+                    or relative_spread_exceeds(long_put_snapshot, args.max_relative_spread)
                 ):
                     continue
 
@@ -120,19 +102,13 @@ def build_iron_condors(
                             short_call_snapshot,
                             args.max_relative_spread,
                         )
-                        or not (
-                            args.short_delta_min
-                            <= short_call_delta
-                            <= args.short_delta_max
-                        )
+                        or not (args.short_delta_min <= short_call_delta <= args.short_delta_max)
                     ):
                         continue
                     if abs(short_put_delta - short_call_delta) > delta_window:
                         continue
 
-                    long_call = call_contract_by_strike.get(
-                        round(short_call.strike_price + width, 4)
-                    )
+                    long_call = call_contract_by_strike.get(round(short_call.strike_price + width, 4))
                     if long_call is None:
                         continue
                     long_call_snapshot = call_snapshots.get(long_call.symbol)
@@ -150,17 +126,11 @@ def build_iron_condors(
                         continue
 
                     midpoint_credit = round(
-                        short_put_snapshot.midpoint
-                        + short_call_snapshot.midpoint
-                        - long_put_snapshot.midpoint
-                        - long_call_snapshot.midpoint,
+                        short_put_snapshot.midpoint + short_call_snapshot.midpoint - long_put_snapshot.midpoint - long_call_snapshot.midpoint,
                         4,
                     )
                     natural_credit = round(
-                        short_put_snapshot.bid
-                        + short_call_snapshot.bid
-                        - long_put_snapshot.ask
-                        - long_call_snapshot.ask,
+                        short_put_snapshot.bid + short_call_snapshot.bid - long_put_snapshot.ask - long_call_snapshot.ask,
                         4,
                     )
                     if midpoint_credit < effective_min_credit(width, args):
@@ -209,9 +179,7 @@ def build_iron_condors(
                             upper_boundary - upper_breakeven,
                         )
                     side_balance_score = round(
-                        clamp(
-                            1.0 - abs(short_put_delta - short_call_delta) / delta_window
-                        ),
+                        clamp(1.0 - abs(short_put_delta - short_call_delta) / delta_window),
                         4,
                     )
 
@@ -239,29 +207,25 @@ def build_iron_condors(
                             4,
                         ),
                         long_delta=round(
-                            (
-                                abs(long_put_snapshot.delta or 0.0)
-                                + abs(long_call_snapshot.delta or 0.0)
-                            )
-                            / 2.0,
+                            (abs(long_put_snapshot.delta or 0.0) + abs(long_call_snapshot.delta or 0.0)) / 2.0,
                             4,
                         ),
-                        greeks_source=short_put_snapshot.greeks_source
-                        if (
+                        greeks_source=(
                             short_put_snapshot.greeks_source
-                            == long_put_snapshot.greeks_source
-                            == short_call_snapshot.greeks_source
-                            == long_call_snapshot.greeks_source
-                        )
-                        else "mixed",
+                            if (
+                                short_put_snapshot.greeks_source
+                                == long_put_snapshot.greeks_source
+                                == short_call_snapshot.greeks_source
+                                == long_call_snapshot.greeks_source
+                            )
+                            else "mixed"
+                        ),
                         short_midpoint=round(
-                            (short_put_snapshot.midpoint + short_call_snapshot.midpoint)
-                            / 2.0,
+                            (short_put_snapshot.midpoint + short_call_snapshot.midpoint) / 2.0,
                             4,
                         ),
                         long_midpoint=round(
-                            (long_put_snapshot.midpoint + long_call_snapshot.midpoint)
-                            / 2.0,
+                            (long_put_snapshot.midpoint + long_call_snapshot.midpoint) / 2.0,
                             4,
                         ),
                         short_bid=round(
@@ -338,25 +302,15 @@ def build_iron_condors(
                             long_call_snapshot.ask_size,
                         ),
                         short_implied_volatility=round(
-                            (
-                                (short_put_snapshot.implied_volatility or 0.0)
-                                + (short_call_snapshot.implied_volatility or 0.0)
-                            )
-                            / 2.0,
+                            ((short_put_snapshot.implied_volatility or 0.0) + (short_call_snapshot.implied_volatility or 0.0)) / 2.0,
                             4,
                         ),
                         long_implied_volatility=round(
-                            (
-                                (long_put_snapshot.implied_volatility or 0.0)
-                                + (long_call_snapshot.implied_volatility or 0.0)
-                            )
-                            / 2.0,
+                            ((long_put_snapshot.implied_volatility or 0.0) + (long_call_snapshot.implied_volatility or 0.0)) / 2.0,
                             4,
                         ),
-                        short_volume=(short_put_snapshot.daily_volume or 0)
-                        + (short_call_snapshot.daily_volume or 0),
-                        long_volume=(long_put_snapshot.daily_volume or 0)
-                        + (long_call_snapshot.daily_volume or 0),
+                        short_volume=(short_put_snapshot.daily_volume or 0) + (short_call_snapshot.daily_volume or 0),
+                        long_volume=(long_put_snapshot.daily_volume or 0) + (long_call_snapshot.daily_volume or 0),
                         lower_breakeven=lower_breakeven,
                         upper_breakeven=upper_breakeven,
                         side_balance_score=side_balance_score,

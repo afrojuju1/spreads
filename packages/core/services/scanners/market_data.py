@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, time
+from datetime import datetime
 from typing import Any, Iterable
 
 from core.domain.models import ExpectedMoveEstimate, OptionContract, OptionSnapshot
-from core.services.market_dates import NEW_YORK
+from core.services.strategy_candidate_builders.runtime_context import option_expiry_close
 
 
 def count_snapshot_delta_coverage(
@@ -109,15 +109,6 @@ def build_expected_move_estimates(
     return estimates
 
 
-def option_expiry_close(expiration_date: str) -> datetime:
-    local_close = datetime.combine(
-        datetime.fromisoformat(expiration_date).date(),
-        time(16, 0),
-        tzinfo=NEW_YORK,
-    )
-    return local_close.astimezone(UTC)
-
-
 def enrich_missing_greeks(
     *,
     symbol: str,
@@ -206,6 +197,5 @@ __all__ = [
     "count_snapshot_delta_coverage",
     "enrich_missing_greeks",
     "group_contracts_by_expiration",
-    "option_expiry_close",
     "pick_atm_expected_move",
 ]

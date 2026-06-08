@@ -13,14 +13,12 @@ from core.domain.profiles import (
 )
 from core.integrations.calendar_events.models import CalendarPolicyDecision
 from core.integrations.calendar_events.policy import apply_strategy_calendar_policy
-from core.services.scanners.market_data import option_expiry_close
+from core.services.strategy_candidate_builders.runtime_context import candidate_session_bucket, option_expiry_close
 from core.services.scanners.config import (
     normalize_calendar_confidence_policy,
-    resolve_scan_session_bucket,
 )
 from core.services.option_structures import candidate_legs, legs_identity_key
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
-
 
 _CONSENSUS_BACKED_EARNINGS_STATUSES = {"consensus", "date_only"}
 _RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE = {"medium", "high"}
@@ -37,22 +35,13 @@ def _calendar_confidence_reason(
     if str(candidate.calendar_confidence or "").strip().lower() != "low":
         return None
 
-    policy = normalize_calendar_confidence_policy(
-        getattr(args, "calendar_confidence_policy", None)
-    )
+    policy = normalize_calendar_confidence_policy(getattr(args, "calendar_confidence_policy", None))
     if policy == "off":
         return None
     if policy == "consensus":
-        consensus_status = str(
-            candidate.earnings_consensus_status or "missing"
-        ).strip().lower()
-        timing_confidence = str(
-            candidate.earnings_timing_confidence or "unknown"
-        ).strip().lower()
-        if (
-            consensus_status in _CONSENSUS_BACKED_EARNINGS_STATUSES
-            and timing_confidence in _RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE
-        ):
+        consensus_status = str(candidate.earnings_consensus_status or "missing").strip().lower()
+        timing_confidence = str(candidate.earnings_timing_confidence or "unknown").strip().lower()
+        if consensus_status in _CONSENSUS_BACKED_EARNINGS_STATUSES and timing_confidence in _RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE:
             return None
     return "Calendar data confidence is low for this single-name candidate"
 
@@ -79,41 +68,25 @@ def assess_data_quality(
             penalized = True
         reasons.append(reason)
     elif long_vol:
-        if (
-            candidate.modeled_move_vs_break_even_move is not None
-            and candidate.modeled_move_vs_break_even_move < 0.85
-        ):
-            reason = (
-                "Modeled move does not clear the structure break-even cleanly "
-                f"({candidate.modeled_move_vs_break_even_move:.2f} < 0.85)"
-            )
+        if candidate.modeled_move_vs_break_even_move is not None and candidate.modeled_move_vs_break_even_move < 0.85:
+            reason = "Modeled move does not clear the structure break-even cleanly " f"({candidate.modeled_move_vs_break_even_move:.2f} < 0.85)"
             if args.data_policy == "strict":
                 blocked = True
             else:
                 penalized = True
             reasons.append(reason)
     else:
-        short_ratio = (
-            candidate.short_vs_expected_move or 0.0
-        ) / candidate.expected_move
-        breakeven_ratio = (
-            candidate.breakeven_vs_expected_move or 0.0
-        ) / candidate.expected_move
+        short_ratio = (candidate.short_vs_expected_move or 0.0) / candidate.expected_move
+        breakeven_ratio = (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
         if short_ratio < args.min_short_vs_expected_move_ratio:
-            reason = (
-                f"Structure strike sits too far inside expected move "
-                f"({short_ratio:.2f} < {args.min_short_vs_expected_move_ratio:.2f})"
-            )
+            reason = f"Structure strike sits too far inside expected move " f"({short_ratio:.2f} < {args.min_short_vs_expected_move_ratio:.2f})"
             if args.data_policy == "strict":
                 blocked = True
             else:
                 penalized = True
             reasons.append(reason)
         if breakeven_ratio < args.min_breakeven_vs_expected_move_ratio:
-            reason = (
-                f"Breakeven sits too far inside expected move "
-                f"({breakeven_ratio:.2f} < {args.min_breakeven_vs_expected_move_ratio:.2f})"
-            )
+            reason = f"Breakeven sits too far inside expected move " f"({breakeven_ratio:.2f} < {args.min_breakeven_vs_expected_move_ratio:.2f})"
             if args.data_policy == "strict":
                 blocked = True
             else:
@@ -121,10 +94,7 @@ def assess_data_quality(
             reasons.append(reason)
 
     if candidate.fill_ratio < args.min_fill_ratio:
-        reason = (
-            f"Natural-to-mid fill ratio is too weak "
-            f"({candidate.fill_ratio:.2f} < {args.min_fill_ratio:.2f})"
-        )
+        reason = f"Natural-to-mid fill ratio is too weak " f"({candidate.fill_ratio:.2f} < {args.min_fill_ratio:.2f})"
         if args.data_policy == "strict":
             blocked = True
         else:
@@ -181,9 +151,7 @@ def annotate_data_quality(
 ) -> list[SpreadCandidate]:
     enriched: list[SpreadCandidate] = []
     for candidate in candidates:
-        status, reasons = assess_data_quality(
-            candidate, underlying_type=underlying_type, args=args
-        )
+        status, reasons = assess_data_quality(candidate, underlying_type=underlying_type, args=args)
         enriched.append(replace(candidate, data_status=status, data_reasons=reasons))
     return enriched
 
@@ -202,9 +170,7 @@ def annotate_ranking_policy(
                 ranking_policy=dict(evaluation["policy"]),
                 ranking_policy_status=str(evaluation["status"]),
                 ranking_policy_blockers=tuple(evaluation["blockers"]),
-                ranking_policy_margin_to_pass=dict(
-                    evaluation.get("margin_to_pass") or {}
-                ),
+                ranking_policy_margin_to_pass=dict(evaluation.get("margin_to_pass") or {}),
             )
         )
     return enriched
@@ -216,21 +182,15 @@ def attach_ranking_policy(
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
     annotated = annotate_ranking_policy(candidates=candidates, args=args)
-    return [
-        candidate
-        for candidate in annotated
-        if str(candidate.ranking_policy_status or "passed").lower() != "blocked"
-    ]
+    return [candidate for candidate in annotated if str(candidate.ranking_policy_status or "passed").lower() != "blocked"]
 
 
-def build_selection_notes(
-    candidate: SpreadCandidate, args: argparse.Namespace
-) -> tuple[str, ...]:
+def build_selection_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> tuple[str, ...]:
     notes: list[str] = []
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
     delta_target = args.short_delta_target
     if args.profile == "0dte":
-        session_bucket = resolve_scan_session_bucket(args) or "off_hours"
+        session_bucket = candidate_session_bucket(args) or "off_hours"
         notes.append(f"session-{format_session_bucket(session_bucket)}")
         delta_target = zero_dte_delta_target(session_bucket)
     if candidate.strategy == "long_straddle":
@@ -245,10 +205,7 @@ def build_selection_notes(
         notes.append("short-call")
     elif candidate.strategy == "short_put":
         notes.append("short-put")
-    elif (
-        candidate.short_delta is not None
-        and abs(abs(candidate.short_delta) - delta_target) <= 0.02
-    ):
+    elif candidate.short_delta is not None and abs(abs(candidate.short_delta) - delta_target) <= 0.02:
         notes.append("delta-fit")
     if long_vol and candidate.modeled_move_vs_break_even_move is not None:
         if candidate.modeled_move_vs_break_even_move >= 1.0:
@@ -269,9 +226,7 @@ def build_selection_notes(
         notes.append("good-fill")
     elif candidate.fill_ratio >= args.min_fill_ratio:
         notes.append("acceptable-fill")
-    if min(candidate.short_open_interest, candidate.long_open_interest) >= max(
-        args.min_open_interest * 3, 500
-    ):
+    if min(candidate.short_open_interest, candidate.long_open_interest) >= max(args.min_open_interest * 3, 500):
         notes.append("liquid")
     if candidate.calendar_status == "clean":
         notes.append("calendar-clean")
@@ -289,27 +244,16 @@ def build_selection_notes(
         notes.append("policy-blocked")
     if candidate.greeks_source != "alpaca":
         notes.append("local-greeks")
-    if (
-        len(notes) > 4
-        and candidate.greeks_source != "alpaca"
-        and "local-greeks" not in notes[:4]
-    ):
+    if len(notes) > 4 and candidate.greeks_source != "alpaca" and "local-greeks" not in notes[:4]:
         notes = [*notes[:3], "local-greeks"]
     return tuple(notes[:4])
 
 
-def attach_selection_notes(
-    candidates: list[SpreadCandidate], args: argparse.Namespace
-) -> list[SpreadCandidate]:
-    return [
-        replace(candidate, selection_notes=build_selection_notes(candidate, args))
-        for candidate in candidates
-    ]
+def attach_selection_notes(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
+    return [replace(candidate, selection_notes=build_selection_notes(candidate, args)) for candidate in candidates]
 
 
-def deduplicate_candidates(
-    candidates: list[SpreadCandidate], expand_duplicates: bool
-) -> list[SpreadCandidate]:
+def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates: bool) -> list[SpreadCandidate]:
     if expand_duplicates:
         return candidates
 
@@ -347,9 +291,7 @@ def resolve_calendar_decisions_by_expiration(
 
     resolved_window_start = window_start or datetime.now(UTC).isoformat()
     decisions_by_expiration: dict[str, CalendarPolicyDecision] = {}
-    for expiration_date in sorted(
-        {candidate.expiration_date for candidate in candidates}, reverse=True
-    ):
+    for expiration_date in sorted({candidate.expiration_date for candidate in candidates}, reverse=True):
         context = resolver.resolve_calendar_context(
             symbol=symbol,
             strategy=strategy,

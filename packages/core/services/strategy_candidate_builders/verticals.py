@@ -10,7 +10,7 @@ from core.domain.models import (
     SpreadCandidate,
 )
 from core.services.option_structures import net_premium_kind
-from core.services.scanners.config import strategy_option_type
+from core.services.strategy_specs import strategy_option_type
 
 from .analytics import attach_structure_analytics
 from .shared import (
@@ -42,11 +42,7 @@ def build_vertical_spreads(
         expected_move = expected_moves_by_expiration.get(expiration_date)
         days_to_expiration = days_from_reference(expiration_date, args)
 
-        short_contracts = (
-            sorted_contracts
-            if option_type == "call"
-            else list(reversed(sorted_contracts))
-        )
+        short_contracts = sorted_contracts if option_type == "call" else list(reversed(sorted_contracts))
 
         for short_contract in short_contracts:
             short_snapshot = snapshot_map.get(short_contract.symbol)
@@ -69,9 +65,7 @@ def build_vertical_spreads(
             if short_delta is None:
                 continue
             short_delta_magnitude = abs(short_delta)
-            if not (
-                args.short_delta_min <= short_delta_magnitude <= args.short_delta_max
-            ):
+            if not (args.short_delta_min <= short_delta_magnitude <= args.short_delta_max):
                 continue
 
             short_index = sorted_contracts.index(short_contract)
@@ -151,28 +145,18 @@ def build_vertical_spreads(
 
                 if option_type == "call":
                     breakeven = (
-                        long_contract.strike_price + midpoint_credit
-                        if premium_kind == "debit"
-                        else short_contract.strike_price + midpoint_credit
+                        long_contract.strike_price + midpoint_credit if premium_kind == "debit" else short_contract.strike_price + midpoint_credit
                     )
-                    short_otm_pct = (
-                        short_contract.strike_price - spot_price
-                    ) / spot_price
+                    short_otm_pct = (short_contract.strike_price - spot_price) / spot_price
                     breakeven_cushion_pct = (breakeven - spot_price) / spot_price
                 else:
                     breakeven = (
-                        long_contract.strike_price - midpoint_credit
-                        if premium_kind == "debit"
-                        else short_contract.strike_price - midpoint_credit
+                        long_contract.strike_price - midpoint_credit if premium_kind == "debit" else short_contract.strike_price - midpoint_credit
                     )
-                    short_otm_pct = (
-                        spot_price - short_contract.strike_price
-                    ) / spot_price
+                    short_otm_pct = (spot_price - short_contract.strike_price) / spot_price
                     breakeven_cushion_pct = (spot_price - breakeven) / spot_price
                 fill_ratio = clamp(
-                    midpoint_credit / natural_credit
-                    if premium_kind == "debit"
-                    else natural_credit / midpoint_credit,
+                    midpoint_credit / natural_credit if premium_kind == "debit" else natural_credit / midpoint_credit,
                     0.0,
                     1.25,
                 )
@@ -187,23 +171,15 @@ def build_vertical_spreads(
                     expected_move_source_strike = expected_move.reference_strike
                     if option_type == "call":
                         expected_move_boundary = spot_price + expected_move.amount
-                        short_vs_expected_move = (
-                            short_contract.strike_price - expected_move_boundary
-                        )
+                        short_vs_expected_move = short_contract.strike_price - expected_move_boundary
                         breakeven_vs_expected_move = (
-                            expected_move_boundary - breakeven
-                            if premium_kind == "debit"
-                            else breakeven - expected_move_boundary
+                            expected_move_boundary - breakeven if premium_kind == "debit" else breakeven - expected_move_boundary
                         )
                     else:
                         expected_move_boundary = spot_price - expected_move.amount
-                        short_vs_expected_move = (
-                            expected_move_boundary - short_contract.strike_price
-                        )
+                        short_vs_expected_move = expected_move_boundary - short_contract.strike_price
                         breakeven_vs_expected_move = (
-                            breakeven - expected_move_boundary
-                            if premium_kind == "debit"
-                            else expected_move_boundary - breakeven
+                            breakeven - expected_move_boundary if premium_kind == "debit" else expected_move_boundary - breakeven
                         )
 
                 structure = build_vertical_candidate_structure(
@@ -226,9 +202,7 @@ def build_vertical_spreads(
                     width=width,
                     short_delta=short_delta,
                     long_delta=long_delta,
-                    greeks_source=short_snapshot.greeks_source
-                    if short_snapshot.greeks_source == long_snapshot.greeks_source
-                    else "mixed",
+                    greeks_source=short_snapshot.greeks_source if short_snapshot.greeks_source == long_snapshot.greeks_source else "mixed",
                     short_midpoint=short_snapshot.midpoint,
                     long_midpoint=long_snapshot.midpoint,
                     short_bid=short_snapshot.bid,

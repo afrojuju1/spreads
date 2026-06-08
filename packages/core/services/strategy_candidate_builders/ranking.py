@@ -9,7 +9,7 @@ from core.domain.profiles import (
     LONG_VOL_STRATEGIES,
     zero_dte_delta_target,
 )
-from core.services.scanners.config import resolve_scan_session_bucket
+from core.services.strategy_candidate_builders.runtime_context import candidate_session_bucket
 from core.services.option_structures import net_premium_kind
 
 from .shared import log_scaled_score
@@ -134,11 +134,7 @@ def _analytics_score(
             _model_implied_volatility_score(candidate, args),
         ),
     )
-    weighted_components = [
-        (float(weight), float(score))
-        for weight, score in components
-        if weight > 0 and score is not None
-    ]
+    weighted_components = [(float(weight), float(score)) for weight, score in components if weight > 0 and score is not None]
     if not weighted_components:
         return None
     total_weight = sum(weight for weight, _score in weighted_components)
@@ -150,9 +146,7 @@ def _analytics_score(
 def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
     premium_kind = net_premium_kind(candidate.strategy)
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
-    session_bucket = (
-        resolve_scan_session_bucket(args) if args.profile == "0dte" else None
-    )
+    session_bucket = candidate_session_bucket(args) if args.profile == "0dte" else None
     if args.profile == "0dte":
         delta_target = zero_dte_delta_target(session_bucket or "off_hours")
     elif candidate.strategy == "long_straddle":
@@ -164,15 +158,11 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         delta_half_band = 0.20
     delta_score = 1.0
     if candidate.short_delta is not None:
-        delta_score = 1.0 - min(
-            abs(abs(candidate.short_delta) - delta_target) / delta_half_band, 1.0
-        )
+        delta_score = 1.0 - min(abs(abs(candidate.short_delta) - delta_target) / delta_half_band, 1.0)
 
     dte_target = (args.min_dte + args.max_dte) / 2.0
     dte_half_band = max((args.max_dte - args.min_dte) / 2.0, 1.0)
-    dte_score = 1.0 - min(
-        abs(candidate.days_to_expiration - dte_target) / dte_half_band, 1.0
-    )
+    dte_score = 1.0 - min(abs(candidate.days_to_expiration - dte_target) / dte_half_band, 1.0)
 
     fill_score = clamp(candidate.fill_ratio)
     liquidity_score = 0.75 * log_scaled_score(
@@ -190,9 +180,7 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
     elif args.profile == "0dte":
         width_target = 2.0 if session_bucket == "late" else 1.0
     else:
-        width_target = max(
-            args.min_width, 2.0 if args.profile == "core" else args.min_width
-        )
+        width_target = max(args.min_width, 2.0 if args.profile == "core" else args.min_width)
     width_window = max(args.max_width - args.min_width, 1.0)
     if candidate.strategy in {
         "long_call",
@@ -218,20 +206,11 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         breakeven_cushion_score = clamp(candidate.breakeven_cushion_pct / 0.035)
 
     if long_vol:
-        short_expected_move_score = clamp(
-            ((candidate.modeled_move_vs_implied_move or 0.85) - 0.80) / 0.35
-        )
-        breakeven_expected_move_score = clamp(
-            ((candidate.modeled_move_vs_break_even_move or 0.85) - 0.80) / 0.30
-        )
+        short_expected_move_score = clamp(((candidate.modeled_move_vs_implied_move or 0.85) - 0.80) / 0.35)
+        breakeven_expected_move_score = clamp(((candidate.modeled_move_vs_break_even_move or 0.85) - 0.80) / 0.30)
     elif candidate.expected_move and candidate.expected_move > 0:
-        short_expected_move_score = clamp(
-            0.50 + (candidate.short_vs_expected_move or 0.0) / candidate.expected_move
-        )
-        breakeven_expected_move_score = clamp(
-            0.45
-            + (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
-        )
+        short_expected_move_score = clamp(0.50 + (candidate.short_vs_expected_move or 0.0) / candidate.expected_move)
+        breakeven_expected_move_score = clamp(0.45 + (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move)
     else:
         short_expected_move_score = clamp(candidate.short_otm_pct / 0.03)
         breakeven_expected_move_score = breakeven_cushion_score
@@ -249,10 +228,9 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
     analytics_score = _analytics_score(candidate, args)
     base_score = legacy_score
     if analytics_score is not None:
-        base_score = (
-            (LEGACY_RANKING_WEIGHT * legacy_score)
-            + (ANALYTICS_RANKING_WEIGHT * analytics_score)
-        ) / (LEGACY_RANKING_WEIGHT + ANALYTICS_RANKING_WEIGHT)
+        base_score = ((LEGACY_RANKING_WEIGHT * legacy_score) + (ANALYTICS_RANKING_WEIGHT * analytics_score)) / (
+            LEGACY_RANKING_WEIGHT + ANALYTICS_RANKING_WEIGHT
+        )
 
     calendar_multiplier = {
         "clean": 1.0,
@@ -271,18 +249,11 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         "penalized": 0.90,
         "blocked": 0.0,
     }.get(candidate.data_status, 1.0)
-    return round(
-        base_score * calendar_multiplier * setup_multiplier * data_multiplier * 100.0, 1
-    )
+    return round(base_score * calendar_multiplier * setup_multiplier * data_multiplier * 100.0, 1)
 
 
-def rank_candidates(
-    candidates: list[SpreadCandidate], args: argparse.Namespace
-) -> list[SpreadCandidate]:
-    ranked = [
-        replace(candidate, quality_score=score_candidate(candidate, args))
-        for candidate in candidates
-    ]
+def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
+    ranked = [replace(candidate, quality_score=score_candidate(candidate, args)) for candidate in candidates]
     return sort_candidates_for_display(ranked)
 
 

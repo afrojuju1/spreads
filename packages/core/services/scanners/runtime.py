@@ -23,10 +23,9 @@ from core.services.scanners.config import (
     build_filter_payload,
     clone_args,
     concrete_strategies,
-    resolve_scan_reference_date,
-    resolve_scan_reference_datetime,
     resolve_symbol_scan_args,
 )
+from core.services.strategy_candidate_builders.runtime_context import candidate_reference_date, candidate_reference_datetime
 from core.services.strategy_specs import resolve_strategy_spec
 from core.services.scanners.market_data import (
     build_expected_move_estimates,
@@ -51,7 +50,7 @@ from core.services.scanners.setup import (
     attach_underlying_setup,
     serialize_setup_context,
 )
-from core.services.scanners.builders.ranking import (
+from core.services.strategy_candidate_builders.ranking import (
     rank_candidates,
     sort_candidates_for_display,
 )
@@ -172,8 +171,8 @@ def build_symbol_market_slice(
 ) -> SymbolMarketSlice:
     normalized_symbol = symbol.upper()
     underlying_type = classify_underlying_type(normalized_symbol)
-    reference_date = resolve_scan_reference_date(symbol_args)
-    reference_timestamp = resolve_scan_reference_datetime(symbol_args) or datetime.now(UTC)
+    reference_date = candidate_reference_date(symbol_args)
+    reference_timestamp = candidate_reference_datetime(symbol_args) or datetime.now(UTC)
     min_expiration = (reference_date + timedelta(days=symbol_args.min_dte)).isoformat()
     max_expiration = (reference_date + timedelta(days=symbol_args.max_dte)).isoformat()
 
@@ -388,7 +387,7 @@ def build_candidates_with_details_from_market_slice(
         resolver=calendar_resolver,
         calendar_policy=symbol_args.calendar_policy,
         refresh_calendar_events=symbol_args.refresh_calendar_events,
-        window_start=(None if resolve_scan_reference_datetime(symbol_args) is None else resolve_scan_reference_datetime(symbol_args).isoformat()),
+        window_start=(None if candidate_reference_datetime(symbol_args) is None else candidate_reference_datetime(symbol_args).isoformat()),
     )
     calendar_annotated_candidates = attach_calendar_decisions_from_map(
         candidates=setup_candidates,

@@ -1,1 +1,0 @@
-"""Scanner candidate builders package."""

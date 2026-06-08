@@ -5,9 +5,9 @@ import math
 
 from core.common import clamp
 from core.domain.models import OptionSnapshot
-from core.services.scanners.config import (
-    resolve_scan_reference_date,
-    resolve_scan_session_bucket,
+from core.services.strategy_candidate_builders.runtime_context import (
+    candidate_reference_date,
+    candidate_session_bucket,
 )
 
 
@@ -15,7 +15,7 @@ def effective_min_credit(width: float, args: argparse.Namespace) -> float:
     threshold = args.min_credit
     if args.profile != "0dte":
         return threshold
-    session_bucket = resolve_scan_session_bucket(args) or "off_hours"
+    session_bucket = candidate_session_bucket(args) or "off_hours"
     if session_bucket != "late":
         return threshold
     if width <= 1.0:
@@ -26,7 +26,7 @@ def effective_min_credit(width: float, args: argparse.Namespace) -> float:
 def days_from_reference(expiration_date: str, args: argparse.Namespace) -> int:
     from datetime import date
 
-    return (date.fromisoformat(expiration_date) - resolve_scan_reference_date(args)).days
+    return (date.fromisoformat(expiration_date) - candidate_reference_date(args)).days
 
 
 def relative_spread(snapshot: OptionSnapshot) -> float:

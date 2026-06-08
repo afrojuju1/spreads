@@ -10,7 +10,7 @@ from core.domain.models import (
     SpreadCandidate,
 )
 from core.services.option_structures import net_premium_kind
-from core.services.scanners.config import strategy_option_type
+from core.services.strategy_specs import strategy_option_type
 
 from .analytics import attach_structure_analytics
 from .shared import days_from_reference, relative_spread, relative_spread_exceeds

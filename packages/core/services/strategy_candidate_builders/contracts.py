@@ -4,12 +4,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
-
-from core.services.trading_engine.kernel import EngineEvidence, EnginePayload, EnginePolicy, EngineSummary
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 if TYPE_CHECKING:
     from core.domain.models import SymbolMarketSlice
+
+CandidateEvidence: TypeAlias = Mapping[str, Any]
+CandidatePayload: TypeAlias = Mapping[str, Any]
+CandidatePolicy: TypeAlias = Mapping[str, Any]
+CandidateSummary: TypeAlias = Mapping[str, Any]
 
 
 class CandidateDiagnosticStatus(StrEnum):
@@ -46,7 +49,7 @@ class CandidateBuildRun:
     label: str
     observed_at: datetime
     history_enabled: bool = True
-    metadata: EnginePayload = field(default_factory=dict)
+    metadata: CandidatePayload = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -69,10 +72,10 @@ class StrategyCandidateBuildSettings:
     min_short_vs_expected_move_ratio: float | None = None
     min_breakeven_vs_expected_move_ratio: float | None = None
     max_quote_age_seconds: int | None = None
-    ranking_policy: EnginePolicy = field(default_factory=dict)
-    builder_params: EnginePolicy = field(default_factory=dict)
-    liquidity_rules: EnginePolicy = field(default_factory=dict)
-    risk_defaults: EnginePolicy = field(default_factory=dict)
+    ranking_policy: CandidatePolicy = field(default_factory=dict)
+    builder_params: CandidatePolicy = field(default_factory=dict)
+    liquidity_rules: CandidatePolicy = field(default_factory=dict)
+    risk_defaults: CandidatePolicy = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.trading_strategy_id:
@@ -118,7 +121,7 @@ class CandidateMarketDataSnapshot:
     alpaca_delta_contract_count: int
     delta_contract_count: int
     local_delta_contract_count: int
-    metadata: EnginePayload = field(default_factory=dict)
+    metadata: CandidatePayload = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -128,7 +131,7 @@ class StrategyCandidateBuildRequest:
     limits: CandidateBuildLimits
     run: CandidateBuildRun
     market_data: CandidateMarketDataSettings = field(default_factory=CandidateMarketDataSettings)
-    source_evidence: EngineEvidence = field(default_factory=dict)
+    source_evidence: CandidateEvidence = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         normalized = tuple(dict.fromkeys(str(symbol).upper().strip() for symbol in self.symbols if str(symbol or "").strip()))
@@ -148,12 +151,12 @@ class CandidateDiagnostic:
     postprocess_candidate_count: int = 0
     runtime_candidate_count: int = 0
     returned_candidate_count: int = 0
-    setup: EnginePayload = field(default_factory=dict)
-    market_data: EnginePayload = field(default_factory=dict)
-    rejection_counts: Mapping[str, EnginePayload] = field(default_factory=dict)
-    ranking_gate: EnginePayload = field(default_factory=dict)
-    examples: EnginePayload = field(default_factory=dict)
-    evidence: EngineEvidence = field(default_factory=dict)
+    setup: CandidatePayload = field(default_factory=dict)
+    market_data: CandidatePayload = field(default_factory=dict)
+    rejection_counts: Mapping[str, CandidatePayload] = field(default_factory=dict)
+    ranking_gate: CandidatePayload = field(default_factory=dict)
+    examples: CandidatePayload = field(default_factory=dict)
+    evidence: CandidateEvidence = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -161,18 +164,18 @@ class CandidateBuildFailure:
     symbol: str
     stage: str
     error: str
-    metadata: EnginePayload = field(default_factory=dict)
+    metadata: CandidatePayload = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class StrategyCandidateBuildOutcome:
-    candidates_by_symbol: Mapping[str, tuple[EnginePayload, ...]]
+    candidates_by_symbol: Mapping[str, tuple[CandidatePayload, ...]]
     diagnostics: tuple[CandidateDiagnostic, ...] = ()
     failures: tuple[CandidateBuildFailure, ...] = ()
-    summary: EngineSummary = field(default_factory=dict)
+    summary: CandidateSummary = field(default_factory=dict)
 
     @property
-    def candidates(self) -> tuple[EnginePayload, ...]:
+    def candidates(self) -> tuple[CandidatePayload, ...]:
         return tuple(candidate for rows in self.candidates_by_symbol.values() for candidate in rows)
 
 
@@ -195,6 +198,7 @@ class StrategyCandidateBuilder(Protocol):
 
 __all__ = [
     "CandidateBuildFailure",
+    "CandidateEvidence",
     "CandidateBuildLimits",
     "CandidateBuildRun",
     "CandidateDiagnostic",
@@ -203,6 +207,9 @@ __all__ = [
     "CandidateMarketDataSettings",
     "CandidateMarketDataSnapshot",
     "CandidateMarketSide",
+    "CandidatePayload",
+    "CandidatePolicy",
+    "CandidateSummary",
     "StrategyCandidateBuildOutcome",
     "StrategyCandidateBuildRequest",
     "StrategyCandidateBuildSettings",

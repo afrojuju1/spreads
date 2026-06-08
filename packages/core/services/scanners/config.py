@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, date, datetime
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -14,12 +13,10 @@ from core.domain.profiles import (
     ZERO_DTE_ALLOWED_SYMBOLS,
     resolve_ranking_policy,
     resolve_strategy_profile_override,
-    zero_dte_session_bucket,
 )
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.integrations.calendar_events import classify_underlying_type
 from core.runtime.config import default_database_url
-from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
 from core.services.strategy_specs import (
     concrete_strategies,
@@ -27,6 +24,7 @@ from core.services.strategy_specs import (
     strategy_display_label,
     strategy_option_type,
 )
+from core.services.strategy_candidate_builders.runtime_context import candidate_session_bucket
 from core.services.trading_strategies import default_config_root, load_trading_strategies, load_universe_symbols
 
 DIRECTIONAL_LONG_DELTA_DEFAULTS: dict[str, tuple[float, float, float]] = {
@@ -510,64 +508,6 @@ def resolve_profile_value(override: Any, preset: Any) -> Any:
     return preset if override is None else override
 
 
-def _coerce_evaluation_datetime(value: Any) -> datetime | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    normalized = str(value).strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
-def resolve_scan_reference_datetime(args: argparse.Namespace) -> datetime | None:
-    return _coerce_evaluation_datetime(getattr(args, "evaluation_timestamp", None))
-
-
-def resolve_scan_reference_date(args: argparse.Namespace) -> date:
-    reference_datetime = resolve_scan_reference_datetime(args)
-    if reference_datetime is not None:
-        return reference_datetime.astimezone(NEW_YORK).date()
-    raw_date = getattr(args, "evaluation_date", None)
-    if raw_date not in (None, ""):
-        if isinstance(raw_date, date):
-            return raw_date
-        return date.fromisoformat(str(raw_date))
-    return datetime.now(UTC).date()
-
-
-def resolve_scan_session_bucket(args: argparse.Namespace) -> str | None:
-    override = getattr(args, "session_bucket_override", None)
-    if override not in (None, ""):
-        return str(override)
-    reference_datetime = resolve_scan_reference_datetime(args)
-    if reference_datetime is not None:
-        return zero_dte_session_bucket(reference_datetime)
-    return zero_dte_session_bucket()
-
-
-def apply_scan_evaluation_context(
-    args: argparse.Namespace,
-    *,
-    evaluation_timestamp: datetime | str | None = None,
-    evaluation_date: date | str | None = None,
-    session_bucket: str | None = None,
-) -> argparse.Namespace:
-    if evaluation_timestamp is not None:
-        resolved_timestamp = _coerce_evaluation_datetime(evaluation_timestamp)
-        if resolved_timestamp is not None:
-            args.evaluation_timestamp = resolved_timestamp.isoformat()
-    if evaluation_date is not None:
-        args.evaluation_date = evaluation_date.isoformat() if isinstance(evaluation_date, date) else str(evaluation_date)
-    if session_bucket is not None:
-        args.session_bucket_override = str(session_bucket)
-    return args
-
-
 def apply_profile_defaults(
     args: argparse.Namespace,
     underlying_type: str,
@@ -678,7 +618,7 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
         "profile": args.profile,
         "session_label": getattr(args, "session_label", None),
         "greeks_source": args.greeks_source,
-        "session_bucket": (resolve_scan_session_bucket(args) if args.profile == "0dte" else None),
+        "session_bucket": (candidate_session_bucket(args) if args.profile == "0dte" else None),
         "evaluation_date": getattr(args, "evaluation_date", None),
         "evaluation_timestamp": getattr(args, "evaluation_timestamp", None),
         "min_dte": args.min_dte,
@@ -799,7 +739,6 @@ def resolve_symbol_scan_args(
 __all__ = [
     "PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES",
     "apply_profile_defaults",
-    "apply_scan_evaluation_context",
     "build_filter_payload",
     "clone_args",
     "concrete_strategies",
@@ -809,9 +748,6 @@ __all__ = [
     "RANKING_POLICY_ARG_KEYS",
     "resolve_profile_value",
     "resolve_ranking_builder_params",
-    "resolve_scan_reference_date",
-    "resolve_scan_reference_datetime",
-    "resolve_scan_session_bucket",
     "resolve_symbol_scan_args",
     "resolve_symbols",
     "strategy_direction",

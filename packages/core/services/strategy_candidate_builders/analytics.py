@@ -13,8 +13,8 @@ from core.services.option_structures import (
     normalize_legs,
     signed_net_limit_price,
 )
-from core.services.scanners.config import resolve_scan_reference_datetime
-from core.services.scanners.market_data import option_expiry_close
+from core.services.strategy_candidate_builders.runtime_context import candidate_reference_datetime
+from core.services.strategy_candidate_builders.runtime_context import option_expiry_close
 
 _LATTICE_STEPS = 31
 
@@ -66,8 +66,7 @@ def _average_implied_volatility(
     values = [
         float(snapshot.implied_volatility)
         for leg in legs
-        if (snapshot := snapshots_by_symbol.get(str(leg.get("symbol") or ""))) is not None
-        and snapshot.implied_volatility is not None
+        if (snapshot := snapshots_by_symbol.get(str(leg.get("symbol") or ""))) is not None and snapshot.implied_volatility is not None
     ]
     if not values:
         return None
@@ -128,7 +127,7 @@ def _time_to_expiry_years(
     expiration_date: str,
     args: argparse.Namespace,
 ) -> float:
-    reference_at = resolve_scan_reference_datetime(args) or datetime.now(UTC)
+    reference_at = candidate_reference_datetime(args) or datetime.now(UTC)
     expiry_at = option_expiry_close(expiration_date)
     total_seconds = max((expiry_at - reference_at).total_seconds(), 0.0)
     return total_seconds / (365.0 * 24.0 * 60.0 * 60.0)
@@ -147,26 +146,14 @@ def _terminal_position_value(
         if option_type not in {"call", "put"} or strike in (None, "") or sign is None:
             continue
         strike_value = float(strike)
-        intrinsic = (
-            max(terminal_spot - strike_value, 0.0)
-            if option_type == "call"
-            else max(strike_value - terminal_spot, 0.0)
-        )
+        intrinsic = max(terminal_spot - strike_value, 0.0) if option_type == "call" else max(strike_value - terminal_spot, 0.0)
         total += sign * _leg_ratio_qty(leg) * intrinsic
     return total
 
 
 def _candidate_barriers(candidate: SpreadCandidate) -> tuple[float | None, float | None]:
-    lower = (
-        None
-        if candidate.lower_breakeven in (None, "")
-        else float(candidate.lower_breakeven)
-    )
-    upper = (
-        None
-        if candidate.upper_breakeven in (None, "")
-        else float(candidate.upper_breakeven)
-    )
+    lower = None if candidate.lower_breakeven in (None, "") else float(candidate.lower_breakeven)
+    upper = None if candidate.upper_breakeven in (None, "") else float(candidate.upper_breakeven)
     return lower, upper
 
 
@@ -176,10 +163,7 @@ def _touches_barrier(
     lower_barrier: float | None,
     upper_barrier: float | None,
 ) -> bool:
-    return (
-        (lower_barrier is not None and spot_price <= lower_barrier)
-        or (upper_barrier is not None and spot_price >= upper_barrier)
-    )
+    return (lower_barrier is not None and spot_price <= lower_barrier) or (upper_barrier is not None and spot_price >= upper_barrier)
 
 
 def _lattice_spot_price(
@@ -229,13 +213,15 @@ def _structure_lattice_metrics(
 
     total_probabilities = [1.0]
     untouched_probabilities = [
-        0.0
-        if _touches_barrier(
-            spot_price=float(candidate.underlying_price),
-            lower_barrier=lower_barrier,
-            upper_barrier=upper_barrier,
+        (
+            0.0
+            if _touches_barrier(
+                spot_price=float(candidate.underlying_price),
+                lower_barrier=lower_barrier,
+                upper_barrier=upper_barrier,
+            )
+            else 1.0
         )
-        else 1.0
     ]
     for step in range(1, step_count + 1):
         next_total = [0.0] * (step + 1)
@@ -260,9 +246,7 @@ def _structure_lattice_metrics(
                 lower_barrier=lower_barrier,
                 upper_barrier=upper_barrier,
             ):
-                next_untouched[previous_up_moves] += (
-                    untouched_probability * down_probability
-                )
+                next_untouched[previous_up_moves] += untouched_probability * down_probability
 
             up_spot = _lattice_spot_price(
                 initial_spot=float(candidate.underlying_price),
@@ -275,9 +259,7 @@ def _structure_lattice_metrics(
                 lower_barrier=lower_barrier,
                 upper_barrier=upper_barrier,
             ):
-                next_untouched[previous_up_moves + 1] += (
-                    untouched_probability * up_probability
-                )
+                next_untouched[previous_up_moves + 1] += untouched_probability * up_probability
 
         total_probabilities = next_total
         untouched_probabilities = next_untouched
@@ -388,11 +370,7 @@ def build_structure_analytics(
         expiration_date=candidate.expiration_date,
         args=args,
     )
-    if (
-        model_implied_volatility is not None
-        and model_implied_volatility > 0
-        and years_to_expiry > 0
-    ):
+    if model_implied_volatility is not None and model_implied_volatility > 0 and years_to_expiry > 0:
         (
             probability_of_profit,
             expected_value_dollars,

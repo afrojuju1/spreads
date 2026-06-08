@@ -60,7 +60,7 @@ def _build_call_verticals(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.verticals import build_vertical_spreads
+    from core.services.strategy_candidate_builders.verticals import build_vertical_spreads
 
     return build_vertical_spreads(
         symbol=market_slice.symbol,
@@ -77,7 +77,7 @@ def _build_put_verticals(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.verticals import build_vertical_spreads
+    from core.services.strategy_candidate_builders.verticals import build_vertical_spreads
 
     return build_vertical_spreads(
         symbol=market_slice.symbol,
@@ -94,7 +94,7 @@ def _build_iron_condor_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.iron_condors import build_iron_condors
+    from core.services.strategy_candidate_builders.iron_condors import build_iron_condors
 
     return build_iron_condors(
         symbol=market_slice.symbol,
@@ -112,7 +112,7 @@ def _build_long_straddle_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.long_vol import build_long_straddles
+    from core.services.strategy_candidate_builders.long_vol import build_long_straddles
 
     return build_long_straddles(
         symbol=market_slice.symbol,
@@ -130,7 +130,7 @@ def _build_long_strangle_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.long_vol import build_long_strangles
+    from core.services.strategy_candidate_builders.long_vol import build_long_strangles
 
     return build_long_strangles(
         symbol=market_slice.symbol,
@@ -148,7 +148,7 @@ def _build_long_call_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.single_legs import build_long_calls
+    from core.services.strategy_candidate_builders.single_legs import build_long_calls
 
     return build_long_calls(
         symbol=market_slice.symbol,
@@ -164,7 +164,7 @@ def _build_long_put_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.single_legs import build_long_puts
+    from core.services.strategy_candidate_builders.single_legs import build_long_puts
 
     return build_long_puts(
         symbol=market_slice.symbol,
@@ -180,7 +180,7 @@ def _build_short_call_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.single_legs import build_short_calls
+    from core.services.strategy_candidate_builders.single_legs import build_short_calls
 
     return build_short_calls(
         symbol=market_slice.symbol,
@@ -196,7 +196,7 @@ def _build_short_put_candidates(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    from core.services.scanners.builders.single_legs import build_short_puts
+    from core.services.strategy_candidate_builders.single_legs import build_short_puts
 
     return build_short_puts(
         symbol=market_slice.symbol,

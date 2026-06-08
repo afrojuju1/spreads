@@ -45,11 +45,7 @@ def build_long_straddles(
         days_to_expiration = days_from_reference(expiration_date, args)
 
         shared_contracts = sorted(
-            (
-                contract
-                for contract in call_contracts
-                if contract.strike_price in put_by_strike
-            ),
+            (contract for contract in call_contracts if contract.strike_price in put_by_strike),
             key=lambda contract: (
                 abs(contract.strike_price - spot_price),
                 contract.strike_price,
@@ -95,27 +91,17 @@ def build_long_straddles(
                 midpoint_credit,
             )
             modeled_move_vs_break_even_move = modeled_move_vs_implied_move
-            return_on_risk = (
-                modeled_move_vs_break_even_move
-                or modeled_move_vs_implied_move
-                or round(max(call_delta, put_delta), 4)
-            )
+            return_on_risk = modeled_move_vs_break_even_move or modeled_move_vs_implied_move or round(max(call_delta, put_delta), 4)
             fill_ratio = clamp(midpoint_credit / natural_credit, 0.0, 1.25)
             strike = call_contract.strike_price
-            short_otm_pct = (
-                abs(strike - spot_price) / spot_price if spot_price > 0 else 0.0
-            )
-            breakeven_cushion_pct = (
-                break_even_move / spot_price if spot_price > 0 else 0.0
-            )
+            short_otm_pct = abs(strike - spot_price) / spot_price if spot_price > 0 else 0.0
+            breakeven_cushion_pct = break_even_move / spot_price if spot_price > 0 else 0.0
             average_delta = round((call_delta + put_delta) / 2.0, 4)
             side_balance_score = round(
                 clamp(1.0 - abs(call_delta - put_delta) / 0.35),
                 4,
             )
-            expected_move_amount = expected_move_pct = expected_move_source_strike = (
-                None
-            )
+            expected_move_amount = expected_move_pct = expected_move_source_strike = None
             short_vs_expected_move = breakeven_vs_expected_move = None
             if expected_move is not None:
                 expected_move_amount = expected_move.amount
@@ -143,9 +129,7 @@ def build_long_straddles(
                 width=0.0,
                 short_delta=average_delta,
                 long_delta=average_delta,
-                greeks_source=call_snapshot.greeks_source
-                if call_snapshot.greeks_source == put_snapshot.greeks_source
-                else "mixed",
+                greeks_source=call_snapshot.greeks_source if call_snapshot.greeks_source == put_snapshot.greeks_source else "mixed",
                 short_midpoint=put_snapshot.midpoint,
                 long_midpoint=call_snapshot.midpoint,
                 short_bid=put_snapshot.bid,
@@ -155,8 +139,7 @@ def build_long_straddles(
                 midpoint_credit=midpoint_credit,
                 natural_credit=natural_credit,
                 max_profit=round(
-                    max((expected_move_amount or midpoint_credit) - midpoint_credit, 0.01)
-                    * 100.0,
+                    max((expected_move_amount or midpoint_credit) - midpoint_credit, 0.01) * 100.0,
                     2,
                 ),
                 max_loss=round(midpoint_credit * 100.0, 2),
@@ -245,18 +228,8 @@ def build_long_strangles(
             and contract.open_interest >= args.min_open_interest
             and (put_snapshot_map.get(contract.symbol) is not None)
         ]
-        eligible_calls.sort(
-            key=lambda contract: abs(
-                abs(call_snapshot_map[contract.symbol].delta or 0.0)
-                - args.short_delta_target
-            )
-        )
-        eligible_puts.sort(
-            key=lambda contract: abs(
-                abs(put_snapshot_map[contract.symbol].delta or 0.0)
-                - args.short_delta_target
-            )
-        )
+        eligible_calls.sort(key=lambda contract: abs(abs(call_snapshot_map[contract.symbol].delta or 0.0) - args.short_delta_target))
+        eligible_puts.sort(key=lambda contract: abs(abs(put_snapshot_map[contract.symbol].delta or 0.0) - args.short_delta_target))
 
         for put_contract in eligible_puts[:6]:
             put_snapshot = put_snapshot_map.get(put_contract.symbol)
@@ -265,11 +238,7 @@ def build_long_strangles(
             put_delta = abs(put_snapshot.delta)
             if not (args.short_delta_min <= put_delta <= args.short_delta_max):
                 continue
-            if (
-                put_snapshot.bid_size <= 0
-                or put_snapshot.ask_size <= 0
-                or relative_spread_exceeds(put_snapshot, args.max_relative_spread)
-            ):
+            if put_snapshot.bid_size <= 0 or put_snapshot.ask_size <= 0 or relative_spread_exceeds(put_snapshot, args.max_relative_spread):
                 continue
 
             for call_contract in eligible_calls[:6]:
@@ -279,11 +248,7 @@ def build_long_strangles(
                 call_delta = abs(call_snapshot.delta)
                 if not (args.short_delta_min <= call_delta <= args.short_delta_max):
                     continue
-                if (
-                    call_snapshot.bid_size <= 0
-                    or call_snapshot.ask_size <= 0
-                    or relative_spread_exceeds(call_snapshot, args.max_relative_spread)
-                ):
+                if call_snapshot.bid_size <= 0 or call_snapshot.ask_size <= 0 or relative_spread_exceeds(call_snapshot, args.max_relative_spread):
                     continue
 
                 lower_distance = spot_price - put_contract.strike_price
@@ -291,23 +256,18 @@ def build_long_strangles(
                 if lower_distance <= 0 or upper_distance <= 0:
                     continue
                 wing_symmetry_ratio = round(
-                    min(lower_distance, upper_distance)
-                    / max(lower_distance, upper_distance),
+                    min(lower_distance, upper_distance) / max(lower_distance, upper_distance),
                     4,
                 )
                 if wing_symmetry_ratio < 0.55:
                     continue
 
-                midpoint_credit = round(
-                    put_snapshot.midpoint + call_snapshot.midpoint, 4
-                )
+                midpoint_credit = round(put_snapshot.midpoint + call_snapshot.midpoint, 4)
                 natural_credit = round(put_snapshot.ask + call_snapshot.ask, 4)
                 if midpoint_credit < args.min_credit or natural_credit <= 0:
                     continue
 
-                break_even_move = min(
-                    lower_distance + midpoint_credit, upper_distance + midpoint_credit
-                )
+                break_even_move = min(lower_distance + midpoint_credit, upper_distance + midpoint_credit)
                 modeled_move_vs_implied_move = _ratio_or_none(
                     expected_move.amount if expected_move is not None else None,
                     midpoint_credit,
@@ -316,36 +276,22 @@ def build_long_strangles(
                     expected_move.amount if expected_move is not None else None,
                     break_even_move,
                 )
-                return_on_risk = (
-                    modeled_move_vs_break_even_move
-                    or modeled_move_vs_implied_move
-                    or round((put_delta + call_delta) / 2.0, 4)
-                )
+                return_on_risk = modeled_move_vs_break_even_move or modeled_move_vs_implied_move or round((put_delta + call_delta) / 2.0, 4)
                 fill_ratio = clamp(midpoint_credit / natural_credit, 0.0, 1.25)
-                short_otm_pct = (
-                    min(lower_distance, upper_distance) / spot_price
-                    if spot_price > 0
-                    else 0.0
-                )
-                breakeven_cushion_pct = (
-                    break_even_move / spot_price if spot_price > 0 else 0.0
-                )
+                short_otm_pct = min(lower_distance, upper_distance) / spot_price if spot_price > 0 else 0.0
+                breakeven_cushion_pct = break_even_move / spot_price if spot_price > 0 else 0.0
                 average_delta = round((put_delta + call_delta) / 2.0, 4)
                 side_balance_score = round(
                     clamp(1.0 - abs(put_delta - call_delta) / delta_window),
                     4,
                 )
-                expected_move_amount = expected_move_pct = (
-                    expected_move_source_strike
-                ) = None
+                expected_move_amount = expected_move_pct = expected_move_source_strike = None
                 short_vs_expected_move = breakeven_vs_expected_move = None
                 if expected_move is not None:
                     expected_move_amount = expected_move.amount
                     expected_move_pct = expected_move.percent_of_spot
                     expected_move_source_strike = expected_move.reference_strike
-                    short_vs_expected_move = expected_move.amount - min(
-                        lower_distance, upper_distance
-                    )
+                    short_vs_expected_move = expected_move.amount - min(lower_distance, upper_distance)
                     breakeven_vs_expected_move = expected_move.amount - break_even_move
 
                 structure = build_long_candidate_structure(
@@ -364,14 +310,10 @@ def build_long_strangles(
                     structure_identity=str(structure["structure_identity"]),
                     short_strike=put_contract.strike_price,
                     long_strike=call_contract.strike_price,
-                    width=round(
-                        call_contract.strike_price - put_contract.strike_price, 4
-                    ),
+                    width=round(call_contract.strike_price - put_contract.strike_price, 4),
                     short_delta=average_delta,
                     long_delta=average_delta,
-                    greeks_source=call_snapshot.greeks_source
-                    if call_snapshot.greeks_source == put_snapshot.greeks_source
-                    else "mixed",
+                    greeks_source=call_snapshot.greeks_source if call_snapshot.greeks_source == put_snapshot.greeks_source else "mixed",
                     short_midpoint=put_snapshot.midpoint,
                     long_midpoint=call_snapshot.midpoint,
                     short_bid=put_snapshot.bid,
@@ -382,8 +324,7 @@ def build_long_strangles(
                     natural_credit=natural_credit,
                     max_profit=round(
                         max(
-                            (expected_move_amount or break_even_move)
-                            - break_even_move,
+                            (expected_move_amount or break_even_move) - break_even_move,
                             0.01,
                         )
                         * 100.0,
@@ -421,12 +362,8 @@ def build_long_strangles(
                     long_implied_volatility=call_snapshot.implied_volatility,
                     short_volume=put_snapshot.daily_volume,
                     long_volume=call_snapshot.daily_volume,
-                    lower_breakeven=round(
-                        put_contract.strike_price - midpoint_credit, 4
-                    ),
-                    upper_breakeven=round(
-                        call_contract.strike_price + midpoint_credit, 4
-                    ),
+                    lower_breakeven=round(put_contract.strike_price - midpoint_credit, 4),
+                    upper_breakeven=round(call_contract.strike_price + midpoint_credit, 4),
                     side_balance_score=side_balance_score,
                     wing_symmetry_ratio=wing_symmetry_ratio,
                 )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .contracts import (
     CandidateBuildFailure,
+    CandidateEvidence,
     CandidateBuildLimits,
     CandidateBuildRun,
     CandidateDiagnostic,
@@ -10,15 +11,27 @@ from .contracts import (
     CandidateMarketDataSettings,
     CandidateMarketDataSnapshot,
     CandidateMarketSide,
+    CandidatePayload,
+    CandidatePolicy,
+    CandidateSummary,
     StrategyCandidateBuildOutcome,
     StrategyCandidateBuildRequest,
     StrategyCandidateBuildSettings,
     StrategyCandidateBuilder,
     StrategyCandidateMarketDataProvider,
 )
+from .runtime_context import (
+    apply_candidate_evaluation_context,
+    candidate_reference_date,
+    candidate_reference_datetime,
+    candidate_session_bucket,
+    coerce_evaluation_datetime,
+    option_expiry_close,
+)
 
 __all__ = [
     "CandidateBuildFailure",
+    "CandidateEvidence",
     "CandidateBuildLimits",
     "CandidateBuildRun",
     "CandidateDiagnostic",
@@ -27,9 +40,18 @@ __all__ = [
     "CandidateMarketDataSettings",
     "CandidateMarketDataSnapshot",
     "CandidateMarketSide",
+    "CandidatePayload",
+    "CandidatePolicy",
+    "CandidateSummary",
     "StrategyCandidateBuildOutcome",
     "StrategyCandidateBuildRequest",
     "StrategyCandidateBuildSettings",
     "StrategyCandidateBuilder",
     "StrategyCandidateMarketDataProvider",
+    "apply_candidate_evaluation_context",
+    "candidate_reference_date",
+    "candidate_reference_datetime",
+    "candidate_session_bucket",
+    "coerce_evaluation_datetime",
+    "option_expiry_close",
 ]
