@@ -24,6 +24,7 @@ from .entry_quality import (
     list_entry_quality_profiles,
     resolve_entry_quality_profile,
 )
+from .entry_quality_pipeline import evaluate_entry_quality_snapshot, evaluate_momentum_long_call_snapshot
 from .feature_snapshots import build_momentum_long_call_feature_snapshots
 from .execution import ExecutionEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
@@ -58,6 +59,8 @@ __all__ = [
     "RiskEngine",
     "StrategyEngine",
     "build_momentum_long_call_feature_snapshots",
+    "evaluate_entry_quality_snapshot",
+    "evaluate_momentum_long_call_snapshot",
     "list_entry_quality_profiles",
     "refresh_engine_capture_targets",
     "resolve_entry_quality_profile",

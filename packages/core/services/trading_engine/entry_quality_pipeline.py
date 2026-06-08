@@ -1,0 +1,825 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from core.services.option_structures import normalize_strategy_family
+from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, unique_text_list
+
+from .entry_quality import (
+    EntryFilterRef,
+    EntryQualityContext,
+    EntryQualityProfile,
+    EntryQualityStageName,
+    EntryQualityWaterfall,
+    FeatureSnapshot,
+    FilterResult,
+    FilterResultStatus,
+    MOMENTUM_LONG_CALL_PROFILE_ID,
+    resolve_entry_quality_profile,
+)
+
+_RUNTIME_FILTER_STAGE = {
+    "strategy_family_mismatch": EntryQualityStageName.CONTRACT_FIT,
+    "symbol_out_of_scope": EntryQualityStageName.SOURCE_PREFLIGHT,
+    "dte_below_min": EntryQualityStageName.CONTRACT_FIT,
+    "dte_above_max": EntryQualityStageName.CONTRACT_FIT,
+    "short_delta_below_min": EntryQualityStageName.CONTRACT_FIT,
+    "short_delta_above_max": EntryQualityStageName.CONTRACT_FIT,
+    "width_missing": EntryQualityStageName.CONTRACT_FIT,
+    "width_not_allowed": EntryQualityStageName.CONTRACT_FIT,
+    "open_interest_below_floor": EntryQualityStageName.PREMIUM_QUALITY,
+    "relative_spread_above_ceiling": EntryQualityStageName.PREMIUM_QUALITY,
+    "return_on_risk_below_floor": EntryQualityStageName.PREMIUM_QUALITY,
+}
+
+_RAW_REJECTION_STAGE = {
+    "no_expected_move": EntryQualityStageName.CONTRACT_FIT,
+    "no_snapshot": EntryQualityStageName.CHAIN_VIABILITY,
+    "no_delta": EntryQualityStageName.CHAIN_VIABILITY,
+    "itm_call_skipped": EntryQualityStageName.CONTRACT_FIT,
+    "itm_put_skipped": EntryQualityStageName.CONTRACT_FIT,
+    "open_interest_below_min": EntryQualityStageName.PREMIUM_QUALITY,
+    "bid_or_ask_size_zero": EntryQualityStageName.PREMIUM_QUALITY,
+    "relative_spread_above_max": EntryQualityStageName.PREMIUM_QUALITY,
+    "delta_outside_range": EntryQualityStageName.CONTRACT_FIT,
+    "premium_too_low_or_no_natural": EntryQualityStageName.PREMIUM_QUALITY,
+    "expected_move_profit_not_positive": EntryQualityStageName.CONTRACT_FIT,
+    "return_on_risk_below_min": EntryQualityStageName.PREMIUM_QUALITY,
+}
+
+
+def _candidate(snapshot: FeatureSnapshot, candidate: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    if candidate is not None:
+        return dict(candidate)
+    if isinstance(snapshot.candidate, Mapping):
+        return dict(snapshot.candidate)
+    return {}
+
+
+def _candidate_contract(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(as_mapping(snapshot.chain).get("candidate_contract"))
+
+
+def _candidate_economics(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(as_mapping(snapshot.premium).get("candidate_economics"))
+
+
+def _chain_filters(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(as_mapping(snapshot.chain).get("filters"))
+
+
+def _status(status: FilterResultStatus | str) -> FilterResultStatus:
+    return status if isinstance(status, FilterResultStatus) else FilterResultStatus(status)
+
+
+def _result(
+    *,
+    filter_ref: EntryFilterRef,
+    status: FilterResultStatus | str,
+    reason_codes: Sequence[Any] = (),
+    metrics: Mapping[str, Any] | None = None,
+    thresholds: Mapping[str, Any] | None = None,
+    message: str = "",
+) -> FilterResult:
+    return FilterResult(
+        filter_id=filter_ref.filter_id,
+        stage=filter_ref.stage,
+        status=_status(status),
+        reason_codes=tuple(str(code) for code in reason_codes if as_text(code) is not None),
+        metrics=dict(metrics or {}),
+        thresholds=dict(thresholds or {}),
+        message=message,
+    )
+
+
+def _first_reason(*values: Any, default: str) -> tuple[str, ...]:
+    reasons: list[str] = []
+    for value in values:
+        reasons.extend(unique_text_list(value, accept_scalar=True))
+    return tuple(reasons or (default,))
+
+
+def _count_reasons(reasons: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(str(reason) for reason, count in sorted(reasons.items()) if coerce_int(count) not in (None, 0))
+
+
+def _rejection_counts(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    return as_mapping(as_mapping(snapshot.chain).get("rejection_counts"))
+
+
+def _stage_rejection_reasons(snapshot: FeatureSnapshot, stage: EntryQualityStageName) -> tuple[str, ...]:
+    counts = _rejection_counts(snapshot)
+    reasons: list[str] = []
+    raw = as_mapping(counts.get("raw"))
+    runtime_filter = as_mapping(counts.get("runtime_filter"))
+    ranking_policy = as_mapping(counts.get("ranking_policy"))
+    for reason in _count_reasons(raw):
+        if _RAW_REJECTION_STAGE.get(reason) == stage:
+            reasons.append(reason)
+    for reason in _count_reasons(runtime_filter):
+        if _RUNTIME_FILTER_STAGE.get(reason) == stage:
+            reasons.append(reason)
+    if stage == EntryQualityStageName.PREMIUM_QUALITY:
+        reasons.extend(_count_reasons(ranking_policy))
+    return tuple(dict.fromkeys(reasons))
+
+
+def _source_is_fresh(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    source = as_mapping(snapshot.source)
+    blockers = unique_text_list(source.get("blockers"))
+    metrics = {
+        "ticker_source_kind": source.get("ticker_source_kind"),
+        "ticker_source_id": source.get("ticker_source_id"),
+        "ticker_source_run_id": source.get("ticker_source_run_id"),
+        "resolved_at": source.get("resolved_at"),
+        "max_age_seconds": source.get("max_age_seconds"),
+        "status": source.get("status"),
+    }
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            thresholds={"max_age_seconds": source.get("max_age_seconds")},
+            message="Ticker source was not usable for entry.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=_first_reason(source.get("reason_codes"), default="ticker_source_usable"),
+        metrics=metrics,
+        thresholds={"max_age_seconds": source.get("max_age_seconds")},
+        message="Ticker source was usable.",
+    )
+
+
+def _setup_context_usable(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    underlying = as_mapping(snapshot.underlying)
+    setup = as_mapping(underlying.get("setup"))
+    setup_status = str(underlying.get("setup_status") or setup.get("status") or "").strip().lower()
+    metrics = {
+        "setup_status": setup_status or None,
+        "setup_score": underlying.get("setup_score"),
+        "daily_bar_count": underlying.get("daily_bar_count"),
+        "intraday_bar_count": underlying.get("intraday_bar_count"),
+        **as_mapping(underlying.get("setup_metrics")),
+    }
+    if not setup:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("setup_context_missing",),
+            metrics=metrics,
+            message="Setup context was not present in candidate diagnostics.",
+        )
+    if setup_status in {"favorable", "neutral"}:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.PASS,
+            reason_codes=(f"setup_{setup_status}",),
+            metrics=metrics,
+            message=f"Underlying setup was {setup_status}.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.WATCH,
+        reason_codes=(f"setup_{setup_status or 'unknown'}",),
+        metrics=metrics,
+        message="Underlying setup did not block existing behavior but should remain visible.",
+    )
+
+
+def _chain_data_available(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    chain = as_mapping(snapshot.chain)
+    metrics = {
+        "expiration_count": chain.get("expiration_count"),
+        "contract_count": chain.get("contract_count"),
+        "expected_move_count": chain.get("expected_move_count"),
+    }
+    if not bool(chain.get("has_contracts")):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=_first_reason(_stage_rejection_reasons(snapshot, EntryQualityStageName.CHAIN_VIABILITY), default="contract_count_zero"),
+            metrics=metrics,
+            message="No usable option contracts were available.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("chain_contracts_available",),
+        metrics=metrics,
+        message="Option chain contracts were available.",
+    )
+
+
+def _option_snapshots_available(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    chain = as_mapping(snapshot.chain)
+    metrics = {
+        "snapshot_count": chain.get("snapshot_count"),
+        "contract_count": chain.get("contract_count"),
+    }
+    if not bool(chain.get("has_snapshots")):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=_first_reason(_stage_rejection_reasons(snapshot, EntryQualityStageName.CHAIN_VIABILITY), default="no_snapshot"),
+            metrics=metrics,
+            message="Option snapshots were not available.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("option_snapshots_available",),
+        metrics=metrics,
+        message="Option snapshots were available.",
+    )
+
+
+def _greeks_available(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    chain = as_mapping(snapshot.chain)
+    metrics = {
+        "delta_snapshot_count": chain.get("delta_snapshot_count"),
+        "greeks_available": bool(chain.get("greeks_available")),
+    }
+    if not bool(chain.get("greeks_available")):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=_first_reason(_stage_rejection_reasons(snapshot, EntryQualityStageName.CHAIN_VIABILITY), default="no_delta"),
+            metrics=metrics,
+            message="Required option Greeks were not available.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("greeks_available",),
+        metrics=metrics,
+        message="Required option Greeks were available.",
+    )
+
+
+def _strategy_family_matches(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    candidate = _candidate(snapshot)
+    strategy = as_text(candidate.get("strategy") or context.trade_structure)
+    metrics = {
+        "candidate_strategy": strategy,
+        "trade_structure": context.trade_structure,
+    }
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            message="No candidate was attached for contract-fit evaluation.",
+        )
+    if normalize_strategy_family(strategy) != normalize_strategy_family(context.trade_structure):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("strategy_family_mismatch",),
+            metrics=metrics,
+            message="Candidate strategy family did not match the entry routine.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("strategy_family_matched",),
+        metrics=metrics,
+        message="Candidate strategy family matched the entry routine.",
+    )
+
+
+def _dte_in_range(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    contract = _candidate_contract(snapshot)
+    filters = _chain_filters(snapshot)
+    dte = coerce_int(candidate.get("days_to_expiration") or candidate.get("dte") or contract.get("days_to_expiration") or contract.get("dte"))
+    minimum = coerce_int(filters.get("min_dte"))
+    maximum = coerce_int(filters.get("max_dte"))
+    metrics = {"days_to_expiration": dte}
+    thresholds = {"min_dte": minimum, "max_dte": maximum}
+    if not candidate:
+        reasons = _stage_rejection_reasons(snapshot, EntryQualityStageName.CONTRACT_FIT)
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK if reasons else FilterResultStatus.WATCH,
+            reason_codes=reasons or ("candidate_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="No candidate was attached for DTE evaluation.",
+        )
+    if dte is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("dte_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate did not expose DTE.",
+        )
+    if minimum is not None and dte < minimum:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("dte_below_min",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate DTE was below the configured range.",
+        )
+    if maximum is not None and dte > maximum:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("dte_above_max",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate DTE was above the configured range.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("dte_in_range",),
+        metrics=metrics,
+        thresholds=thresholds,
+        message="Candidate DTE was in range.",
+    )
+
+
+def _delta_in_range(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    contract = _candidate_contract(snapshot)
+    filters = _chain_filters(snapshot)
+    delta = coerce_float(candidate.get("short_delta") or candidate.get("delta") or contract.get("delta"))
+    if delta is not None:
+        delta = abs(delta)
+    minimum = coerce_float(filters.get("delta_min"))
+    maximum = coerce_float(filters.get("delta_max"))
+    metrics = {"delta": delta}
+    thresholds = {"delta_min": minimum, "delta_max": maximum}
+    if not candidate:
+        reasons = _stage_rejection_reasons(snapshot, EntryQualityStageName.CONTRACT_FIT)
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK if reasons else FilterResultStatus.WATCH,
+            reason_codes=reasons or ("candidate_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="No candidate was attached for delta evaluation.",
+        )
+    if delta is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("delta_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate did not expose delta.",
+        )
+    if minimum is not None and delta < minimum:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("short_delta_below_min",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate delta was below the configured range.",
+        )
+    if maximum is not None and delta > maximum:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("short_delta_above_max",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate delta was above the configured range.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("delta_in_range",),
+        metrics=metrics,
+        thresholds=thresholds,
+        message="Candidate delta was in range.",
+    )
+
+
+def _entry_recipe_passed(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    reasons = tuple(
+        reason
+        for reason in _stage_rejection_reasons(snapshot, EntryQualityStageName.CONTRACT_FIT)
+        if reason.startswith("entry_recipe") or "recipe" in reason
+    )
+    if reasons:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=reasons,
+            message="Entry recipe rejected the candidate.",
+        )
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            message="No candidate was attached for entry recipe evaluation.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("entry_recipe_passed",),
+        metrics={"runtime_recipe_refs": list(candidate.get("runtime_recipe_refs") or [])},
+        message="Entry recipe checks passed or were not configured.",
+    )
+
+
+def _open_interest_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    contract = _candidate_contract(snapshot)
+    filters = _chain_filters(snapshot)
+    minimum = coerce_int(filters.get("min_open_interest"))
+    open_interest = coerce_int(
+        candidate.get("open_interest") or candidate.get("short_open_interest") or candidate.get("long_open_interest") or contract.get("open_interest")
+    )
+    metrics = {"open_interest": open_interest}
+    thresholds = {"min_open_interest": minimum}
+    reasons = tuple(
+        reason
+        for reason in _stage_rejection_reasons(snapshot, EntryQualityStageName.PREMIUM_QUALITY)
+        if reason in {"open_interest_below_min", "open_interest_below_floor"}
+    )
+    if not candidate and reasons:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=reasons,
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Open interest blocked all candidates.",
+        )
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="No candidate was attached for open-interest evaluation.",
+        )
+    if minimum is not None and (open_interest is None or open_interest < minimum):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("open_interest_below_min",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate open interest was below the configured floor.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS if open_interest is not None or minimum is None else FilterResultStatus.WATCH,
+        reason_codes=("open_interest_ok",) if open_interest is not None or minimum is None else ("open_interest_missing",),
+        metrics=metrics,
+        thresholds=thresholds,
+        message="Candidate open interest was usable.",
+    )
+
+
+def _relative_spread_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    contract = _candidate_contract(snapshot)
+    filters = _chain_filters(snapshot)
+    maximum = coerce_float(filters.get("max_relative_spread") or filters.get("max_leg_spread_pct_mid"))
+    relative_spread = coerce_float(
+        candidate.get("relative_spread")
+        or candidate.get("short_relative_spread")
+        or candidate.get("long_relative_spread")
+        or contract.get("relative_spread")
+    )
+    metrics = {"relative_spread": relative_spread}
+    thresholds = {"max_relative_spread": maximum}
+    reasons = tuple(
+        reason
+        for reason in _stage_rejection_reasons(snapshot, EntryQualityStageName.PREMIUM_QUALITY)
+        if reason in {"relative_spread_above_max", "relative_spread_above_ceiling"}
+    )
+    if not candidate and reasons:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=reasons,
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Relative spread blocked all candidates.",
+        )
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="No candidate was attached for relative-spread evaluation.",
+        )
+    if maximum is not None and relative_spread is not None and relative_spread > maximum:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("relative_spread_above_max",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate relative spread was above the configured ceiling.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS if relative_spread is not None or maximum is None else FilterResultStatus.WATCH,
+        reason_codes=("relative_spread_ok",) if relative_spread is not None or maximum is None else ("relative_spread_missing",),
+        metrics=metrics,
+        thresholds=thresholds,
+        message="Candidate relative spread was usable.",
+    )
+
+
+def _return_on_risk_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    economics = _candidate_economics(snapshot)
+    filters = _chain_filters(snapshot)
+    minimum = coerce_float(filters.get("min_return_on_risk"))
+    return_on_risk = coerce_float(candidate.get("return_on_risk") or economics.get("return_on_risk"))
+    metrics = {"return_on_risk": return_on_risk}
+    thresholds = {"min_return_on_risk": minimum}
+    reasons = tuple(
+        reason
+        for reason in _stage_rejection_reasons(snapshot, EntryQualityStageName.PREMIUM_QUALITY)
+        if reason in {"return_on_risk_below_min", "return_on_risk_below_floor"}
+    )
+    if not candidate and reasons:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=reasons,
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Return on risk blocked all candidates.",
+        )
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="No candidate was attached for return-on-risk evaluation.",
+        )
+    if minimum is not None and (return_on_risk is None or return_on_risk < minimum):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("return_on_risk_below_min",),
+            metrics=metrics,
+            thresholds=thresholds,
+            message="Candidate return on risk was below the configured floor.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS if return_on_risk is not None or minimum is None else FilterResultStatus.WATCH,
+        reason_codes=("return_on_risk_ok",) if return_on_risk is not None or minimum is None else ("return_on_risk_missing",),
+        metrics=metrics,
+        thresholds=thresholds,
+        message="Candidate return on risk was usable.",
+    )
+
+
+def _ranking_policy_passed(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    premium = as_mapping(snapshot.premium)
+    ranking_gate = as_mapping(premium.get("ranking_gate"))
+    blocker_counts = as_mapping(ranking_gate.get("blocker_counts"))
+    candidate_blockers = unique_text_list(premium.get("ranking_policy_blockers"))
+    status = str(premium.get("ranking_policy_status") or "").strip().lower()
+    if candidate_blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=candidate_blockers,
+            metrics={"ranking_policy_status": status},
+            message="Ranking policy rejected the candidate.",
+        )
+    if blocker_counts and snapshot.candidate is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=_count_reasons(blocker_counts),
+            metrics={"blocker_counts": dict(blocker_counts)},
+            message="Ranking policy blocked all candidates for this symbol.",
+        )
+    if snapshot.candidate is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics={"ranking_policy_status": status or None},
+            message="No candidate was attached for ranking policy evaluation.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("ranking_policy_passed",),
+        metrics={"ranking_policy_status": status or None},
+        message="Ranking policy passed.",
+    )
+
+
+def _selection_score_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            message="No candidate was attached for selection evaluation.",
+        )
+    scoring_state = str(candidate.get("scoring_state") or "").strip().lower()
+    selection_state = str(candidate.get("selection_state") or "").strip().lower()
+    metrics = {
+        "selection_state": selection_state or None,
+        "scoring_state": scoring_state or None,
+        "promotion_score": coerce_float(candidate.get("promotion_score")),
+        "execution_score": coerce_float(candidate.get("execution_score")),
+        "confidence": coerce_float(candidate.get("confidence")),
+    }
+    if scoring_state == "blocked":
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=_first_reason(candidate.get("scoring_blockers"), default="scoring_blocked"),
+            metrics=metrics,
+            message="Candidate scoring blocked selection.",
+        )
+    if selection_state in {"promotable", "monitor"}:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.PASS if selection_state == "promotable" else FilterResultStatus.WATCH,
+            reason_codes=(f"selected_{selection_state}",),
+            metrics=metrics,
+            message="Candidate was selected for live or monitor output.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.WATCH,
+        reason_codes=("selection_not_evaluated",),
+        metrics=metrics,
+        message="Selection scoring has not been evaluated on this snapshot yet.",
+    )
+
+
+def _selection_live_ready(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            message="No candidate was attached for live-readiness evaluation.",
+        )
+    eligibility = str(candidate.get("eligibility") or candidate.get("eligibility_state") or "live").strip().lower()
+    selection_state = str(candidate.get("selection_state") or "").strip().lower()
+    blockers = []
+    for field in ("blockers", "execution_blockers", "scoring_blockers"):
+        blockers.extend(unique_text_list(candidate.get(field)))
+    blockers = list(dict.fromkeys(blockers))
+    metrics = {
+        "eligibility": eligibility,
+        "selection_state": selection_state or None,
+        "blocker_count": len(blockers),
+    }
+    if eligibility != "live":
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=(eligibility or "analysis_only",),
+            metrics=metrics,
+            message="Candidate was not eligible for live entry.",
+        )
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            message="Candidate had selection or execution blockers.",
+        )
+    if selection_state == "monitor":
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("selected_monitor",),
+            metrics=metrics,
+            message="Candidate was retained for monitoring, not live entry.",
+        )
+    if selection_state == "promotable":
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.PASS,
+            reason_codes=("selection_live_ready",),
+            metrics=metrics,
+            message="Candidate was live-ready after selection.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.WATCH,
+        reason_codes=("selection_not_evaluated",),
+        metrics=metrics,
+        message="Live-readiness has not been evaluated on this snapshot yet.",
+    )
+
+
+_FILTERS = {
+    "source_is_fresh": _source_is_fresh,
+    "setup_context_usable": _setup_context_usable,
+    "chain_data_available": _chain_data_available,
+    "option_snapshots_available": _option_snapshots_available,
+    "greeks_available": _greeks_available,
+    "strategy_family_matches": _strategy_family_matches,
+    "dte_in_range": _dte_in_range,
+    "delta_in_range": _delta_in_range,
+    "entry_recipe_passed": _entry_recipe_passed,
+    "open_interest_ok": _open_interest_ok,
+    "relative_spread_ok": _relative_spread_ok,
+    "return_on_risk_ok": _return_on_risk_ok,
+    "ranking_policy_passed": _ranking_policy_passed,
+    "selection_score_ok": _selection_score_ok,
+    "selection_live_ready": _selection_live_ready,
+}
+
+
+def evaluate_entry_quality_snapshot(
+    *,
+    context: EntryQualityContext,
+    snapshot: FeatureSnapshot,
+    profile: EntryQualityProfile | None = None,
+    candidate: Mapping[str, Any] | None = None,
+) -> EntryQualityWaterfall:
+    resolved_profile = profile or resolve_entry_quality_profile(context.quality_profile_id)
+    waterfall = EntryQualityWaterfall(
+        profile_id=resolved_profile.profile_id,
+        metadata={
+            "symbol": snapshot.symbol,
+            "trade_structure": context.trade_structure,
+            "candidate_attached": snapshot.candidate is not None or candidate is not None,
+        },
+    )
+    active_snapshot = snapshot if candidate is None else snapshot.with_candidate(candidate)
+    for stage in resolved_profile.stages:
+        for filter_ref in stage.filters:
+            evaluator = _FILTERS.get(filter_ref.filter_id)
+            if evaluator is None:
+                waterfall = waterfall.add_result(
+                    _result(
+                        filter_ref=filter_ref,
+                        status=FilterResultStatus.WATCH,
+                        reason_codes=("filter_not_implemented",),
+                        message="Entry quality filter is declared but not implemented.",
+                    )
+                )
+                continue
+            waterfall = waterfall.add_result(evaluator(context, active_snapshot, filter_ref))
+    return waterfall
+
+
+def evaluate_momentum_long_call_snapshot(
+    *,
+    context: EntryQualityContext,
+    snapshot: FeatureSnapshot,
+    candidate: Mapping[str, Any] | None = None,
+) -> EntryQualityWaterfall:
+    profile = resolve_entry_quality_profile(MOMENTUM_LONG_CALL_PROFILE_ID)
+    return evaluate_entry_quality_snapshot(
+        context=context,
+        snapshot=snapshot,
+        profile=profile,
+        candidate=candidate,
+    )
+
+
+__all__ = [
+    "evaluate_entry_quality_snapshot",
+    "evaluate_momentum_long_call_snapshot",
+]

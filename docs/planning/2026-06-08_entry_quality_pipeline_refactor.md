@@ -171,6 +171,19 @@ Examples:
 - active intent conflicts
 - trading state: active, halted, reducing
 
+## Existing Gate Migration
+
+The active `momentum_long_call_v1` profile starts with the gates Spreads already runs today. New relative-strength, market-regime, optionability, and EV filters are separate implementation beads so the cutover does not pretend future checks are active.
+
+| Stage | Active filter ids | Existing evidence / reason codes |
+| --- | --- | --- |
+| `source_preflight` | `source_is_fresh` | `ResolvedTickerSet.blockers`, `ticker_source_ready`, `ticker_source_fallback`, stale/missing source reasons |
+| `underlying_setup` | `setup_context_usable` | setup status/score/reasons from candidate-builder diagnostics; unfavorable setup is watch unless current scoring blocks it |
+| `chain_viability` | `chain_data_available`, `option_snapshots_available`, `greeks_available` | `data_unavailable`, `no_snapshot`, `no_delta`, contract/snapshot/delta counts |
+| `contract_fit` | `strategy_family_matches`, `dte_in_range`, `delta_in_range`, `entry_recipe_passed` | `strategy_family_mismatch`, `dte_below_min`, `dte_above_max`, `short_delta_below_min`, `short_delta_above_max`, `delta_outside_range`, recipe failure reasons |
+| `premium_quality` | `open_interest_ok`, `relative_spread_ok`, `return_on_risk_ok`, `ranking_policy_passed` | `open_interest_below_min`, `open_interest_below_floor`, `relative_spread_above_max`, `relative_spread_above_ceiling`, `return_on_risk_below_min`, `return_on_risk_below_floor`, ranking policy blockers |
+| `selection` | `selection_score_ok`, `selection_live_ready` | `scoring_state`, `scoring_blockers`, `execution_blockers`, `selection_state`, `eligibility` from live selection |
+
 ## Filter Contract
 
 ```python

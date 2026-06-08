@@ -341,45 +341,43 @@ MOMENTUM_LONG_CALL_V1 = EntryQualityProfile(
     stages=(
         _stage(
             EntryQualityStageName.SOURCE_PREFLIGHT,
-            (
-                "source_is_fresh",
-                "symbol_is_optionable",
-            ),
+            ("source_is_fresh",),
         ),
         _stage(
             EntryQualityStageName.UNDERLYING_SETUP,
-            (
-                "underlying_price_volume_ok",
-                "relative_strength_supportive",
-                "vwap_reclaim_confirmed",
-                "market_regime_supportive",
-            ),
+            ("setup_context_usable",),
         ),
         _stage(
             EntryQualityStageName.CHAIN_VIABILITY,
             (
-                "has_target_dte_chain",
-                "option_snapshots_fresh",
+                "chain_data_available",
+                "option_snapshots_available",
                 "greeks_available",
-                "chain_liquidity_usable",
             ),
         ),
         _stage(
             EntryQualityStageName.CONTRACT_FIT,
             (
+                "strategy_family_matches",
                 "dte_in_range",
                 "delta_in_range",
-                "otm_or_atm_call",
-                "expected_move_supports_profit",
+                "entry_recipe_passed",
             ),
         ),
         _stage(
             EntryQualityStageName.PREMIUM_QUALITY,
             (
-                "spread_cost_ok",
-                "slippage_adjusted_ev_ok",
-                "probability_of_profit_ok",
-                "implied_volatility_price_ok",
+                "open_interest_ok",
+                "relative_spread_ok",
+                "return_on_risk_ok",
+                "ranking_policy_passed",
+            ),
+        ),
+        _stage(
+            EntryQualityStageName.SELECTION,
+            (
+                "selection_score_ok",
+                "selection_live_ready",
             ),
         ),
     ),
