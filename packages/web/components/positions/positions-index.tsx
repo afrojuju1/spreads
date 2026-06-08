@@ -19,7 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { grafanaTradingLogsUrl } from "@/lib/grafana";
+import { useGrafanaTradingLogsUrl } from "@/lib/grafana";
 import {
   formatNullableCurrency,
   formatQuantity,
@@ -183,6 +183,7 @@ export function PositionsIndexPageContent({
   const [equityQuantity, setEquityQuantity] = useState("1");
   const [equityLimitPrice, setEquityLimitPrice] = useState("");
   const [equityMessage, setEquityMessage] = useState<string | null>(null);
+  const sixHourLogsUrl = useGrafanaTradingLogsUrl({ from: "now-6h" });
   const hasOwnerScope = Boolean(tradingStrategyId);
   const ownerScopeLabel = hasOwnerScope
     ? `Trading strategy · ${tradingStrategyId}`
@@ -324,7 +325,7 @@ export function PositionsIndexPageContent({
               Refresh
             </Button>
             <a
-              href={grafanaTradingLogsUrl({ from: "now-6h" })}
+              href={sixHourLogsUrl}
               target="_blank"
               rel="noreferrer"
               className={buttonVariants({ variant: "outline" })}

@@ -6,7 +6,7 @@ import { Database, ExternalLink, HardDrive, RefreshCw, Server } from "lucide-rea
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { getStorageOpsState, getTradingOpsState } from "@/lib/api";
-import { grafanaTradingLogsUrl } from "@/lib/grafana";
+import { useGrafanaTradingLogsUrl } from "@/lib/grafana";
 import {
   formatBytes,
   formatCompactNumber,
@@ -73,6 +73,7 @@ export function OpsPageContent() {
   const marketSessionStatus = tradingSummary.market_session_status;
   const schedulerStatus = firstPresent(tradingSummary.scheduler_status, scheduler.status);
   const futureCoverage = `${readNumber(storageSummary.future_partition_days)}/${readNumber(storageSummary.required_future_partition_days)} days`;
+  const tradingLogsUrl = useGrafanaTradingLogsUrl();
 
   const refreshAll = () => {
     void tradingOpsQuery.refetch();
@@ -106,7 +107,7 @@ export function OpsPageContent() {
               <RefreshCw data-icon="inline-start" />
               Refresh
             </Button>
-            <a href={grafanaTradingLogsUrl()} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
+            <a href={tradingLogsUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
               <ExternalLink data-icon="inline-start" />
               Trading logs
             </a>

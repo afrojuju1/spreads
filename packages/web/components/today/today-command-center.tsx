@@ -7,7 +7,7 @@ import { Activity, ExternalLink, Gauge, RefreshCw, ShieldCheck } from "lucide-re
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { getTradingOpsState } from "@/lib/api";
-import { grafanaTradingLogsUrl } from "@/lib/grafana";
+import { useGrafanaTradingLogsUrl } from "@/lib/grafana";
 import {
   formatNullableCurrency,
   formatQuantity,
@@ -127,6 +127,8 @@ export function TodayCommandCenter() {
   const engineDecisionCount = formatNumberMetric(firstPresent(summary.engine_decision_count, engineSummary.decision_count), pendingLabel);
   const netPnl = hasMetricValue(summary.net_pnl) ? readNumber(summary.net_pnl) : null;
   const realizedPnl = hasMetricValue(summary.realized_pnl) ? readNumber(summary.realized_pnl) : null;
+  const tradingLogsUrl = useGrafanaTradingLogsUrl();
+  const sixHourLogsUrl = useGrafanaTradingLogsUrl({ from: "now-6h" });
 
   const refreshAll = () => {
     void tradingOpsQuery.refetch();
@@ -160,7 +162,7 @@ export function TodayCommandCenter() {
               <RefreshCw data-icon="inline-start" />
               Refresh
             </Button>
-            <a href={grafanaTradingLogsUrl()} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
+            <a href={tradingLogsUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
               <ExternalLink data-icon="inline-start" />
               Trading logs
             </a>
@@ -399,7 +401,7 @@ export function TodayCommandCenter() {
         <Link href="/account" className={buttonVariants({ variant: "outline" })}>
           Broker account
         </Link>
-        <a href={grafanaTradingLogsUrl({ from: "now-6h" })} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
+        <a href={sixHourLogsUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline" })}>
           <ExternalLink data-icon="inline-start" />
           Six-hour logs
         </a>
