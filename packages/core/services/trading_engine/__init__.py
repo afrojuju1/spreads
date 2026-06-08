@@ -6,6 +6,24 @@ This package names the engine roles first; runtime wiring moves here bead by bea
 from .data import DataEngine
 from .capture_targets import refresh_engine_capture_targets
 from .data_runtime import PostgresDataEngine
+from .entry_quality import (
+    ENTRY_QUALITY_PROFILE_REGISTRY,
+    MOMENTUM_LONG_CALL_PROFILE_ID,
+    MOMENTUM_LONG_CALL_V1,
+    EntryFilter,
+    EntryFilterRef,
+    EntryQualityContext,
+    EntryQualityProfile,
+    EntryQualityStage,
+    EntryQualityStageName,
+    EntryQualityStatus,
+    EntryQualityWaterfall,
+    FeatureSnapshot,
+    FilterResult,
+    FilterResultStatus,
+    list_entry_quality_profiles,
+    resolve_entry_quality_profile,
+)
 from .execution import ExecutionEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
 from .portfolio import PortfolioEngine
@@ -15,14 +33,30 @@ from .strategy import StrategyEngine
 
 __all__ = [
     "DataEngine",
+    "ENTRY_QUALITY_PROFILE_REGISTRY",
     "EngineComponentRole",
     "EngineContext",
     "EngineRunRef",
+    "EntryFilter",
+    "EntryFilterRef",
+    "EntryQualityContext",
+    "EntryQualityProfile",
+    "EntryQualityStage",
+    "EntryQualityStageName",
+    "EntryQualityStatus",
+    "EntryQualityWaterfall",
     "ExecutionEngine",
+    "FeatureSnapshot",
+    "FilterResult",
+    "FilterResultStatus",
+    "MOMENTUM_LONG_CALL_PROFILE_ID",
+    "MOMENTUM_LONG_CALL_V1",
     "PortfolioEngine",
     "PostgresDataEngine",
     "PostgresPortfolioEngine",
     "RiskEngine",
     "StrategyEngine",
+    "list_entry_quality_profiles",
     "refresh_engine_capture_targets",
+    "resolve_entry_quality_profile",
 ]
