@@ -603,6 +603,7 @@ def _refresh_entry_runtime_signals(
         request=candidate_request,
         runtime=runtime_with_symbols,
     )
+    quality_analysis = None
     quality_summary: dict[str, Any] = {}
     if runtime_with_symbols.quality_profile_id is not None:
         from core.services.trading_engine.entry_quality_evidence import build_entry_quality_analysis
@@ -691,6 +692,7 @@ def _refresh_entry_runtime_signals(
         ticker_set=ticker_set,
         candidate_result=candidate_result,
         signal_rows=selected_rows,
+        quality_analysis=quality_analysis,
     )
     signal_refs_by_key = {
         (

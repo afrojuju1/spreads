@@ -9,7 +9,7 @@ from typing import Any
 from core.services.option_structures import candidate_legs, payload_structure_identity
 from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
-from core.services.trading_engine.entry_quality_evidence import build_entry_quality_analysis, quality_key
+from core.services.trading_engine.entry_quality_evidence import EntryQualityAnalysis, quality_key
 from core.services.trading_strategy_runtime import EntryRuntime
 from core.value_coercion import coerce_float, coerce_int, unique_text_list, utc_now_iso as _utc_now
 
@@ -180,6 +180,7 @@ def persist_entry_engine_facts(
     ticker_set: ResolvedTickerSet,
     candidate_result: CandidateBuildResult | None,
     signal_rows: Sequence[Mapping[str, Any]],
+    quality_analysis: EntryQualityAnalysis | None = None,
 ) -> dict[str, Any]:
     if engine_facts is None or not engine_facts.schema_ready():
         return {
@@ -191,15 +192,10 @@ def persist_entry_engine_facts(
     candidate_rows = [dict(row) for row in tuple(() if candidate_result is None else candidate_result.candidates) if isinstance(row, Mapping)]
     diagnostic_rows = _diagnostic_rows(candidate_result, observed_at=generated_at)
     candidate_run_id = None if candidate_result is None else candidate_result.candidate_run_id
-    quality_analysis = (
-        build_entry_quality_analysis(
-            runtime=runtime,
-            ticker_set=ticker_set,
-            candidate_result=candidate_result,
+    if quality_analysis is not None and runtime.quality_profile_id is not None and quality_analysis.profile_id != runtime.quality_profile_id:
+        raise ValueError(
+            "Entry quality analysis profile does not match runtime: " f"{quality_analysis.profile_id!r} != {runtime.quality_profile_id!r}"
         )
-        if runtime.quality_profile_id is not None
-        else None
-    )
     quality_summary = dict(
         quality_analysis.summary
         if quality_analysis is not None
