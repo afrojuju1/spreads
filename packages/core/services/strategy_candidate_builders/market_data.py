@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 from core.domain.models import DailyBar, ExpectedMoveEstimate, IntradayBar, OptionContract, OptionSnapshot, SymbolMarketSlice
 from core.integrations.alpaca.client import AlpacaClient
@@ -13,6 +13,34 @@ from core.services.market_dates import NEW_YORK
 from core.services.strategy_candidate_builders.runtime_context import candidate_reference_date, candidate_reference_datetime, option_expiry_close
 
 logger = logging.getLogger(__name__)
+
+
+class MarketSliceProvider(Protocol):
+    def get_symbol_market_slice(
+        self,
+        *,
+        symbol: str,
+        parameters: Any,
+    ) -> SymbolMarketSlice: ...
+
+
+@dataclass(frozen=True)
+class AlpacaMarketSliceProvider:
+    client: AlpacaClient
+    greeks_provider: Any
+
+    def get_symbol_market_slice(
+        self,
+        *,
+        symbol: str,
+        parameters: Any,
+    ) -> SymbolMarketSlice:
+        return build_symbol_market_slice(
+            symbol=symbol,
+            parameters=parameters,
+            client=self.client,
+            greeks_provider=self.greeks_provider,
+        )
 
 
 def count_snapshot_delta_coverage(
@@ -338,6 +366,8 @@ def build_symbol_market_slice(
 
 
 __all__ = [
+    "AlpacaMarketSliceProvider",
+    "MarketSliceProvider",
     "build_expected_move_estimates",
     "build_market_slice_from_loaded_data",
     "build_symbol_market_slice",

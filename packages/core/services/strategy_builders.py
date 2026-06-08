@@ -11,7 +11,7 @@ from core.services.runtime_candidate_filters import (
     build_runtime_candidate_filter,
     match_runtime_candidate,
 )
-from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
+from core.services.strategy_candidate_builders.market_data import AlpacaMarketSliceProvider, MarketSliceProvider
 from core.services.strategy_candidate_builders.runtime import (
     build_candidates_with_details_from_market_slice,
 )
@@ -451,8 +451,13 @@ def build_entry_runtime_candidates_with_diagnostics(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
+    market_slice_provider: MarketSliceProvider | None = None,
     per_runtime_limit: int = 6,
 ) -> tuple[dict[tuple[str, str], dict[str, list[dict[str, Any]]]], dict[tuple[str, str], list[dict[str, Any]]]]:
+    provider = market_slice_provider or AlpacaMarketSliceProvider(
+        client=client,
+        greeks_provider=greeks_provider,
+    )
     runtimes_by_symbol: dict[str, list[EntryRuntime]] = {}
     for runtime in entry_runtimes:
         for symbol in runtime.symbols:
@@ -465,11 +470,9 @@ def build_entry_runtime_candidates_with_diagnostics(
             base_parameters=base_parameters,
             runtimes=runtimes,
         )
-        market_slices_by_symbol[symbol] = build_symbol_market_slice(
+        market_slices_by_symbol[symbol] = provider.get_symbol_market_slice(
             symbol=symbol,
             parameters=market_slice_parameters,
-            client=client,
-            greeks_provider=greeks_provider,
         )
 
     return build_entry_runtime_candidates_with_diagnostics_from_market_slices(
@@ -488,6 +491,7 @@ def build_entry_runtime_candidates(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
+    market_slice_provider: MarketSliceProvider | None = None,
     per_runtime_limit: int = 6,
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime, _diagnostics_by_runtime = build_entry_runtime_candidates_with_diagnostics(
@@ -496,6 +500,7 @@ def build_entry_runtime_candidates(
         client=client,
         calendar_resolver=calendar_resolver,
         greeks_provider=greeks_provider,
+        market_slice_provider=market_slice_provider,
         per_runtime_limit=per_runtime_limit,
     )
     return candidates_by_runtime
