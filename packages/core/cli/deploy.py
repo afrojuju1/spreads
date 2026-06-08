@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import typer
 
+from core.cli.command_harness import print_command_error, render_json_value, run_action_command
 from core.services.deployments import (
     DeploymentConfigError,
     bootstrap_remote_target,
@@ -50,9 +50,12 @@ def _write_text_output(text: str, output: str | None) -> None:
     typer.echo(f"Wrote {path}")
 
 
-def _handle_deploy_error(exc: Exception) -> None:
-    typer.secho(str(exc), err=True, fg=typer.colors.RED)
-    raise typer.Exit(3) from None
+def _run_deploy_action(action: Any) -> None:
+    run_action_command(
+        action,
+        handled_error_types=(DeploymentConfigError, OSError, RuntimeError),
+        error_exit_code=3,
+    )
 
 
 def _normalized_passthrough_args(args: list[str]) -> list[str]:
@@ -69,13 +72,16 @@ def _has_option(argv: list[str], option_name: str) -> bool:
 def list_targets_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    targets = list_deploy_targets()
-    if json_output:
-        typer.echo(json.dumps([deploy_target_payload(target) for target in targets], indent=2))
-        return
-    for target in targets:
-        location = target.ssh_host if target.ssh_host else "local"
-        typer.echo(f"{target.name}: {target.mode} ({location})")
+    def action() -> None:
+        targets = list_deploy_targets()
+        if json_output:
+            render_json_value([deploy_target_payload(target) for target in targets], indent=2)
+            return
+        for target in targets:
+            location = target.ssh_host if target.ssh_host else "local"
+            typer.echo(f"{target.name}: {target.mode} ({location})")
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command("show", help="Show one deployment target definition.")
@@ -88,15 +94,15 @@ def show_target_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
+    def action() -> None:
         payload = deploy_target_payload(_resolve_target(environment))
-    except DeploymentConfigError as exc:
-        _handle_deploy_error(exc)
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-        return
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
+        if json_output:
+            render_json_value(payload, indent=2)
+            return
+        for key, value in payload.items():
+            typer.echo(f"{key}: {value}")
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command("render-env", help="Render the deploy env file for one target.")
@@ -118,14 +124,14 @@ def render_env_command(
         help="Fail if required secrets are missing.",
     ),
 ) -> None:
-    try:
+    def action() -> None:
         text = render_deploy_env_file(
             _resolve_target(environment),
             require_secrets=require_secrets,
         )
         _write_text_output(text, output)
-    except DeploymentConfigError as exc:
-        _handle_deploy_error(exc)
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command(
@@ -145,11 +151,11 @@ def render_compose_command(
         help="Optional file path to write instead of stdout.",
     ),
 ) -> None:
-    try:
+    def action() -> None:
         text = render_prod_compose(_resolve_target(environment))
         _write_text_output(text, output)
-    except DeploymentConfigError as exc:
-        _handle_deploy_error(exc)
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command("bootstrap", help="Install Docker and host prerequisites over SSH.")
@@ -167,12 +173,9 @@ def bootstrap_command(
     ),
 ) -> None:
     if not yes:
-        typer.secho("Refusing to bootstrap without --yes.", err=True, fg=typer.colors.RED)
+        print_command_error("Refusing to bootstrap without --yes.")
         raise typer.Exit(3)
-    try:
-        bootstrap_remote_target(_resolve_target(environment))
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    _run_deploy_action(lambda: bootstrap_remote_target(_resolve_target(environment)))
 
 
 @deploy_app.command("sync", help="Sync the repo and deploy env file to one SSH target.")
@@ -189,13 +192,12 @@ def sync_command(
         help="Allow replace-me secrets in the generated deploy env file.",
     ),
 ) -> None:
-    try:
-        sync_deploy_target(
+    _run_deploy_action(
+        lambda: sync_deploy_target(
             _resolve_target(environment),
             require_secrets=not allow_placeholders,
         )
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    )
 
 
 @deploy_app.command("up", help="Bring one deployment target up with docker compose.")
@@ -218,15 +220,14 @@ def up_command(
         help="Allow replace-me secrets in the generated deploy env file.",
     ),
 ) -> None:
-    try:
-        start_deploy_target(
+    _run_deploy_action(
+        lambda: start_deploy_target(
             _resolve_target(environment),
             build=build,
             sync=sync,
             require_secrets=not allow_placeholders,
         )
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    )
 
 
 @deploy_app.command("down", help="Stop one deployment target with docker compose.")
@@ -238,10 +239,7 @@ def down_command(
         help="Deployment target name.",
     ),
 ) -> None:
-    try:
-        stop_deploy_target(_resolve_target(environment))
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    _run_deploy_action(lambda: stop_deploy_target(_resolve_target(environment)))
 
 
 @deploy_app.command("status", help="Show docker compose status for one target.")
@@ -253,10 +251,7 @@ def status_command(
         help="Deployment target name.",
     ),
 ) -> None:
-    try:
-        status_deploy_target(_resolve_target(environment))
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    _run_deploy_action(lambda: status_deploy_target(_resolve_target(environment)))
 
 
 @deploy_app.command(
@@ -275,24 +270,21 @@ def exec_command(
 ) -> None:
     args = _normalized_passthrough_args(list(ctx.args))
     if not args:
-        typer.secho(
+        print_command_error(
             "Provide a spreads CLI command after `spreads deploy exec --env <target> --`.",
-            err=True,
-            fg=typer.colors.RED,
         )
         raise typer.Exit(3)
     if _has_option(args, "--db"):
-        typer.secho(
+        print_command_error(
             "Do not use --db with deploy targets. Use the target's --env wiring instead.",
-            err=True,
-            fg=typer.colors.RED,
         )
         raise typer.Exit(3)
-    try:
+
+    def action() -> None:
         code = exec_spreads_command(_resolve_target(environment), args)
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
-    raise typer.Exit(code)
+        raise typer.Exit(code)
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command("logs", help="Stream docker compose logs for one deployment target.")
@@ -324,7 +316,7 @@ def logs_command(
         help="Follow logs until interrupted.",
     ),
 ) -> None:
-    try:
+    def action() -> None:
         code = logs_deploy_target(
             _resolve_target(environment),
             services=list(services),
@@ -332,9 +324,9 @@ def logs_command(
             tail=tail,
             follow=follow,
         )
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
-    raise typer.Exit(code)
+        raise typer.Exit(code)
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command("restart", help="Restart one or more compose services on a target.")
@@ -350,14 +342,14 @@ def restart_command(
         help="Compose service names to restart.",
     ),
 ) -> None:
-    try:
+    def action() -> None:
         code = restart_deploy_target_services(
             _resolve_target(environment),
             services=list(services),
         )
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
-    raise typer.Exit(code)
+        raise typer.Exit(code)
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command("health", help="Run the standard operator health checks on a target.")
@@ -369,7 +361,7 @@ def health_command(
         help="Deployment target name.",
     ),
 ) -> None:
-    try:
+    def action() -> None:
         target = _resolve_target(environment)
         commands: list[tuple[str, list[str]]] = [
             ("Compose Status", ["deploy", "status", "--env", target.name]),
@@ -386,10 +378,8 @@ def health_command(
             code = run_target_spreads_command(target, args)
             exit_code = max(exit_code, code)
         raise typer.Exit(exit_code)
-    except typer.Exit:
-        raise
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+
+    _run_deploy_action(action)
 
 
 @deploy_app.command(
@@ -410,16 +400,9 @@ def install_service_command(
     ),
 ) -> None:
     if not yes:
-        typer.secho(
-            "Refusing to install the systemd unit without --yes.",
-            err=True,
-            fg=typer.colors.RED,
-        )
+        print_command_error("Refusing to install the systemd unit without --yes.")
         raise typer.Exit(3)
-    try:
-        install_systemd_service(_resolve_target(environment))
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    _run_deploy_action(lambda: install_systemd_service(_resolve_target(environment)))
 
 
 @deploy_app.command(
@@ -440,16 +423,9 @@ def install_ops_command(
     ),
 ) -> None:
     if not yes:
-        typer.secho(
-            "Refusing to install ops schedule without --yes.",
-            err=True,
-            fg=typer.colors.RED,
-        )
+        print_command_error("Refusing to install ops schedule without --yes.")
         raise typer.Exit(3)
-    try:
-        install_target_ops_schedule(_resolve_target(environment))
-    except (DeploymentConfigError, OSError, RuntimeError) as exc:
-        _handle_deploy_error(exc)
+    _run_deploy_action(lambda: install_target_ops_schedule(_resolve_target(environment)))
 
 
 __all__ = ["deploy_app"]

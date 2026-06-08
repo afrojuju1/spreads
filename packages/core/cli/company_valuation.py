@@ -5,6 +5,7 @@ from typing import Any
 
 import typer
 
+from core.cli.command_harness import print_command_error, render_json_value, run_payload_command
 from core.runtime.config import default_database_url, default_redis_url
 from core.services.company_valuation import (
     CompanyValuationTemplateAssignmentRefreshRequest,
@@ -36,15 +37,151 @@ company_valuation_app = typer.Typer(
 )
 
 
-def _render_payload(payload: dict[str, Any], *, json_output: bool) -> None:
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
+def _company_json_renderer(payload: Any) -> None:
+    render_json_value(payload, indent=None, sort_keys=True)
+
+
+def _run_company_payload_command(
+    *,
+    builder: Any,
+    renderer: Any,
+    json_output: bool,
+) -> None:
+    run_payload_command(
+        builder=builder,
+        renderer=renderer,
+        json_output=json_output,
+        no_color=True,
+        json_renderer=_company_json_renderer,
+    )
+
+
+def _render_job_payload(payload: dict[str, Any]) -> None:
     typer.echo(f"job_run_id={payload['job_run_id']}")
     typer.echo(f"job_key={payload['job_key']}")
     typer.echo(f"job_type={payload['job_type']}")
     typer.echo(f"status={payload['status']}")
     typer.echo(f"scheduled_for={payload['scheduled_for']}")
+
+
+def _render_screen_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"as_of={payload['as_of']}")
+    typer.echo(f"count={payload['count']}")
+    typer.echo(f"supported_only={payload['supported_only']}")
+    typer.echo(f"stressed_operator_only={payload['stressed_operator_only']}")
+    typer.echo("support_status_counts=" + json.dumps(payload["support_status_counts"], sort_keys=True))
+    typer.echo("support_tier_counts=" + json.dumps(payload["support_tier_counts"], sort_keys=True))
+    for row in payload["rows"]:
+        typer.echo(
+            "row="
+            + json.dumps(
+                {
+                    "ticker": row.get("ticker"),
+                    "template_id": row.get("template_id"),
+                    "effective_template_id": row.get("effective_template_id"),
+                    "support_status": row.get("support_status"),
+                    "support_tier": row.get("support_tier"),
+                    "valuation_gap": row.get("valuation_gap"),
+                    "quality_score": row.get("quality_score"),
+                    "stressed_operator_flag": row.get("stressed_operator_flag"),
+                },
+                sort_keys=True,
+                default=str,
+            )
+        )
+
+
+def _render_research_export_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"years={payload['years']}")
+    typer.echo(f"row_count={payload['row_count']}")
+    typer.echo(f"issuers_considered={payload['issuers_considered']}")
+    typer.echo(f"issuers_exported={payload['issuers_exported']}")
+    typer.echo(f"output_root={payload['output_root']}")
+    typer.echo(f"manifest_path={payload['manifest_path']}")
+
+
+def _render_benchmark_prior_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"prior_set_id={payload['prior_set_id']}")
+    typer.echo(f"supported_only={payload['supported_only']}")
+    typer.echo(f"rows_compared={payload['rows_compared']}")
+    typer.echo(f"mean_abs_gap_delta={payload['mean_abs_gap_delta']}")
+    typer.echo(f"sign_mismatch_count={payload['sign_mismatch_count']}")
+    typer.echo(f"calibration_gate_triggered={payload['calibration_gate_triggered']}")
+    typer.echo(f"calibration_gate_reason={payload['calibration_gate_reason']}")
+    if payload.get("summary_path"):
+        typer.echo(f"summary_path={payload['summary_path']}")
+    if payload.get("manifest_path"):
+        typer.echo(f"manifest_path={payload['manifest_path']}")
+    if payload.get("rows_path"):
+        typer.echo(f"rows_path={payload['rows_path']}")
+
+
+def _render_cluster_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"assignment_count={payload['assignment_count']}")
+    typer.echo(f"output_root={payload['output_root']}")
+    typer.echo(f"summary_path={payload['summary_path']}")
+    typer.echo(f"markdown_path={payload['markdown_path']}")
+
+
+def _render_taxonomy_sync_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"issuers_considered={payload['issuers_considered']}")
+    typer.echo(f"taxonomy_nodes_upserted={payload['taxonomy_nodes_upserted']}")
+    typer.echo(f"taxonomy_mappings_upserted={payload['taxonomy_mappings_upserted']}")
+    typer.echo(f"valuation_template_mappings_upserted={payload['valuation_template_mappings_upserted']}")
+    typer.echo(f"issuer_classifications_upserted={payload['issuer_classifications_upserted']}")
+    typer.echo(f"issuer_overlay_flags_replaced={payload['issuer_overlay_flags_replaced']}")
+    typer.echo(f"unclassified_count={payload['unclassified_count']}")
+    typer.echo(f"supported_unclassified_count={payload['supported_unclassified_count']}")
+    typer.echo(f"template_mismatch_count={payload['template_mismatch_count']}")
+    typer.echo(f"supported_template_mismatch_count={payload['supported_template_mismatch_count']}")
+    typer.echo(f"expected_template_mismatch_count={payload['expected_template_mismatch_count']}")
+    typer.echo(f"taxonomy_override_count={payload['taxonomy_override_count']}")
+    typer.echo(f"current_template_override_count={payload['current_template_override_count']}")
+    typer.echo("overlay_true_counts=" + json.dumps(payload["overlay_true_counts"], sort_keys=True))
+    typer.echo("classification_source_counts=" + json.dumps(payload["classification_source_counts"], sort_keys=True))
+    typer.echo("support_status_counts=" + json.dumps(payload["support_status_counts"], sort_keys=True))
+    typer.echo("template_mismatch_pair_counts=" + json.dumps(payload["template_mismatch_pair_counts"], sort_keys=True))
+    if payload.get("output_root"):
+        typer.echo(f"output_root={payload['output_root']}")
+        typer.echo(f"manifest_path={payload['manifest_path']}")
+        typer.echo(f"markdown_path={payload['markdown_path']}")
+        typer.echo(f"mismatch_report_path={payload['mismatch_report_path']}")
+        typer.echo(f"unclassified_report_path={payload['unclassified_report_path']}")
+    if payload["notes"]:
+        typer.echo("notes=" + "; ".join(payload["notes"]))
+
+
+def _render_template_refresh_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"issuers_requested={payload['issuers_requested']}")
+    typer.echo(f"issuers_considered={payload['issuers_considered']}")
+    typer.echo(f"issuers_updated={payload['issuers_updated']}")
+    typer.echo(f"unchanged_count={payload['unchanged_count']}")
+    typer.echo(f"error_count={len(payload['errors'])}")
+    if payload["notes"]:
+        typer.echo("notes=" + "; ".join(payload["notes"]))
+
+
+def _render_classification_backfill_payload(payload: dict[str, Any]) -> None:
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"issuers_requested={payload['issuers_requested']}")
+    typer.echo(f"issuers_considered={payload['issuers_considered']}")
+    typer.echo(f"sec_profiles_loaded={payload['sec_profiles_loaded']}")
+    typer.echo(f"issuers_updated={payload['issuers_updated']}")
+    typer.echo(f"sic_updates={payload['sic_updates']}")
+    typer.echo(f"sic_description_updates={payload['sic_description_updates']}")
+    typer.echo(f"naics_updates={payload['naics_updates']}")
+    typer.echo(f"unchanged_count={payload['unchanged_count']}")
+    typer.echo(f"skipped_count={payload['skipped_count']}")
+    typer.echo(f"error_count={len(payload['errors'])}")
+    if payload["taxonomy_sync"] is not None:
+        typer.echo("taxonomy_sync=" + json.dumps(payload["taxonomy_sync"], sort_keys=True, default=str))
+    if payload["notes"]:
+        typer.echo("notes=" + "; ".join(payload["notes"]))
 
 
 @company_valuation_app.command("bootstrap", help="Queue company valuation bootstrap work.")
@@ -91,8 +228,8 @@ def company_valuation_bootstrap_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
-        job = enqueue_company_valuation_bootstrap_job(
+    _run_company_payload_command(
+        builder=lambda: enqueue_company_valuation_bootstrap_job(
             CompanyValuationBootstrapRequest(
                 tickers=tuple(ticker),
                 bootstrap_universe=bootstrap_universe,
@@ -103,11 +240,10 @@ def company_valuation_bootstrap_command(
             ),
             db_target=db,
             redis_url=redis_url,
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    _render_payload(job.to_payload(), json_output=json_output)
+        ).to_payload(),
+        renderer=_render_job_payload,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -162,8 +298,13 @@ def company_valuation_screen_refresh_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
-        job = enqueue_company_valuation_screen_materialize_job(
+    def render(payload: dict[str, Any]) -> None:
+        _render_job_payload(payload)
+        typer.echo(f"supported_only={supported_only}")
+        typer.echo(f"stressed_operator_only={stressed_operator_only}")
+
+    _run_company_payload_command(
+        builder=lambda: enqueue_company_valuation_screen_materialize_job(
             CompanyValuationScreenRefreshRequest(
                 as_of=as_of,
                 template_id=template_id,
@@ -175,14 +316,10 @@ def company_valuation_screen_refresh_command(
             ),
             db_target=db,
             redis_url=redis_url,
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    _render_payload(job.to_payload(), json_output=json_output)
-    if not json_output:
-        typer.echo(f"supported_only={supported_only}")
-        typer.echo(f"stressed_operator_only={stressed_operator_only}")
+        ).to_payload(),
+        renderer=render,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -235,8 +372,8 @@ def company_valuation_screen_show_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     default_db = default_database_url()
-    try:
-        payload = list_company_valuation_screen(
+    _run_company_payload_command(
+        builder=lambda: list_company_valuation_screen(
             as_of=as_of,
             template_id=template_id,
             tickers=tuple(ticker) or None,
@@ -245,43 +382,10 @@ def company_valuation_screen_show_command(
             stressed_operator_only=stressed_operator_only,
             repository=None if db == default_db else CompanyValuationRepository(db),
             config_root=config_root,
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"as_of={payload['as_of']}")
-    typer.echo(f"count={payload['count']}")
-    typer.echo(f"supported_only={payload['supported_only']}")
-    typer.echo(f"stressed_operator_only={payload['stressed_operator_only']}")
-    typer.echo(
-        "support_status_counts="
-        + json.dumps(payload["support_status_counts"], sort_keys=True)
+        ),
+        renderer=_render_screen_payload,
+        json_output=json_output,
     )
-    typer.echo(
-        "support_tier_counts="
-        + json.dumps(payload["support_tier_counts"], sort_keys=True)
-    )
-    for row in payload["rows"]:
-        typer.echo(
-            "row="
-            + json.dumps(
-                {
-                    "ticker": row.get("ticker"),
-                    "template_id": row.get("template_id"),
-                    "effective_template_id": row.get("effective_template_id"),
-                    "support_status": row.get("support_status"),
-                    "support_tier": row.get("support_tier"),
-                    "valuation_gap": row.get("valuation_gap"),
-                    "quality_score": row.get("quality_score"),
-                    "stressed_operator_flag": row.get("stressed_operator_flag"),
-                },
-                sort_keys=True,
-                default=str,
-            )
-        )
 
 
 @company_valuation_app.command(
@@ -321,8 +425,8 @@ def company_valuation_resolve_unresolved_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
-        job = enqueue_company_valuation_resolve_unresolved_job(
+    _run_company_payload_command(
+        builder=lambda: enqueue_company_valuation_resolve_unresolved_job(
             ResolveUnresolvedInstitutionalPositionsRequest(
                 report_period=report_period,
                 limit_rows=limit_rows,
@@ -331,11 +435,10 @@ def company_valuation_resolve_unresolved_command(
             ),
             db_target=db,
             redis_url=redis_url,
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    _render_payload(job.to_payload(), json_output=json_output)
+        ).to_payload(),
+        renderer=_render_job_payload,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -393,14 +496,12 @@ def company_valuation_export_research_dataset_command(
 ) -> None:
     default_db = default_database_url()
     if output_format not in {"parquet", "jsonl"}:
-        typer.secho(
+        print_command_error(
             f"Unsupported format {output_format!r}; expected parquet or jsonl.",
-            err=True,
-            fg=typer.colors.RED,
         )
         raise typer.Exit(2)
-    try:
-        result = export_company_valuation_research_dataset(
+    _run_company_payload_command(
+        builder=lambda: export_company_valuation_research_dataset(
             CompanyValuationResearchExportRequest(
                 years=years,
                 template_ids=tuple(template_id),
@@ -412,21 +513,10 @@ def company_valuation_export_research_dataset_command(
                 include_market_context=include_market_context,
             ),
             repository=None if db == default_db else CompanyValuationRepository(db),
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    payload = result.to_payload()
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"status={payload['status']}")
-    typer.echo(f"years={payload['years']}")
-    typer.echo(f"row_count={payload['row_count']}")
-    typer.echo(f"issuers_considered={payload['issuers_considered']}")
-    typer.echo(f"issuers_exported={payload['issuers_exported']}")
-    typer.echo(f"output_root={payload['output_root']}")
-    typer.echo(f"manifest_path={payload['manifest_path']}")
+        ).to_payload(),
+        renderer=_render_research_export_payload,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -467,8 +557,8 @@ def company_valuation_benchmark_prior_report_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     default_db = default_database_url()
-    try:
-        result = report_company_valuation_benchmark_priors(
+    _run_company_payload_command(
+        builder=lambda: report_company_valuation_benchmark_priors(
             CompanyValuationBenchmarkPriorReportRequest(
                 prior_set_id=prior_set_id,
                 as_of=as_of,
@@ -477,28 +567,10 @@ def company_valuation_benchmark_prior_report_command(
                 config_root=config_root,
             ),
             repository=None if db == default_db else CompanyValuationRepository(db),
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    payload = result.to_payload()
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"status={payload['status']}")
-    typer.echo(f"prior_set_id={payload['prior_set_id']}")
-    typer.echo(f"supported_only={payload['supported_only']}")
-    typer.echo(f"rows_compared={payload['rows_compared']}")
-    typer.echo(f"mean_abs_gap_delta={payload['mean_abs_gap_delta']}")
-    typer.echo(f"sign_mismatch_count={payload['sign_mismatch_count']}")
-    typer.echo(f"calibration_gate_triggered={payload['calibration_gate_triggered']}")
-    typer.echo(f"calibration_gate_reason={payload['calibration_gate_reason']}")
-    if payload.get("summary_path"):
-        typer.echo(f"summary_path={payload['summary_path']}")
-    if payload.get("manifest_path"):
-        typer.echo(f"manifest_path={payload['manifest_path']}")
-    if payload.get("rows_path"):
-        typer.echo(f"rows_path={payload['rows_path']}")
+        ).to_payload(),
+        renderer=_render_benchmark_prior_payload,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -541,8 +613,8 @@ def company_valuation_cluster_research_dataset_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
-        result = analyze_company_valuation_research_dataset(
+    _run_company_payload_command(
+        builder=lambda: analyze_company_valuation_research_dataset(
             CompanyValuationClusteringRequest(
                 dataset_root=dataset_root,
                 output_root=output_root,
@@ -551,19 +623,10 @@ def company_valuation_cluster_research_dataset_command(
                 max_k=max_k,
                 min_rows_per_cluster=min_rows_per_cluster,
             )
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    payload = result.to_payload()
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"status={payload['status']}")
-    typer.echo(f"assignment_count={payload['assignment_count']}")
-    typer.echo(f"output_root={payload['output_root']}")
-    typer.echo(f"summary_path={payload['summary_path']}")
-    typer.echo(f"markdown_path={payload['markdown_path']}")
+        ).to_payload(),
+        renderer=_render_cluster_payload,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -621,8 +684,8 @@ def company_valuation_taxonomy_sync_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     default_db = default_database_url()
-    try:
-        result = sync_company_valuation_taxonomy_state(
+    _run_company_payload_command(
+        builder=lambda: sync_company_valuation_taxonomy_state(
             CompanyValuationTaxonomySyncRequest(
                 tickers=tuple(ticker) or None,
                 ciks=tuple(cik) or None,
@@ -634,64 +697,10 @@ def company_valuation_taxonomy_sync_command(
                 output_root=output_root,
             ),
             repository=None if db == default_db else CompanyValuationRepository(db),
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    payload = result.to_payload()
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"status={payload['status']}")
-    typer.echo(f"issuers_considered={payload['issuers_considered']}")
-    typer.echo(f"taxonomy_nodes_upserted={payload['taxonomy_nodes_upserted']}")
-    typer.echo(f"taxonomy_mappings_upserted={payload['taxonomy_mappings_upserted']}")
-    typer.echo(
-        f"valuation_template_mappings_upserted={payload['valuation_template_mappings_upserted']}"
+        ).to_payload(),
+        renderer=_render_taxonomy_sync_payload,
+        json_output=json_output,
     )
-    typer.echo(
-        f"issuer_classifications_upserted={payload['issuer_classifications_upserted']}"
-    )
-    typer.echo(
-        f"issuer_overlay_flags_replaced={payload['issuer_overlay_flags_replaced']}"
-    )
-    typer.echo(f"unclassified_count={payload['unclassified_count']}")
-    typer.echo(f"supported_unclassified_count={payload['supported_unclassified_count']}")
-    typer.echo(f"template_mismatch_count={payload['template_mismatch_count']}")
-    typer.echo(
-        f"supported_template_mismatch_count={payload['supported_template_mismatch_count']}"
-    )
-    typer.echo(
-        f"expected_template_mismatch_count={payload['expected_template_mismatch_count']}"
-    )
-    typer.echo(f"taxonomy_override_count={payload['taxonomy_override_count']}")
-    typer.echo(
-        f"current_template_override_count={payload['current_template_override_count']}"
-    )
-    typer.echo(
-        "overlay_true_counts="
-        + json.dumps(payload["overlay_true_counts"], sort_keys=True)
-    )
-    typer.echo(
-        "classification_source_counts="
-        + json.dumps(payload["classification_source_counts"], sort_keys=True)
-    )
-    typer.echo(
-        "support_status_counts="
-        + json.dumps(payload["support_status_counts"], sort_keys=True)
-    )
-    typer.echo(
-        "template_mismatch_pair_counts="
-        + json.dumps(payload["template_mismatch_pair_counts"], sort_keys=True)
-    )
-    if payload.get("output_root"):
-        typer.echo(f"output_root={payload['output_root']}")
-        typer.echo(f"manifest_path={payload['manifest_path']}")
-        typer.echo(f"markdown_path={payload['markdown_path']}")
-        typer.echo(f"mismatch_report_path={payload['mismatch_report_path']}")
-        typer.echo(f"unclassified_report_path={payload['unclassified_report_path']}")
-    if payload["notes"]:
-        typer.echo("notes=" + "; ".join(payload["notes"]))
 
 
 @company_valuation_app.command(
@@ -744,8 +753,8 @@ def company_valuation_template_refresh_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     default_db = default_database_url()
-    try:
-        result = refresh_company_valuation_template_assignments(
+    _run_company_payload_command(
+        builder=lambda: refresh_company_valuation_template_assignments(
             CompanyValuationTemplateAssignmentRefreshRequest(
                 tickers=tuple(ticker) or None,
                 ciks=tuple(cik) or None,
@@ -756,22 +765,10 @@ def company_valuation_template_refresh_command(
                 config_root=config_root,
             ),
             repository=None if db == default_db else CompanyValuationRepository(db),
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    payload = result.to_payload()
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"status={payload['status']}")
-    typer.echo(f"issuers_requested={payload['issuers_requested']}")
-    typer.echo(f"issuers_considered={payload['issuers_considered']}")
-    typer.echo(f"issuers_updated={payload['issuers_updated']}")
-    typer.echo(f"unchanged_count={payload['unchanged_count']}")
-    typer.echo(f"error_count={len(payload['errors'])}")
-    if payload["notes"]:
-        typer.echo("notes=" + "; ".join(payload["notes"]))
+        ).to_payload(),
+        renderer=_render_template_refresh_payload,
+        json_output=json_output,
+    )
 
 
 @company_valuation_app.command(
@@ -834,8 +831,8 @@ def company_valuation_classification_backfill_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     default_db = default_database_url()
-    try:
-        result = backfill_company_valuation_raw_classification(
+    _run_company_payload_command(
+        builder=lambda: backfill_company_valuation_raw_classification(
             CompanyValuationClassificationBackfillRequest(
                 tickers=tuple(ticker) or None,
                 ciks=tuple(cik) or None,
@@ -848,32 +845,10 @@ def company_valuation_classification_backfill_command(
                 sample_limit=sample_limit,
             ),
             repository=None if db == default_db else CompanyValuationRepository(db),
-        )
-    except Exception as exc:
-        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
-        raise typer.Exit(2) from None
-    payload = result.to_payload()
-    if json_output:
-        typer.echo(json.dumps(payload, sort_keys=True, default=str))
-        return
-    typer.echo(f"status={payload['status']}")
-    typer.echo(f"issuers_requested={payload['issuers_requested']}")
-    typer.echo(f"issuers_considered={payload['issuers_considered']}")
-    typer.echo(f"sec_profiles_loaded={payload['sec_profiles_loaded']}")
-    typer.echo(f"issuers_updated={payload['issuers_updated']}")
-    typer.echo(f"sic_updates={payload['sic_updates']}")
-    typer.echo(f"sic_description_updates={payload['sic_description_updates']}")
-    typer.echo(f"naics_updates={payload['naics_updates']}")
-    typer.echo(f"unchanged_count={payload['unchanged_count']}")
-    typer.echo(f"skipped_count={payload['skipped_count']}")
-    typer.echo(f"error_count={len(payload['errors'])}")
-    if payload["taxonomy_sync"] is not None:
-        typer.echo(
-            "taxonomy_sync="
-            + json.dumps(payload["taxonomy_sync"], sort_keys=True, default=str)
-        )
-    if payload["notes"]:
-        typer.echo("notes=" + "; ".join(payload["notes"]))
+        ).to_payload(),
+        renderer=_render_classification_backfill_payload,
+        json_output=json_output,
+    )
 
 
 __all__ = ["company_valuation_app"]

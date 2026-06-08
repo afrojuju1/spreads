@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +12,7 @@ from core.cli.ops_render import build_console, render_json_payload
 PayloadBuilder = Callable[[], dict[str, Any]]
 PayloadRenderer = Callable[[Any, dict[str, Any]], None]
 PlainRenderer = Callable[[dict[str, Any]], None]
+JsonRenderer = Callable[[Any], None]
 PassthroughEntrypoint = Callable[[list[str] | None], int]
 
 
@@ -43,14 +45,27 @@ def print_command_error(message: str) -> None:
     typer.secho(message, err=True, fg=typer.colors.RED)
 
 
+def render_json_value(
+    payload: Any,
+    *,
+    indent: int | None = 2,
+    sort_keys: bool = False,
+) -> None:
+    typer.echo(json.dumps(payload, indent=indent, sort_keys=sort_keys, default=str))
+
+
 def render_payload(
-    payload: dict[str, Any],
+    payload: Any,
     *,
     renderer: PlainRenderer,
     json_output: bool,
     no_color: bool,
+    json_renderer: JsonRenderer | None = None,
 ) -> None:
     if json_output:
+        if json_renderer is not None:
+            json_renderer(payload)
+            return
         render_json_payload(build_console(no_color=True), payload)
     else:
         renderer(payload)
@@ -121,6 +136,7 @@ def run_payload_command(
     renderer: PlainRenderer,
     json_output: bool,
     no_color: bool,
+    json_renderer: JsonRenderer | None = None,
     error_prefix: str = "Command failed",
     error_exit_code: int = 2,
 ) -> None:
@@ -133,7 +149,35 @@ def run_payload_command(
     except Exception as exc:
         print_command_error(f"{error_prefix}: {exc}")
         raise typer.Exit(error_exit_code) from None
-    render_payload(payload, renderer=renderer, json_output=json_output, no_color=no_color)
+    render_payload(
+        payload,
+        renderer=renderer,
+        json_output=json_output,
+        no_color=no_color,
+        json_renderer=json_renderer,
+    )
+
+
+def run_action_command(
+    action: Callable[[], None],
+    *,
+    handled_error_types: tuple[type[BaseException], ...] = (),
+    error_prefix: str | None = None,
+    error_exit_code: int = 3,
+) -> None:
+    handled_errors = (ValueError, *handled_error_types)
+    try:
+        action()
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+    except handled_errors as exc:
+        print_command_error(str(exc) if error_prefix is None else f"{error_prefix}: {exc}")
+        raise typer.Exit(error_exit_code) from None
+    except Exception as exc:
+        print_command_error(str(exc) if error_prefix is None else f"{error_prefix}: {exc}")
+        raise typer.Exit(error_exit_code) from None
 
 
 def run_passthrough(
