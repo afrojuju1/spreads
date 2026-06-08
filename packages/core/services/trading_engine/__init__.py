@@ -24,6 +24,7 @@ from .entry_quality import (
     list_entry_quality_profiles,
     resolve_entry_quality_profile,
 )
+from .feature_snapshots import build_momentum_long_call_feature_snapshots
 from .execution import ExecutionEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
 from .portfolio import PortfolioEngine
@@ -56,6 +57,7 @@ __all__ = [
     "PostgresPortfolioEngine",
     "RiskEngine",
     "StrategyEngine",
+    "build_momentum_long_call_feature_snapshots",
     "list_entry_quality_profiles",
     "refresh_engine_capture_targets",
     "resolve_entry_quality_profile",

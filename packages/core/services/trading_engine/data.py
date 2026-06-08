@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 from .kernel import EngineEvidence, EnginePayload, EngineSummary, EngineRunRef
 
 if TYPE_CHECKING:
+    from core.services.trading_engine.entry_quality import FeatureSnapshot
     from core.services.trading_strategy_runtime import EntryRuntime
 
 
@@ -91,6 +92,13 @@ class DataEngine(Protocol):
         self,
         request: CandidateBuildRequest,
     ) -> CandidateBuildResult: ...
+
+    def build_feature_snapshots(
+        self,
+        *,
+        ticker_set: ResolvedTickerSet,
+        candidate_result: CandidateBuildResult,
+    ) -> tuple[FeatureSnapshot, ...]: ...
 
     def declare_capture_targets(
         self,

@@ -17,6 +17,8 @@ from core.services.trading_engine.data import (
     TickerSourceFallback,
     TickerSourceSpec,
 )
+from core.services.trading_engine.entry_quality import FeatureSnapshot
+from core.services.trading_engine.feature_snapshots import build_momentum_long_call_feature_snapshots
 from core.services.trading_engine.kernel import EngineContext
 from core.services.trading_strategies import StrategySource, load_universe_symbols
 from core.services.trading_strategy_runtime import EntryRuntime
@@ -119,6 +121,17 @@ class PostgresDataEngine:
         return self.build_entry_trade_candidates(
             request=request,
             runtime=runtime,
+        )
+
+    def build_feature_snapshots(
+        self,
+        *,
+        ticker_set: ResolvedTickerSet,
+        candidate_result: CandidateBuildResult,
+    ) -> tuple[FeatureSnapshot, ...]:
+        return build_momentum_long_call_feature_snapshots(
+            ticker_set=ticker_set,
+            candidate_result=candidate_result,
         )
 
     def build_entry_trade_candidates(
