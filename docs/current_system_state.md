@@ -151,6 +151,7 @@ Each strategy owns:
 - candidate `source`
 - candidate-build settings
 - entry and management routine schedules
+- entry quality profile and quality overrides when configured
 - runtime controls
 - risk and limit policy references
 - execution mode, approval mode, environment, and runtime
@@ -171,7 +172,7 @@ Available but disabled-by-default strategy configs:
 - `short_dated_index_iron_condor`
 - `short_dated_index_put_credit`
 
-`momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
+`momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, applies `entry.quality_profile: momentum_long_call_v1`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
 
 Disabled strategy configs are kept as authored strategy definitions, but they do not generate default scheduler jobs until intentionally re-enabled.
 
@@ -183,7 +184,13 @@ Strategy entry follows the Nautilus-shaped spine:
 
 `DataEngine -> engine facts/read models -> StrategyEngine -> RiskEngine -> ExecutionEngine -> PortfolioEngine -> Ops projections`.
 
-The active entry owner is `PostgresStrategyEngine` in `services/trading_engine/strategy_runtime.py`. It resolves tickers through DataEngine, builds candidates once, turns selected candidates into trade signals, plans trade decisions, runs admission, and creates execution intents. DataEngine records runtime-filter and ranking-policy diagnostics during candidate build; StrategyEngine does not run a second candidate-filter pass.
+The active entry owner is `PostgresStrategyEngine` in `services/trading_engine/strategy_runtime.py`. It resolves tickers through DataEngine, builds candidates once, evaluates configured entry quality through `EntryQualityPipeline`, turns selected candidates into trade signals, plans trade decisions, runs admission, and creates execution intents. DataEngine builds `FeatureSnapshot` rows from the resolved ticker set and candidate-build result; StrategyEngine evaluates the configured `quality_profile` and persists quality waterfall evidence. The quality pipeline does not rebuild candidates, fetch market data, or own execution admission.
+
+Current live entry-quality profile:
+
+- `momentum_long_call_v1` for `momentum_long_calls`
+
+Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. Early optionable chain viability, relative-strength/regime filters, richer ops waterfall rendering, duplicate gate cleanup, and final cutover validation remain tracked under the `spr-34u` beads. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
 
 Active entry facts are persisted through:
 

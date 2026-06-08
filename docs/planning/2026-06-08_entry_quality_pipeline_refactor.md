@@ -1,8 +1,8 @@
-# Entry Quality Pipeline Refactor Proposal
+# Entry Quality Pipeline Refactor Plan
 
 Date: 2026-06-08
 
-Status: review proposal.
+Status: partially implemented. Beads `spr-34u.1` through `spr-34u.5` are shipped for `momentum_long_calls`; `spr-34u.6` through `spr-34u.10` remain open for new filters, ops rendering, cleanup, and final cutover validation.
 
 Related:
 
@@ -13,11 +13,11 @@ Related:
 
 ## Recommendation
 
-Build one centralized `EntryQualityPipeline`, driven by one named `quality_profile` per entry routine.
+Build one centralized `EntryQualityPipeline`, driven by one named `quality_profile` per entry routine. This is now the active path for `momentum_long_calls` with `entry.quality_profile: momentum_long_call_v1`.
 
 Do not expose arbitrary strategy-level "N filters" as the primary interface. That would make every strategy a custom boolean maze and would keep today's scattered gates alive under a new name.
 
-The live strategy config should stay small:
+The live strategy config stays small:
 
 ```yaml
 entry:
@@ -46,7 +46,7 @@ TickerSource / Universe
   -> Position / Portfolio
 ```
 
-The important addition is `FeatureSnapshot`.
+The important addition is `FeatureSnapshot`. The first shipped cutover computes feature snapshots from the resolved ticker set plus existing candidate-build diagnostics/candidates, then evaluates the quality profile without adding another data-fetching path.
 
 Today, parts of source freshness, setup quality, option chain viability, liquidity, ranking, and runtime filtering are spread across source jobs, builders, ranking policy, replay filters, live selection, and admission. The refactor should centralize the facts first, then let filters evaluate those facts.
 
@@ -308,15 +308,16 @@ admission          attempted 0
 
 This is intentionally a full cleanup path, not a compatibility wrapper.
 
-1. Add profile contracts and registry.
-2. Add `FeatureSnapshot` builder for `momentum_long_calls`.
-3. Move existing source/setup/chain/contract/ranking/runtime gates into the pipeline with no intended behavior change.
-4. Persist the quality waterfall on candidate diagnostics and candidate evidence.
-5. Cut over `momentum_long_calls` entry to `quality_profile: momentum_long_call_v1`.
-6. Add `optionable_chain_viability` early.
-7. Add `relative_strength_market_regime`.
-8. Update ops CLI/dashboard to show filter waterfall.
-9. Remove stale duplicate gate plumbing once the pipeline is canonical.
+1. Done: add profile contracts and registry.
+2. Done: add `FeatureSnapshot` builder for `momentum_long_calls`.
+3. Done: move existing source/setup/chain/contract/ranking/runtime gates into the pipeline with no intended behavior change.
+4. Done: persist the quality waterfall on candidate diagnostics and candidate evidence.
+5. Done: cut over `momentum_long_calls` entry to `quality_profile: momentum_long_call_v1`.
+6. Remaining: add `optionable_chain_viability` early.
+7. Remaining: add `relative_strength_market_regime`.
+8. Remaining: update ops CLI/dashboard to show filter waterfall.
+9. Remaining: remove stale duplicate gate plumbing once the pipeline is canonical.
+10. Remaining: live-validate the cutover after the remaining filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
 
 ## First Profile
 

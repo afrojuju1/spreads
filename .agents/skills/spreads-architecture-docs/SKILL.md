@@ -29,7 +29,7 @@ Use these only for the roles they now own:
 - [docs/planning/2026-06-08_trading_engine_inspiration_repos.md](../../../docs/planning/2026-06-08_trading_engine_inspiration_repos.md)
   - external trading-engine repos/frameworks to check first when designing trading-engine, source/scanner, strategy-quality, execution, risk, or portfolio refactors
 - [docs/planning/2026-06-08_entry_quality_pipeline_refactor.md](../../../docs/planning/2026-06-08_entry_quality_pipeline_refactor.md)
-  - review proposal for the target `quality_profile` / `EntryQualityPipeline` refactor; not current shipped runtime behavior until implemented through beads
+  - implementation plan for the `quality_profile` / `EntryQualityPipeline` refactor; `momentum_long_calls` is cut over to `momentum_long_call_v1`, while later beads still cover new filters, ops rendering, cleanup, and final cutover validation
 - [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
   - candidate, signal, decision, and admission ownership inside the broader system
 - [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)
@@ -39,7 +39,7 @@ Use these only for the roles they now own:
 
 Do not let these supporting docs become rival top-level architecture sources.
 Older planning docs may still mention pre-cutover `replay` or `audit_replay` surfaces; when they do, prefer the current names and boundaries from `docs/current_system_state.md`.
-For target-state proposals, keep the distinction explicit: `docs/current_system_state.md` describes what is live now, while proposal docs describe future beads to implement.
+For target-state proposals, keep the distinction explicit: `docs/current_system_state.md` describes what is live now, while planning docs describe completed and remaining beads for the target.
 
 ## Inspiration Repos
 
