@@ -150,6 +150,22 @@ def _candidate_payload(row: dict[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
+def _quality_evidence_summary(row: dict[str, Any]) -> dict[str, Any]:
+    evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+    waterfall = evidence.get("quality_waterfall") if isinstance(evidence, dict) else None
+    if not isinstance(waterfall, dict):
+        return {
+            "quality_profile_id": evidence.get("quality_profile_id") if isinstance(evidence, dict) else None,
+            "quality_waterfall_blocked": evidence.get("quality_waterfall_blocked") if isinstance(evidence, dict) else None,
+            "quality_waterfall_stage_counts": dict(evidence.get("quality_waterfall_stage_counts") or {}) if isinstance(evidence, dict) else {},
+        }
+    return {
+        "quality_profile_id": evidence.get("quality_profile_id") or waterfall.get("profile_id"),
+        "quality_waterfall_blocked": waterfall.get("blocked"),
+        "quality_waterfall_stage_counts": dict(waterfall.get("stage_counts") or {}),
+    }
+
+
 def _candidate_identity(candidate: dict[str, Any]) -> str:
     return str(
         candidate.get("candidate_identity")
@@ -244,6 +260,7 @@ def _persist_trade_admission(
             "slot_key": slot_key,
             "underlying_symbol": signal.get("underlying_symbol"),
             "candidate_identity": _candidate_identity_from_signal(signal),
+            **_quality_evidence_summary(signal),
         },
     )
     target_intent_state = "pending" if admission_allows_attempt(normalized) else "revoked"
@@ -654,22 +671,45 @@ def _refresh_entry_runtime_signals(
         (
             str(ref.get("underlying_symbol") or "").upper(),
             str(ref.get("candidate_identity") or ""),
-        ): str(ref["trade_signal_id"])
+        ): dict(ref)
         for ref in list(engine_fact_summary.get("trade_signals") or [])
         if isinstance(ref, dict) and ref.get("trade_signal_id") not in (None, "")
     }
     signals = []
     for row in selected_rows:
         key = (str(row.get("underlying_symbol") or "").upper(), _candidate_identity_from_signal(row))
-        trade_signal_id = signal_refs_by_key.get(key) or _trade_signal_id_for_signal(
-            candidate_generation={"engine_facts": engine_fact_summary},
-            runtime=runtime_with_symbols,
-            market_date=market_date,
-            signal=row,
+        signal_ref = signal_refs_by_key.get(key)
+        trade_signal_id = (
+            str(signal_ref["trade_signal_id"])
+            if signal_ref is not None
+            else _trade_signal_id_for_signal(
+                candidate_generation={"engine_facts": engine_fact_summary},
+                runtime=runtime_with_symbols,
+                market_date=market_date,
+                signal=row,
+            )
         )
         if trade_signal_id is None:
             continue
-        signals.append({**row, "trade_signal_id": trade_signal_id})
+        quality_evidence = (
+            {}
+            if signal_ref is None
+            else {
+                "quality_profile_id": signal_ref.get("quality_profile_id"),
+                "quality_waterfall_blocked": signal_ref.get("quality_waterfall_blocked"),
+                "quality_waterfall_stage_counts": dict(signal_ref.get("quality_waterfall_stage_counts") or {}),
+            }
+        )
+        signals.append(
+            {
+                **row,
+                "trade_signal_id": trade_signal_id,
+                "evidence": {
+                    **dict(row.get("evidence") or {}),
+                    **quality_evidence,
+                },
+            }
+        )
     return {
         "status": "ok",
         "reason": None,
@@ -821,6 +861,7 @@ def _run_trading_strategy_entry(
             "decision_plan": dict(decision_plan["payload"]),
             "candidate_identity": _candidate_identity_from_signal(signal),
             "underlying_symbol": signal.get("underlying_symbol"),
+            **_quality_evidence_summary(signal),
             "candidate_generation": {
                 "candidate_run_id": (
                     (candidate_generation.get("engine_facts") or {}).get("candidate_run_id")
