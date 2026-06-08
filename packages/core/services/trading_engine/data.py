@@ -96,6 +96,8 @@ class DataEngine(Protocol):
     def build_feature_snapshots(
         self,
         *,
+        trade_structure: str,
+        quality_profile_id: str,
         ticker_set: ResolvedTickerSet,
         candidate_result: CandidateBuildResult,
     ) -> tuple[FeatureSnapshot, ...]: ...

@@ -26,7 +26,15 @@ from .entry_quality import (
 )
 from .entry_quality_evidence import EntryQualityAnalysis, build_entry_quality_analysis
 from .entry_quality_pipeline import evaluate_entry_quality_snapshot, evaluate_momentum_long_call_snapshot
-from .feature_snapshots import build_momentum_long_call_feature_snapshots
+from .feature_snapshots import (
+    FEATURE_SNAPSHOT_BUILDER_REGISTRY,
+    FeatureSnapshotBuilder,
+    FeatureSnapshotBuilderKey,
+    build_feature_snapshots_for_strategy,
+    build_momentum_long_call_feature_snapshots,
+    register_feature_snapshot_builder,
+    resolve_feature_snapshot_builder,
+)
 from .execution import ExecutionEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
 from .portfolio import PortfolioEngine
@@ -50,7 +58,10 @@ __all__ = [
     "EntryQualityStatus",
     "EntryQualityWaterfall",
     "ExecutionEngine",
+    "FEATURE_SNAPSHOT_BUILDER_REGISTRY",
     "FeatureSnapshot",
+    "FeatureSnapshotBuilder",
+    "FeatureSnapshotBuilderKey",
     "FilterResult",
     "FilterResultStatus",
     "MOMENTUM_LONG_CALL_PROFILE_ID",
@@ -61,10 +72,13 @@ __all__ = [
     "RiskEngine",
     "StrategyEngine",
     "build_entry_quality_analysis",
+    "build_feature_snapshots_for_strategy",
     "build_momentum_long_call_feature_snapshots",
     "evaluate_entry_quality_snapshot",
     "evaluate_momentum_long_call_snapshot",
     "list_entry_quality_profiles",
+    "register_feature_snapshot_builder",
     "refresh_engine_capture_targets",
+    "resolve_feature_snapshot_builder",
     "resolve_entry_quality_profile",
 ]

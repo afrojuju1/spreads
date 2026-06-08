@@ -9,7 +9,7 @@ from core.services.option_structures import payload_structure_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality import EntryQualityContext, EntryQualityWaterfall, FeatureSnapshot
 from core.services.trading_engine.entry_quality_pipeline import evaluate_entry_quality_snapshot
-from core.services.trading_engine.feature_snapshots import build_momentum_long_call_feature_snapshots
+from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 
 if TYPE_CHECKING:
     from core.services.trading_strategy_runtime import EntryRuntime
@@ -164,7 +164,9 @@ def build_entry_quality_analysis(
             summary=quality_summary(profile_id, ()),
         )
 
-    snapshots = build_momentum_long_call_feature_snapshots(
+    snapshots = build_feature_snapshots_for_strategy(
+        trade_structure=runtime.trade_structure,
+        quality_profile_id=profile_id,
         ticker_set=ticker_set,
         candidate_result=candidate_result,
     )

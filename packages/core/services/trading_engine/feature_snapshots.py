@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
+from core.services.option_structures import normalize_strategy_family
 from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, unique_text_list
 
 from .data import CandidateBuildResult, ResolvedTickerSet
@@ -79,6 +80,67 @@ _CANDIDATE_PREMIUM_FIELDS = (
     "score",
     "confidence",
 )
+
+
+class FeatureSnapshotBuilder(Protocol):
+    def __call__(
+        self,
+        *,
+        ticker_set: ResolvedTickerSet,
+        candidate_result: CandidateBuildResult,
+    ) -> tuple[FeatureSnapshot, ...]: ...
+
+
+FeatureSnapshotBuilderKey = tuple[str, str]
+FEATURE_SNAPSHOT_BUILDER_REGISTRY: dict[FeatureSnapshotBuilderKey, FeatureSnapshotBuilder] = {}
+
+
+def _builder_key(*, trade_structure: str, quality_profile_id: str) -> FeatureSnapshotBuilderKey:
+    normalized_structure = normalize_strategy_family(trade_structure)
+    normalized_profile = str(quality_profile_id or "").strip()
+    if not normalized_structure or normalized_structure == "unknown":
+        raise ValueError("feature snapshot builder trade_structure is required")
+    if not normalized_profile:
+        raise ValueError("feature snapshot builder quality_profile_id is required")
+    return normalized_structure, normalized_profile
+
+
+def register_feature_snapshot_builder(
+    *,
+    trade_structure: str,
+    quality_profile_id: str,
+    builder: FeatureSnapshotBuilder,
+) -> None:
+    FEATURE_SNAPSHOT_BUILDER_REGISTRY[_builder_key(trade_structure=trade_structure, quality_profile_id=quality_profile_id)] = builder
+
+
+def resolve_feature_snapshot_builder(
+    *,
+    trade_structure: str,
+    quality_profile_id: str,
+) -> FeatureSnapshotBuilder:
+    key = _builder_key(trade_structure=trade_structure, quality_profile_id=quality_profile_id)
+    builder = FEATURE_SNAPSHOT_BUILDER_REGISTRY.get(key)
+    if builder is None:
+        raise ValueError("No feature snapshot builder registered for " f"trade_structure={key[0]!r}, quality_profile_id={key[1]!r}")
+    return builder
+
+
+def build_feature_snapshots_for_strategy(
+    *,
+    trade_structure: str,
+    quality_profile_id: str,
+    ticker_set: ResolvedTickerSet,
+    candidate_result: CandidateBuildResult,
+) -> tuple[FeatureSnapshot, ...]:
+    builder = resolve_feature_snapshot_builder(
+        trade_structure=trade_structure,
+        quality_profile_id=quality_profile_id,
+    )
+    return builder(
+        ticker_set=ticker_set,
+        candidate_result=candidate_result,
+    )
 
 
 def _symbol_from_row(row: Mapping[str, Any]) -> str | None:
@@ -294,6 +356,19 @@ def build_momentum_long_call_feature_snapshots(
     return tuple(snapshots)
 
 
+register_feature_snapshot_builder(
+    trade_structure="long_call",
+    quality_profile_id="momentum_long_call_v1",
+    builder=build_momentum_long_call_feature_snapshots,
+)
+
+
 __all__ = [
+    "FEATURE_SNAPSHOT_BUILDER_REGISTRY",
+    "FeatureSnapshotBuilder",
+    "FeatureSnapshotBuilderKey",
+    "build_feature_snapshots_for_strategy",
     "build_momentum_long_call_feature_snapshots",
+    "register_feature_snapshot_builder",
+    "resolve_feature_snapshot_builder",
 ]
