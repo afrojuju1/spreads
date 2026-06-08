@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -13,12 +12,10 @@ from core.domain.profiles import (
 )
 from core.integrations.calendar_events.models import CalendarPolicyDecision
 from core.integrations.calendar_events.policy import apply_strategy_calendar_policy
-from core.services.strategy_candidate_builders.runtime_context import candidate_session_bucket, option_expiry_close
-from core.services.scanners.config import (
-    normalize_calendar_confidence_policy,
-)
 from core.services.option_structures import candidate_legs, legs_identity_key
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
+from core.services.strategy_candidate_builders.runtime_context import candidate_session_bucket, option_expiry_close
+from core.services.strategy_candidate_builders.settings import normalize_calendar_confidence_policy
 
 _CONSENSUS_BACKED_EARNINGS_STATUSES = {"consensus", "date_only"}
 _RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE = {"medium", "high"}
@@ -28,7 +25,7 @@ def _calendar_confidence_reason(
     candidate: SpreadCandidate,
     *,
     underlying_type: str,
-    args: argparse.Namespace,
+    args: Any,
 ) -> str | None:
     if underlying_type != "single_name_equity":
         return None
@@ -50,7 +47,7 @@ def assess_data_quality(
     candidate: SpreadCandidate,
     *,
     underlying_type: str,
-    args: argparse.Namespace,
+    args: Any,
 ) -> tuple[str, tuple[str, ...]]:
     if args.data_policy == "off":
         return "clean", ()
@@ -125,7 +122,7 @@ def attach_data_quality(
     *,
     candidates: list[SpreadCandidate],
     underlying_type: str,
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     annotated = annotate_data_quality(
         candidates=candidates,
@@ -147,7 +144,7 @@ def annotate_data_quality(
     *,
     candidates: list[SpreadCandidate],
     underlying_type: str,
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     enriched: list[SpreadCandidate] = []
     for candidate in candidates:
@@ -159,7 +156,7 @@ def annotate_data_quality(
 def annotate_ranking_policy(
     *,
     candidates: list[SpreadCandidate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     enriched: list[SpreadCandidate] = []
     for candidate in candidates:
@@ -179,13 +176,13 @@ def annotate_ranking_policy(
 def attach_ranking_policy(
     *,
     candidates: list[SpreadCandidate],
-    args: argparse.Namespace,
+    args: Any,
 ) -> list[SpreadCandidate]:
     annotated = annotate_ranking_policy(candidates=candidates, args=args)
     return [candidate for candidate in annotated if str(candidate.ranking_policy_status or "passed").lower() != "blocked"]
 
 
-def build_selection_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> tuple[str, ...]:
+def build_selection_notes(candidate: SpreadCandidate, args: Any) -> tuple[str, ...]:
     notes: list[str] = []
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
     delta_target = args.short_delta_target
@@ -249,7 +246,7 @@ def build_selection_notes(candidate: SpreadCandidate, args: argparse.Namespace) 
     return tuple(notes[:4])
 
 
-def attach_selection_notes(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
+def attach_selection_notes(candidates: list[SpreadCandidate], args: Any) -> list[SpreadCandidate]:
     return [replace(candidate, selection_notes=build_selection_notes(candidate, args)) for candidate in candidates]
 
 

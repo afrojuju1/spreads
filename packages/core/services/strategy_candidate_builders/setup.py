@@ -9,7 +9,7 @@ from core.domain.models import (
     SpreadCandidate,
     UnderlyingSetupContext,
 )
-from core.services.scanners.config import strategy_direction
+from core.services.strategy_specs import strategy_direction
 
 
 def average(values: list[float]) -> float | None:
@@ -106,58 +106,20 @@ def analyze_daily_setup(
         )
 
     if bullish:
-        distance_to_20d_extreme_pct = (
-            (spot_price - low_20) / spot_price if spot_price > 0 else None
-        )
-        price_vs_sma20_score = (
-            0.5
-            if spot_vs_sma20_pct is None
-            else clamp(0.5 + (spot_vs_sma20_pct / 0.08))
-        )
-        trend_score = (
-            0.5
-            if sma20_vs_sma50_pct is None
-            else clamp(0.5 + (sma20_vs_sma50_pct / 0.06))
-        )
-        momentum_score = (
-            0.5 if return_5d_pct is None else clamp(0.45 + (return_5d_pct / 0.08))
-        )
-        extreme_distance_score = (
-            0.5
-            if distance_to_20d_extreme_pct is None
-            else clamp(distance_to_20d_extreme_pct / 0.04)
-        )
+        distance_to_20d_extreme_pct = (spot_price - low_20) / spot_price if spot_price > 0 else None
+        price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 + (spot_vs_sma20_pct / 0.08))
+        trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 + (sma20_vs_sma50_pct / 0.06))
+        momentum_score = 0.5 if return_5d_pct is None else clamp(0.45 + (return_5d_pct / 0.08))
+        extreme_distance_score = 0.5 if distance_to_20d_extreme_pct is None else clamp(distance_to_20d_extreme_pct / 0.04)
     else:
-        distance_to_20d_extreme_pct = (
-            (high_20 - spot_price) / spot_price if spot_price > 0 else None
-        )
-        price_vs_sma20_score = (
-            0.5
-            if spot_vs_sma20_pct is None
-            else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
-        )
-        trend_score = (
-            0.5
-            if sma20_vs_sma50_pct is None
-            else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
-        )
-        momentum_score = (
-            0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
-        )
-        extreme_distance_score = (
-            0.5
-            if distance_to_20d_extreme_pct is None
-            else clamp(distance_to_20d_extreme_pct / 0.04)
-        )
+        distance_to_20d_extreme_pct = (high_20 - spot_price) / spot_price if spot_price > 0 else None
+        price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
+        trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
+        momentum_score = 0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
+        extreme_distance_score = 0.5 if distance_to_20d_extreme_pct is None else clamp(distance_to_20d_extreme_pct / 0.04)
 
     score = round(
-        100.0
-        * (
-            0.35 * price_vs_sma20_score
-            + 0.25 * trend_score
-            + 0.20 * momentum_score
-            + 0.20 * extreme_distance_score
-        ),
+        100.0 * (0.35 * price_vs_sma20_score + 0.25 * trend_score + 0.20 * momentum_score + 0.20 * extreme_distance_score),
         1,
     )
 
@@ -165,69 +127,45 @@ def analyze_daily_setup(
     if bullish:
         if spot_vs_sma20_pct is not None:
             if spot_vs_sma20_pct > 0.02:
-                reasons.append(
-                    supportive_note("spot is extended above the 20-day average")
-                )
+                reasons.append(supportive_note("spot is extended above the 20-day average"))
             elif spot_vs_sma20_pct < -0.01:
                 reasons.append(caution_note("spot is trading below the 20-day average"))
         if sma20_vs_sma50_pct is not None:
             if sma20_vs_sma50_pct > 0.015:
-                reasons.append(
-                    supportive_note("20-day average is above the 50-day average")
-                )
+                reasons.append(supportive_note("20-day average is above the 50-day average"))
             elif sma20_vs_sma50_pct < -0.01:
-                reasons.append(
-                    caution_note("20-day average is below the 50-day average")
-                )
+                reasons.append(caution_note("20-day average is below the 50-day average"))
         if return_5d_pct is not None:
             if return_5d_pct > 0.03:
-                reasons.append(
-                    supportive_note("recent 5-day momentum is strongly positive")
-                )
+                reasons.append(supportive_note("recent 5-day momentum is strongly positive"))
             elif return_5d_pct < -0.02:
-                reasons.append(
-                    caution_note("recent 5-day momentum is weak to negative")
-                )
+                reasons.append(caution_note("recent 5-day momentum is weak to negative"))
         if distance_to_20d_extreme_pct is not None:
             if distance_to_20d_extreme_pct < 0.01:
                 reasons.append(caution_note("spot is trading near the 20-day low"))
             elif distance_to_20d_extreme_pct > 0.03:
-                reasons.append(
-                    supportive_note("spot has room above the recent 20-day low")
-                )
+                reasons.append(supportive_note("spot has room above the recent 20-day low"))
     else:
         if spot_vs_sma20_pct is not None:
             if spot_vs_sma20_pct > 0.02:
-                reasons.append(
-                    supportive_note("spot is extended above the 20-day average")
-                )
+                reasons.append(supportive_note("spot is extended above the 20-day average"))
             elif spot_vs_sma20_pct < -0.01:
                 reasons.append(caution_note("spot is trading below the 20-day average"))
         if sma20_vs_sma50_pct is not None:
             if sma20_vs_sma50_pct > 0.015:
-                reasons.append(
-                    caution_note("20-day average is leading the 50-day average higher")
-                )
+                reasons.append(caution_note("20-day average is leading the 50-day average higher"))
             elif sma20_vs_sma50_pct < -0.01:
-                reasons.append(
-                    supportive_note("20-day average is below the 50-day average")
-                )
+                reasons.append(supportive_note("20-day average is below the 50-day average"))
         if return_5d_pct is not None:
             if return_5d_pct > 0.03:
-                reasons.append(
-                    caution_note("recent 5-day momentum is strongly positive")
-                )
+                reasons.append(caution_note("recent 5-day momentum is strongly positive"))
             elif return_5d_pct < -0.02:
-                reasons.append(
-                    supportive_note("recent 5-day momentum is weak to negative")
-                )
+                reasons.append(supportive_note("recent 5-day momentum is weak to negative"))
         if distance_to_20d_extreme_pct is not None:
             if distance_to_20d_extreme_pct < 0.01:
                 reasons.append(caution_note("spot is trading near the 20-day high"))
             elif distance_to_20d_extreme_pct > 0.03:
-                reasons.append(
-                    supportive_note("spot has room below the recent 20-day high")
-                )
+                reasons.append(supportive_note("spot has room below the recent 20-day high"))
 
     status = setup_status_from_score(score)
     if not reasons:
@@ -273,9 +211,7 @@ def analyze_intraday_setup(
 
     session_high = max(bar.high for bar in bars)
     session_low = min(bar.low for bar in bars)
-    weighted_prices = [
-        ((bar.high + bar.low + bar.close) / 3.0) * max(bar.volume, 1) for bar in bars
-    ]
+    weighted_prices = [((bar.high + bar.low + bar.close) / 3.0) * max(bar.volume, 1) for bar in bars]
     total_volume = sum(max(bar.volume, 1) for bar in bars)
     vwap = None if total_volume <= 0 else sum(weighted_prices) / total_volume
     spot_vs_vwap_pct = None if vwap in (None, 0) else (spot_price - vwap) / vwap
@@ -309,64 +245,22 @@ def analyze_intraday_setup(
             source_window_minutes=len(bars),
         )
     if bullish:
-        distance_to_session_extreme_pct = (
-            (spot_price - session_low) / spot_price if spot_price > 0 else None
-        )
-        opening_range_break_pct = (
-            (spot_price - opening_range_high) / spot_price if spot_price > 0 else None
-        )
-        vwap_score = (
-            0.5 if spot_vs_vwap_pct is None else clamp(0.5 + (spot_vs_vwap_pct / 0.01))
-        )
-        opening_range_score = (
-            0.5
-            if opening_range_break_pct is None
-            else clamp(0.55 + (opening_range_break_pct / 0.01))
-        )
-        momentum_score = (
-            0.5
-            if intraday_return_pct is None
-            else clamp(0.5 + (intraday_return_pct / 0.015))
-        )
-        extreme_score = (
-            0.5
-            if distance_to_session_extreme_pct is None
-            else clamp(distance_to_session_extreme_pct / 0.012)
-        )
+        distance_to_session_extreme_pct = (spot_price - session_low) / spot_price if spot_price > 0 else None
+        opening_range_break_pct = (spot_price - opening_range_high) / spot_price if spot_price > 0 else None
+        vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 + (spot_vs_vwap_pct / 0.01))
+        opening_range_score = 0.5 if opening_range_break_pct is None else clamp(0.55 + (opening_range_break_pct / 0.01))
+        momentum_score = 0.5 if intraday_return_pct is None else clamp(0.5 + (intraday_return_pct / 0.015))
+        extreme_score = 0.5 if distance_to_session_extreme_pct is None else clamp(distance_to_session_extreme_pct / 0.012)
     else:
-        distance_to_session_extreme_pct = (
-            (session_high - spot_price) / spot_price if spot_price > 0 else None
-        )
-        opening_range_break_pct = (
-            (opening_range_low - spot_price) / spot_price if spot_price > 0 else None
-        )
-        vwap_score = (
-            0.5 if spot_vs_vwap_pct is None else clamp(0.5 - (spot_vs_vwap_pct / 0.01))
-        )
-        opening_range_score = (
-            0.5
-            if opening_range_break_pct is None
-            else clamp(0.55 + (opening_range_break_pct / 0.01))
-        )
-        momentum_score = (
-            0.5
-            if intraday_return_pct is None
-            else clamp(0.5 - (intraday_return_pct / 0.015))
-        )
-        extreme_score = (
-            0.5
-            if distance_to_session_extreme_pct is None
-            else clamp(distance_to_session_extreme_pct / 0.012)
-        )
+        distance_to_session_extreme_pct = (session_high - spot_price) / spot_price if spot_price > 0 else None
+        opening_range_break_pct = (opening_range_low - spot_price) / spot_price if spot_price > 0 else None
+        vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 - (spot_vs_vwap_pct / 0.01))
+        opening_range_score = 0.5 if opening_range_break_pct is None else clamp(0.55 + (opening_range_break_pct / 0.01))
+        momentum_score = 0.5 if intraday_return_pct is None else clamp(0.5 - (intraday_return_pct / 0.015))
+        extreme_score = 0.5 if distance_to_session_extreme_pct is None else clamp(distance_to_session_extreme_pct / 0.012)
 
     score = round(
-        100.0
-        * (
-            0.35 * vwap_score
-            + 0.25 * opening_range_score
-            + 0.20 * momentum_score
-            + 0.20 * extreme_score
-        ),
+        100.0 * (0.35 * vwap_score + 0.25 * opening_range_score + 0.20 * momentum_score + 0.20 * extreme_score),
         1,
     )
     status = setup_status_from_score(score)
@@ -382,9 +276,7 @@ def analyze_intraday_setup(
             if opening_range_break_pct > 0.001:
                 reasons.append(supportive_note("spot is above the opening range high"))
             elif spot_price < opening_range_low:
-                reasons.append(
-                    caution_note("spot has broken below the opening range low")
-                )
+                reasons.append(caution_note("spot has broken below the opening range low"))
         if intraday_return_pct is not None:
             if intraday_return_pct > 0.004:
                 reasons.append(supportive_note("intraday trend is positive"))
@@ -405,9 +297,7 @@ def analyze_intraday_setup(
             if opening_range_break_pct > 0.001:
                 reasons.append(supportive_note("spot is below the opening range low"))
             elif spot_price > opening_range_high:
-                reasons.append(
-                    caution_note("spot has broken above the opening range high")
-                )
+                reasons.append(caution_note("spot has broken above the opening range high"))
         if intraday_return_pct is not None:
             if intraday_return_pct < -0.004:
                 reasons.append(supportive_note("intraday trend is negative"))
@@ -421,13 +311,9 @@ def analyze_intraday_setup(
 
     if not reasons:
         if bullish:
-            reasons.append(
-                f"{symbol} intraday setup is {status} for bullish positioning"
-            )
+            reasons.append(f"{symbol} intraday setup is {status} for bullish positioning")
         else:
-            reasons.append(
-                f"{symbol} intraday setup is {status} for bearish positioning"
-            )
+            reasons.append(f"{symbol} intraday setup is {status} for bearish positioning")
 
     return UnderlyingSetupContext(
         strategy=strategy,
@@ -475,9 +361,7 @@ def combine_setup_contexts(
     if daily_setup.status == "unknown":
         intraday_weight = 1.0
     daily_weight = 1.0 - intraday_weight
-    blended_score = round(
-        (daily_setup.score * daily_weight) + (intraday_setup.score * intraday_weight), 1
-    )
+    blended_score = round((daily_setup.score * daily_weight) + (intraday_setup.score * intraday_weight), 1)
     blended_status = setup_status_from_score(blended_score)
 
     ordered_reasons = list(intraday_setup.reasons[:4]) + list(daily_setup.reasons[:3])
@@ -520,12 +404,8 @@ def analyze_underlying_setup(
     intraday_bars: list[IntradayBar] | None = None,
 ) -> UnderlyingSetupContext:
     daily_setup = analyze_daily_setup(symbol, spot_price, daily_bars, strategy=strategy)
-    intraday_setup = analyze_intraday_setup(
-        symbol, spot_price, intraday_bars or [], strategy=strategy
-    )
-    return combine_setup_contexts(
-        daily_setup, intraday_setup, profile=profile, strategy=strategy
-    )
+    intraday_setup = analyze_intraday_setup(symbol, spot_price, intraday_bars or [], strategy=strategy)
+    return combine_setup_contexts(daily_setup, intraday_setup, profile=profile, strategy=strategy)
 
 
 def attach_underlying_setup(
@@ -534,9 +414,7 @@ def attach_underlying_setup(
 ) -> list[SpreadCandidate]:
     if setup is None:
         return candidates
-    has_intraday_context = (
-        setup.intraday_score is not None and (setup.source_window_minutes or 0) > 0
-    )
+    has_intraday_context = setup.intraday_score is not None and (setup.source_window_minutes or 0) > 0
     return [
         replace(
             candidate,

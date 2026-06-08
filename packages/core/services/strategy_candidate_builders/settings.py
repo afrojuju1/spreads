@@ -53,6 +53,7 @@ PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES = frozenset(
         "long_strangle",
     }
 )
+CALENDAR_CONFIDENCE_POLICIES = ("strict", "consensus", "off")
 
 
 def _default_trading_base_url() -> str | None:
@@ -324,6 +325,13 @@ def infer_underlying_key(underlying_type: str) -> str:
 
 def resolve_profile_value(override: Any, preset: Any) -> Any:
     return preset if override is None else override
+
+
+def normalize_calendar_confidence_policy(value: str | None) -> str:
+    normalized = str(value or "strict").strip().lower()
+    if normalized not in CALENDAR_CONFIDENCE_POLICIES:
+        raise ValueError(f"Unsupported calendar confidence policy: {value}")
+    return normalized
 
 
 def apply_candidate_profile_defaults(
@@ -625,6 +633,7 @@ def build_candidate_filter_payload(parameters: CandidateBuildParameters) -> dict
 
 __all__ = [
     "CandidateBuildParameters",
+    "CALENDAR_CONFIDENCE_POLICIES",
     "DIRECTIONAL_LONG_DELTA_DEFAULTS",
     "PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES",
     "RANKING_POLICY_ARG_KEYS",
@@ -633,6 +642,7 @@ __all__ = [
     "build_candidate_filter_payload",
     "build_market_slice_parameters",
     "infer_underlying_key",
+    "normalize_calendar_confidence_policy",
     "resolve_profile_value",
     "resolve_ranking_builder_params",
     "resolve_symbol_candidate_build_parameters",

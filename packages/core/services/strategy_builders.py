@@ -11,11 +11,11 @@ from core.services.runtime_candidate_filters import (
     build_runtime_candidate_filter,
     match_runtime_candidate,
 )
-from core.services.scanners.runtime import (
+from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
+from core.services.strategy_candidate_builders.runtime import (
     build_candidates_with_details_from_market_slice,
     persist_scan_run,
 )
-from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
 from core.services.strategy_candidate_builders.settings import (
     CandidateBuildParameters,
     build_market_slice_parameters,

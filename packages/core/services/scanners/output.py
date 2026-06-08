@@ -24,7 +24,7 @@ from core.services.option_structures import (
     structure_strike_path,
 )
 from core.services.scanners.config import build_filter_payload, strategy_display_label
-from core.services.scanners.setup import serialize_setup_context
+from core.services.strategy_candidate_builders.setup import serialize_setup_context
 
 
 def build_setup_summaries(results: list[SymbolScanResult]) -> tuple[str, ...]:

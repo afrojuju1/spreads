@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from core.domain.models import (
@@ -19,7 +19,7 @@ from core.integrations.calendar_events.models import (
     CalendarEventReason,
     CalendarPolicyDecision,
 )
-from core.services.scanners.config import parse_args
+from core.services.strategy_candidate_builders.settings import CandidateBuildParameters
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 REPLAY_ARTIFACT_ROOT = REPO_ROOT / "outputs" / "scanner_replays" / "artifacts"
@@ -87,15 +87,12 @@ def replay_artifact_output_path(run_id: str) -> Path:
     return REPLAY_ARTIFACT_ROOT / f"{run_id}.json"
 
 
-def serialize_symbol_args(args: argparse.Namespace) -> dict[str, Any]:
+def serialize_symbol_args(args: Any) -> dict[str, Any]:
     return {key: getattr(args, key, None) for key in _SYMBOL_ARG_KEYS}
 
 
-def deserialize_symbol_args(payload: dict[str, Any] | None) -> argparse.Namespace:
-    args = parse_args([])
-    for key, value in dict(payload or {}).items():
-        setattr(args, key, value)
-    return args
+def deserialize_symbol_args(payload: dict[str, Any] | None) -> CandidateBuildParameters:
+    return CandidateBuildParameters.from_context(SimpleNamespace(**dict(payload or {})))
 
 
 def serialize_market_slice(market_slice: SymbolMarketSlice) -> dict[str, Any]:
@@ -224,7 +221,7 @@ def write_scan_replay_artifact(
     *,
     run_id: str,
     generated_at: str,
-    symbol_args: argparse.Namespace,
+    symbol_args: Any,
     market_slice: SymbolMarketSlice,
     setup_context: UnderlyingSetupContext | None,
     candidate_filter: dict[str, Any] | None,

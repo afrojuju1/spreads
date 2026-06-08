@@ -19,6 +19,7 @@ from core.services.strategy_specs import (
     strategy_option_type,
 )
 from core.services.strategy_candidate_builders.settings import (
+    CALENDAR_CONFIDENCE_POLICIES,
     PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES,
     RANKING_POLICY_ARG_KEYS,
     CandidateBuildParameters,
@@ -31,8 +32,6 @@ from core.services.strategy_candidate_builders.settings import (
     validate_candidate_profile_scope,
 )
 from core.services.trading_strategies import default_config_root, load_universe_symbols
-
-CALENDAR_CONFIDENCE_POLICIES = ("strict", "consensus", "off")
 
 
 def available_universe_labels() -> tuple[str, ...]:
@@ -51,13 +50,6 @@ def resolve_universe_symbols(universe_label: str) -> tuple[str, ...]:
     if preset is not None:
         return preset
     return load_universe_symbols(normalized)
-
-
-def normalize_calendar_confidence_policy(value: str | None) -> str:
-    normalized = str(value or "strict").strip().lower()
-    if normalized not in CALENDAR_CONFIDENCE_POLICIES:
-        raise ValueError(f"Unsupported calendar confidence policy: {value}")
-    return normalized
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
