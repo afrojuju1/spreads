@@ -2,7 +2,7 @@
 
 Date: 2026-06-08
 
-Status: clean-sheet target architecture. This document describes the desired end state, not the current runtime implementation.
+Status: target architecture with current-runtime implementation checkpoint. The clean-sheet model below describes the desired architecture; the 2026-06-08 `spr-2n8` epic shipped the Spreads-native entry-selection boundary subset inside the current runtime.
 
 Related:
 
@@ -11,6 +11,23 @@ Related:
 - [Entry Quality Pipeline Refactor Plan](./2026-06-08_entry_quality_pipeline_refactor.md)
 - [Strategy Sourcing, Candidate Scanning, And Capture Architecture](./2026-06-03_strategy_sourcing_scanning_capture_architecture.md)
 - [Target Trading Lifecycle Object Model](./2026-06-03_target_trading_lifecycle_object_model.md)
+
+## Implementation Checkpoint
+
+Shipped on 2026-06-08 under `spr-2n8`:
+
+- `EntrySelectionEngine` is now the canonical account-agnostic service for entry quality analysis, candidate quality filtering, live signal selection, runtime filter evidence, and selected/monitored/rejected candidate output.
+- Feature snapshot construction is registry-driven by `trade_structure` and `quality_profile_id`, so strategy-specific facts do not require a new orchestration path.
+- Candidate generation has a `MarketSliceProvider` boundary. Live runtime still uses Alpaca-backed slices by default, while recorded or fake providers can be supplied later for shadow and offline policy tuning.
+- `EntryQualityPipeline` resolves profile and operator override thresholds, evaluates pre-selection quality before signal selection, and evaluates selection/live-readiness evidence only after a signal row exists.
+- Entry admission is explicitly account-aware and post-selection. The admission payload distinguishes `capacity_admission` from deferred `execution_readiness`, with stable `reason_codes` and `blockers`.
+- Quality analysis is built once per strategy run and reused for filtering, waterfall evidence, and persistence.
+
+Deferred outside this epic:
+
+- A full market event store, realtime cache, and historical evaluator remain future architecture. Do not revive removed `replay`, `audit`, `backtest`, or `analyze` wrappers as shortcuts.
+- Richer quality filters and ops waterfall rendering remain tracked under the `spr-34u` entry-quality beads.
+- First selected-order lifecycle validation remains a live-validation task that should wait for an actual selected decision after the deployed workers are running the new code.
 
 ## Recommendation
 
