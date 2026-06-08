@@ -10,7 +10,7 @@ from core.services.option_structures import candidate_legs, payload_structure_id
 from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_strategy_runtime import EntryRuntime
-from core.services.value_coercion import utc_now_iso as _utc_now
+from core.value_coercion import coerce_float, coerce_int, unique_text_list, utc_now_iso as _utc_now
 
 
 def _stable_id(prefix: str, *parts: Any) -> str:
@@ -46,38 +46,9 @@ def entry_trade_signal_id(
     )
 
 
-def _text_list(value: Any) -> list[str]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    normalized: list[str] = []
-    for item in value:
-        rendered = str(item or "").strip()
-        if rendered and rendered not in normalized:
-            normalized.append(rendered)
-    return normalized
-
-
-def _optional_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _score(row: Mapping[str, Any]) -> float | None:
     for key in ("execution_score", "promotion_score", "quality_score", "score"):
-        value = _optional_float(row.get(key))
+        value = coerce_float(row.get(key))
         if value is not None:
             return value
     return None
@@ -95,7 +66,7 @@ def _blockers(row: Mapping[str, Any]) -> list[str]:
         "execution_blockers",
         "ranking_policy_blockers",
     ):
-        for blocker in _text_list(row.get(field)):
+        for blocker in unique_text_list(row.get(field)):
             if blocker not in blockers:
                 blockers.append(blocker)
     return blockers
@@ -286,7 +257,7 @@ def persist_entry_engine_facts(
                 candidate_identity=identity,
                 rank=rank,
                 score=_score(candidate),
-                confidence=_optional_float(candidate.get("confidence")),
+                confidence=coerce_float(candidate.get("confidence")),
                 expiration_date=candidate.get("expiration_date"),
                 selection_state=(None if candidate.get("selection_state") in (None, "") else str(candidate.get("selection_state"))),
                 candidate_state=_candidate_state(candidate),
@@ -296,7 +267,7 @@ def persist_entry_engine_facts(
                 execution_shape=dict(candidate.get("execution_shape") or {}),
                 economics=candidate_economics(dict(candidate)),
                 risk_hints=risk_hints(dict(candidate)),
-                reason_codes=_text_list(candidate.get("reason_codes")),
+                reason_codes=unique_text_list(candidate.get("reason_codes")),
                 blockers=_blockers(candidate),
                 candidate=dict(candidate),
                 evidence={
@@ -352,13 +323,13 @@ def persist_entry_engine_facts(
             horizon=(None if signal_row.get("horizon_intent") in (None, "") else str(signal_row.get("horizon_intent"))),
             style_profile=(None if signal_row.get("style_profile") in (None, "") else str(signal_row.get("style_profile"))),
             signal_state=signal_state,
-            rank=_optional_int(signal_row.get("selection_rank")),
+            rank=coerce_int(signal_row.get("selection_rank")),
             score=_score(signal_row),
-            confidence=_optional_float(signal_row.get("confidence")),
+            confidence=coerce_float(signal_row.get("confidence")),
             legs=list(signal_row.get("legs") or candidate_legs(candidate)),
             execution_shape=dict(signal_row.get("execution_shape") or {}),
             economics=dict(signal_row.get("economics") or candidate_economics(candidate)),
-            reason_codes=_text_list(signal_row.get("reason_codes")),
+            reason_codes=unique_text_list(signal_row.get("reason_codes")),
             blockers=_blockers(signal_row),
             evidence={
                 "ticker_source_run_id": ticker_set.ticker_source_run_id,

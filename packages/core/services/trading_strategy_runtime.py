@@ -18,7 +18,7 @@ from core.services.trading_strategy_models import (
     StrategyLiquidityRules,
     StrategyRiskDefaults,
 )
-from core.services.value_coercion import as_text as _as_text
+from core.value_coercion import as_text as _as_text
 
 
 def _optional_int(value: Any) -> int | None:

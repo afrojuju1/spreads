@@ -34,8 +34,9 @@ from core.services.option_structures import (
 from core.services.positions import enrich_position_row
 from core.services.runtime_identity import parse_live_run_scope_id
 from core.services.trading_strategies import default_config_root
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
+    coerce_bool,
     coerce_float,
     coerce_int,
     utc_now_iso,
@@ -95,16 +96,6 @@ def _baseline_risk_policy() -> dict[str, Any]:
     return dict(raw)
 
 
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return False
-
-
 def _candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     payload = candidate.get("candidate")
     if isinstance(payload, dict):
@@ -153,7 +144,7 @@ def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
 
     for key in BOOL_POLICY_KEYS:
         if key in raw_policy:
-            policy[key] = _coerce_bool(raw_policy[key])
+            policy[key] = coerce_bool(raw_policy[key], default=False)
     for key in INT_POLICY_KEYS:
         if key not in raw_policy:
             continue
@@ -806,7 +797,7 @@ def _session_open_metrics(
 
 
 def _kill_switch_reason() -> str | None:
-    if _coerce_bool(os.environ.get("SPREADS_EXECUTION_KILL_SWITCH")):
+    if coerce_bool(os.environ.get("SPREADS_EXECUTION_KILL_SWITCH"), default=False):
         return "Execution is blocked by SPREADS_EXECUTION_KILL_SWITCH."
     return None
 
@@ -828,7 +819,7 @@ def _environment_reason(
     return live_deployment_block_reason(
         deployment_mode=deployment_mode,
         environment=environment,
-        allow_live_env=_coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING")),
+        allow_live_env=coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING"), default=False),
     )
 
 

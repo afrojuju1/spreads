@@ -6,7 +6,7 @@ from typing import Any
 
 from core.services.execution_intents.shared import OPEN_POSITION_STATES
 from core.services.trading_strategies import TradingStrategyConfig
-from core.services.value_coercion import coerce_float
+from core.value_coercion import coerce_float
 from core.storage.serializers import parse_datetime
 
 

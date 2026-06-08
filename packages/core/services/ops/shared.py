@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_int,
 )

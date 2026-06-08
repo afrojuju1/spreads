@@ -9,7 +9,7 @@ from core.jobs.orchestration import NEW_YORK
 from core.services.close_lifecycle import build_close_lifecycle_summary
 from core.services.option_structures import position_legs, primary_short_long_symbols
 from core.services.runtime_identity import build_live_run_scope_id
-from core.services.value_coercion import as_text as _as_text, coerce_float as _coerce_float
+from core.value_coercion import as_text as _as_text, coerce_float as _coerce_float
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
 

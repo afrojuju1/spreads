@@ -12,7 +12,7 @@ from core.services.trading_lifecycle import (
     is_terminal_lifecycle_state,
     normalize_lifecycle_state,
 )
-from core.services.value_coercion import as_text, coerce_float, coerce_int
+from core.value_coercion import as_text, coerce_float, coerce_int
 from core.storage.serializers import parse_datetime
 
 PENDING_SUBMISSION_STATUS = "pending_submission"

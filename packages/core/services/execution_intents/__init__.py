@@ -20,7 +20,7 @@ from core.services.execution.direct_orders import submit_equity_order, submit_op
 from core.services.execution.position_close import submit_position_close_by_id
 from core.observability.logging import log_event
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
-from core.services.value_coercion import as_text, utc_now_iso
+from core.value_coercion import as_text, utc_now_iso
 from core.storage.read_models import TradeDecisionSignalRead
 from core.storage.serializers import parse_datetime
 

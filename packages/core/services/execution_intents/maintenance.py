@@ -8,7 +8,7 @@ from core.services.deployment_policy import (
     DEPLOYMENT_MODE_PAPER_AUTO,
 )
 from core.services.trading_strategies import load_active_trading_strategies
-from core.services.value_coercion import as_text, utc_now_iso
+from core.value_coercion import as_text, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 from .shared import (

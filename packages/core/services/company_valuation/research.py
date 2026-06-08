@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from core.value_coercion import coerce_float
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.company_valuation.evaluation import (
     COMPANY_VALUATION_FEATURE_VERSION,
@@ -66,34 +67,16 @@ class CompanyValuationResearchExportResult:
 
 
 def _normalized_templates(values: tuple[str, ...] | None) -> tuple[str, ...]:
-    normalized = tuple(
-        dict.fromkeys(
-            str(value).strip()
-            for value in (values or ())
-            if str(value or "").strip()
-        )
-    )
+    normalized = tuple(dict.fromkeys(str(value).strip() for value in (values or ()) if str(value or "").strip()))
     return normalized or DEFAULT_RESEARCH_TEMPLATE_IDS
 
 
 def _normalized_tickers(values: tuple[str, ...] | None) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            str(value).upper().strip()
-            for value in (values or ())
-            if str(value or "").strip()
-        )
-    )
+    return tuple(dict.fromkeys(str(value).upper().strip() for value in (values or ()) if str(value or "").strip()))
 
 
 def _normalized_forms(values: tuple[str, ...] | None) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            str(value).upper().strip()
-            for value in (values or ())
-            if str(value or "").strip()
-        )
-    ) or ("10-K", "10-Q")
+    return tuple(dict.fromkeys(str(value).upper().strip() for value in (values or ()) if str(value or "").strip())) or ("10-K", "10-Q")
 
 
 def _normalized_end_as_of(value: datetime | None) -> datetime:
@@ -220,15 +203,6 @@ def _latest_close_bar_at_or_before(
     return candidate
 
 
-def _safe_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _market_context(
     *,
     as_of: datetime,
@@ -251,7 +225,7 @@ def _market_context(
             "ps_at_as_of": None,
             "historical_market_context_missing": True,
         }
-    price = _safe_float(bar.get("c"))
+    price = coerce_float(bar.get("c"))
     if price is None or price <= 0.0:
         return {
             "market_price_close": None,
@@ -266,19 +240,15 @@ def _market_context(
             "ps_at_as_of": None,
             "historical_market_context_missing": True,
         }
-    shares = _safe_float(financial_features.get("diluted_shares_latest")) or _safe_float(
-        financial_features.get("shares_outstanding_latest")
-    )
+    shares = coerce_float(financial_features.get("diluted_shares_latest")) or coerce_float(financial_features.get("shares_outstanding_latest"))
     market_cap = None if shares is None else price * shares
-    debt = _safe_float(financial_features.get("long_term_debt_latest")) or _safe_float(
-        financial_features.get("total_liabilities_latest")
-    ) or 0.0
-    cash = _safe_float(financial_features.get("cash_and_equivalents_latest")) or 0.0
+    debt = coerce_float(financial_features.get("long_term_debt_latest")) or coerce_float(financial_features.get("total_liabilities_latest")) or 0.0
+    cash = coerce_float(financial_features.get("cash_and_equivalents_latest")) or 0.0
     enterprise_value = None if market_cap is None else market_cap + debt - cash
-    operating_income_ttm = _safe_float(financial_features.get("operating_income_ttm"))
-    free_cash_flow_ttm = _safe_float(financial_features.get("free_cash_flow_ttm"))
-    book_value = _safe_float(financial_features.get("stockholders_equity_latest"))
-    revenue_ttm = _safe_float(financial_features.get("revenue_ttm"))
+    operating_income_ttm = coerce_float(financial_features.get("operating_income_ttm"))
+    free_cash_flow_ttm = coerce_float(financial_features.get("free_cash_flow_ttm"))
+    book_value = coerce_float(financial_features.get("stockholders_equity_latest"))
+    revenue_ttm = coerce_float(financial_features.get("revenue_ttm"))
     valuation_gap = None
     if intrinsic_value_mid not in (None, 0.0):
         valuation_gap = (intrinsic_value_mid / price) - 1.0
@@ -289,18 +259,14 @@ def _market_context(
         "market_cap_at_as_of": None if market_cap is None else round(market_cap, 4),
         "enterprise_value_at_as_of": None if enterprise_value is None else round(enterprise_value, 4),
         "valuation_gap_at_as_of": None if valuation_gap is None else round(valuation_gap, 6),
-        "ev_ebit_at_as_of": None
-        if enterprise_value in (None, 0.0) or operating_income_ttm in (None, 0.0)
-        else round(enterprise_value / operating_income_ttm, 6),
-        "ev_fcf_at_as_of": None
-        if enterprise_value in (None, 0.0) or free_cash_flow_ttm in (None, 0.0)
-        else round(enterprise_value / free_cash_flow_ttm, 6),
-        "pb_at_as_of": None
-        if market_cap in (None, 0.0) or book_value in (None, 0.0)
-        else round(market_cap / book_value, 6),
-        "ps_at_as_of": None
-        if market_cap in (None, 0.0) or revenue_ttm in (None, 0.0)
-        else round(market_cap / revenue_ttm, 6),
+        "ev_ebit_at_as_of": (
+            None if enterprise_value in (None, 0.0) or operating_income_ttm in (None, 0.0) else round(enterprise_value / operating_income_ttm, 6)
+        ),
+        "ev_fcf_at_as_of": (
+            None if enterprise_value in (None, 0.0) or free_cash_flow_ttm in (None, 0.0) else round(enterprise_value / free_cash_flow_ttm, 6)
+        ),
+        "pb_at_as_of": None if market_cap in (None, 0.0) or book_value in (None, 0.0) else round(market_cap / book_value, 6),
+        "ps_at_as_of": None if market_cap in (None, 0.0) or revenue_ttm in (None, 0.0) else round(market_cap / revenue_ttm, 6),
         "historical_market_context_missing": False,
     }
 
@@ -312,11 +278,7 @@ def _coverage_metadata(
     config_root: str | None,
 ) -> dict[str, Any]:
     template = resolve_company_valuation_template(template_id, config_root)
-    missing = [
-        key
-        for key in template.required_features
-        if financial_features.get(key) is None
-    ]
+    missing = [key for key in template.required_features if financial_features.get(key) is None]
     coverage = 1.0
     if template.required_features:
         coverage = 1.0 - (len(missing) / len(template.required_features))
@@ -357,14 +319,10 @@ def _flatten_result_row(
         "template_id": str(issuer_row.get("template_id") or ""),
         "template_version": str(issuer_row.get("template_version") or ""),
         "as_of": _iso(feature_snapshot.get("as_of")),
-        "as_of_year": parse_datetime(feature_snapshot.get("as_of")).year
-        if parse_datetime(feature_snapshot.get("as_of")) is not None
-        else None,
+        "as_of_year": parse_datetime(feature_snapshot.get("as_of")).year if parse_datetime(feature_snapshot.get("as_of")) is not None else None,
         "feature_snapshot_id": str(feature_snapshot.get("feature_snapshot_id") or ""),
         "feature_version": str(feature_snapshot.get("feature_version") or ""),
-        "company_valuation_snapshot_id": str(
-            valuation_snapshot.get("company_valuation_snapshot_id") or ""
-        ),
+        "company_valuation_snapshot_id": str(valuation_snapshot.get("company_valuation_snapshot_id") or ""),
         "evaluation_version": str(valuation_snapshot.get("evaluation_version") or ""),
         "filing_id": str(filing_row.get("filing_id") or ""),
         "accession_no": str(filing_row.get("accession_no") or ""),
@@ -381,23 +339,15 @@ def _flatten_result_row(
         "quality_confidence": valuation_snapshot.get("quality_confidence"),
         "valuation_confidence": valuation_snapshot.get("valuation_confidence"),
         "limited_coverage_flag": valuation_snapshot.get("limited_coverage_flag"),
-        "top_reason_codes_json": json.dumps(
-            valuation_snapshot.get("top_reason_codes_json") or []
-        ),
-        "quality_reason_codes_json": json.dumps(
-            quality_payload.get("reason_codes") or []
-        ),
-        "valuation_reason_codes_json": json.dumps(
-            valuation_payload.get("reason_codes") or []
-        ),
+        "top_reason_codes_json": json.dumps(valuation_snapshot.get("top_reason_codes_json") or []),
+        "quality_reason_codes_json": json.dumps(quality_payload.get("reason_codes") or []),
+        "valuation_reason_codes_json": json.dumps(valuation_payload.get("reason_codes") or []),
         "valuation_assumption_summary_json": json.dumps(
             valuation_payload.get("assumption_summary") or {},
             sort_keys=True,
             default=_iso,
         ),
-        "ownership_signal_reason_codes_json": json.dumps(
-            ((document.get("ownership") or {}).get("signal") or {}).get("reason_codes") or []
-        ),
+        "ownership_signal_reason_codes_json": json.dumps(((document.get("ownership") or {}).get("signal") or {}).get("reason_codes") or []),
         **coverage,
         **market_context,
     }
@@ -450,8 +400,7 @@ def export_company_valuation_research_dataset(
     issuers = [
         row
         for row in repo.list_issuers()
-        if str(row.get("template_id") or "") in set(template_ids)
-        and (not tickers or str(row.get("ticker") or "").upper() in set(tickers))
+        if str(row.get("template_id") or "") in set(template_ids) and (not tickers or str(row.get("ticker") or "").upper() in set(tickers))
     ]
     issuers = sorted(
         issuers,
@@ -468,11 +417,7 @@ def export_company_valuation_research_dataset(
     if request.include_market_context:
         try:
             bars_by_ticker = _historical_bars_by_ticker(
-                tickers=tuple(
-                    str(row.get("ticker") or "").upper()
-                    for row in issuers
-                    if str(row.get("ticker") or "").strip()
-                ),
+                tickers=tuple(str(row.get("ticker") or "").upper() for row in issuers if str(row.get("ticker") or "").strip()),
                 start_as_of=start_as_of,
                 end_as_of=end_as_of,
             )
@@ -504,14 +449,10 @@ def export_company_valuation_research_dataset(
                     config_root=request.config_root,
                     persist=False,
                 )
-                financial_features = dict(
-                    evaluation_result.feature_snapshot.get("financial_features_json") or {}
-                )
+                financial_features = dict(evaluation_result.feature_snapshot.get("financial_features_json") or {})
                 market_context = _market_context(
                     as_of=as_of_dt.astimezone(UTC),
-                    intrinsic_value_mid=_safe_float(
-                        evaluation_result.company_valuation_snapshot.get("intrinsic_value_mid")
-                    ),
+                    intrinsic_value_mid=coerce_float(evaluation_result.company_valuation_snapshot.get("intrinsic_value_mid")),
                     financial_features=financial_features,
                     bars=bars_by_ticker.get(ticker, []),
                 )
@@ -531,11 +472,7 @@ def export_company_valuation_research_dataset(
             issuers_exported += 1
 
     output_root = Path(request.output_root)
-    dataset_root = (
-        output_root
-        / f"feature_version={COMPANY_VALUATION_FEATURE_VERSION}"
-        / f"evaluation_version={EVALUATION_VERSION}"
-    )
+    dataset_root = output_root / f"feature_version={COMPANY_VALUATION_FEATURE_VERSION}" / f"evaluation_version={EVALUATION_VERSION}"
     if dataset_root.exists():
         shutil.rmtree(dataset_root)
     dataset_root.mkdir(parents=True, exist_ok=True)

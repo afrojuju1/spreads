@@ -33,12 +33,10 @@ from .models import (
 )
 from .store import CalendarEventStore
 from core.runtime.config import default_alpha_vantage_api_key, default_database_url
+from core.storage.serializers import parse_datetime as _parse_datetime
+from core.value_coercion import as_text as _as_text, utc_now_iso as _utc_now_iso
 
 NEW_YORK = ZoneInfo("America/New_York")
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _aggregate_confidence(confidences: list[str]) -> str:
@@ -46,17 +44,6 @@ def _aggregate_confidence(confidences: list[str]) -> str:
         return "unknown"
     ranked = sorted(confidences, key=lambda item: SOURCE_CONFIDENCE_RANK.get(item, 0))
     return ranked[0]
-
-
-def _as_text(value: object) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
-
-
-def _parse_datetime(value: str) -> datetime:
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _record_payload(record: CalendarEventRecord) -> dict[str, object]:
@@ -70,22 +57,12 @@ def _record_payload(record: CalendarEventRecord) -> dict[str, object]:
 
 
 def _compact_payload(payload: dict[str, object]) -> dict[str, object]:
-    return {
-        key: value
-        for key, value in payload.items()
-        if value not in (None, "", (), [], {})
-    }
+    return {key: value for key, value in payload.items() if value not in (None, "", (), [], {})}
 
 
 def _earnings_session_timing(record: CalendarEventRecord) -> str:
     payload = _record_payload(record)
-    raw = str(
-        payload.get("when")
-        or payload.get("reportTime")
-        or payload.get("report_time")
-        or payload.get("time")
-        or ""
-    ).strip().lower()
+    raw = str(payload.get("when") or payload.get("reportTime") or payload.get("report_time") or payload.get("time") or "").strip().lower()
     if raw in {"bmo", "before_open"} or "before" in raw:
         return "before_open"
     if raw in {"amc", "after_close"} or "after" in raw:
@@ -110,11 +87,7 @@ def _fresh_earnings_records(
     *,
     covered_sources: set[str],
 ) -> list[CalendarEventRecord]:
-    return [
-        record
-        for record in records
-        if record.event_type == "earnings" and record.source in covered_sources
-    ]
+    return [record for record in records if record.event_type == "earnings" and record.source in covered_sources]
 
 
 def _reconcile_earnings_records(
@@ -151,26 +124,15 @@ def _reconcile_earnings_records(
             by_date.items(),
             key=lambda item: (
                 len(item[1]),
-                max(
-                    SOURCE_CONFIDENCE_RANK.get(record.source_confidence, 0)
-                    for record in item[1]
-                ),
+                max(SOURCE_CONFIDENCE_RANK.get(record.source_confidence, 0) for record in item[1]),
                 max(_parse_datetime(record.source_updated_at) for record in item[1]),
                 item[0],
             ),
         )
         date_sources = sorted({record.source for record in date_records})
         cluster_sources = sorted({record.source for record in cluster})
-        timing_counts = Counter(
-            timing
-            for timing in (_earnings_session_timing(record) for record in date_records)
-            if timing != "unknown"
-        )
-        canonical_timing = (
-            max(timing_counts.items(), key=lambda item: (item[1], item[0]))[0]
-            if timing_counts
-            else "unknown"
-        )
+        timing_counts = Counter(timing for timing in (_earnings_session_timing(record) for record in date_records) if timing != "unknown")
+        canonical_timing = max(timing_counts.items(), key=lambda item: (item[1], item[0]))[0] if timing_counts else "unknown"
         best_record = max(
             date_records,
             key=lambda item: (
@@ -225,16 +187,12 @@ def _select_shadow_earnings_record(
     anchor_event_date: str | None,
     as_of: str,
 ) -> CalendarEventRecord | None:
-    shadow_records = [
-        record for record in records if record.event_type == "earnings" and record.source == source
-    ]
+    shadow_records = [record for record in records if record.event_type == "earnings" and record.source == source]
     if not shadow_records:
         return None
 
     if anchor_event_date:
-        same_day = [
-            record for record in shadow_records if record.scheduled_at[:10] == anchor_event_date
-        ]
+        same_day = [record for record in shadow_records if record.scheduled_at[:10] == anchor_event_date]
         if same_day:
             return max(same_day, key=lambda item: _parse_datetime(item.source_updated_at))
 
@@ -250,9 +208,7 @@ def _select_shadow_earnings_record(
             return nearest
 
     as_of_dt = _parse_datetime(as_of)
-    future_records = [
-        record for record in shadow_records if _parse_datetime(record.scheduled_at) >= as_of_dt
-    ]
+    future_records = [record for record in shadow_records if _parse_datetime(record.scheduled_at) >= as_of_dt]
     if future_records:
         return min(future_records, key=lambda item: _parse_datetime(item.scheduled_at))
     return max(shadow_records, key=lambda item: _parse_datetime(item.scheduled_at))
@@ -457,20 +413,12 @@ class CalendarEventResolver:
             records,
             covered_sources=covered_source_set,
         )
-        normalized_records = [
-            record for record in records if record.event_type != "earnings"
-        ] + canonical_window_earnings
+        normalized_records = [record for record in records if record.event_type != "earnings"] + canonical_window_earnings
         normalized_records.sort(key=lambda item: _parse_datetime(item.scheduled_at))
         reasons.extend(_build_reason(record) for record in normalized_records)
 
-        macro_events = [
-            record
-            for record in normalized_records
-            if record.event_type.startswith("macro_")
-        ]
-        assignment_risk = any(
-            record.event_type in DIVIDEND_EVENT_TYPES for record in normalized_records
-        )
+        macro_events = [record for record in normalized_records if record.event_type.startswith("macro_")]
+        assignment_risk = any(record.event_type in DIVIDEND_EVENT_TYPES for record in normalized_records)
         macro_regime = None
         if macro_events:
             macro_regime = ",".join(sorted({record.event_type for record in macro_events}))
@@ -478,10 +426,7 @@ class CalendarEventResolver:
         days_to_nearest_event = None
         if normalized_records:
             start_dt = datetime.fromisoformat(window_start)
-            nearest = min(
-                datetime.fromisoformat(record.scheduled_at)
-                for record in normalized_records
-            )
+            nearest = min(datetime.fromisoformat(record.scheduled_at) for record in normalized_records)
             days_to_nearest_event = _days_until(start_dt, nearest)
 
         if missing_required:
@@ -500,43 +445,21 @@ class CalendarEventResolver:
                 window_start=earnings_query.window_start,
                 window_end=earnings_query.window_end,
             )
-            canonical_earnings_records, earnings_consensus_by_date = (
-                _reconcile_earnings_records(
-                    earnings_records,
-                    covered_sources=covered_source_set,
-                )
+            canonical_earnings_records, earnings_consensus_by_date = _reconcile_earnings_records(
+                earnings_records,
+                covered_sources=covered_source_set,
             )
         earnings_snapshot = resolve_earnings_phase_snapshot(
             records=canonical_earnings_records,
             as_of=query.window_start,
             horizon_end=query.window_end,
         )
-        anchor_consensus = (
-            earnings_consensus_by_date.get(str(earnings_snapshot.event_date))
-            if earnings_snapshot.event_date
-            else None
-        )
-        earnings_session_timing = str(
-            (anchor_consensus or {}).get("session_timing")
-            or earnings_snapshot.session_timing
-            or "unknown"
-        )
-        earnings_timing_confidence = str(
-            (anchor_consensus or {}).get("timing_confidence")
-            or earnings_snapshot.timing_confidence
-            or "unknown"
-        )
-        earnings_primary_source = _as_text(
-            None if anchor_consensus is None else anchor_consensus.get("primary_source")
-        )
-        supporting_sources = (
-            ()
-            if anchor_consensus is None
-            else tuple(anchor_consensus.get("supporting_sources") or ())
-        )
-        earnings_consensus_status = str(
-            (anchor_consensus or {}).get("consensus_status") or "missing"
-        )
+        anchor_consensus = earnings_consensus_by_date.get(str(earnings_snapshot.event_date)) if earnings_snapshot.event_date else None
+        earnings_session_timing = str((anchor_consensus or {}).get("session_timing") or earnings_snapshot.session_timing or "unknown")
+        earnings_timing_confidence = str((anchor_consensus or {}).get("timing_confidence") or earnings_snapshot.timing_confidence or "unknown")
+        earnings_primary_source = _as_text(None if anchor_consensus is None else anchor_consensus.get("primary_source"))
+        supporting_sources = () if anchor_consensus is None else tuple(anchor_consensus.get("supporting_sources") or ())
+        earnings_consensus_status = str((anchor_consensus or {}).get("consensus_status") or "missing")
         earnings_enrichment = (
             {}
             if underlying_type != "single_name_equity"
@@ -590,15 +513,9 @@ def build_calendar_event_resolver(
         EarningsCalendarAdapter(),
         FinvizEarningsAdapter(),
     ]
-    resolved_alpha_vantage_api_key = (
-        alpha_vantage_api_key or default_alpha_vantage_api_key()
-    )
+    resolved_alpha_vantage_api_key = alpha_vantage_api_key or default_alpha_vantage_api_key()
     if resolved_alpha_vantage_api_key:
-        adapters.append(
-            AlphaVantageEarningsCalendarAdapter(
-                api_key=resolved_alpha_vantage_api_key
-            )
-        )
+        adapters.append(AlphaVantageEarningsCalendarAdapter(api_key=resolved_alpha_vantage_api_key))
     adapters.extend(
         [
             AlpacaCorporateActionsAdapter(

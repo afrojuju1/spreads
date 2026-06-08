@@ -5,7 +5,7 @@ from typing import Any
 
 from core.services.trading_strategy_runtime import ManagementRuntime
 from core.services.management_recipes import evaluate_management_recipes
-from core.services.value_coercion import coerce_float as _coerce_float
+from core.value_coercion import coerce_float as _coerce_float
 
 
 def _resolve_management_limit_price(

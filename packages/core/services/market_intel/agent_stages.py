@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from core.value_coercion import as_list
 from core.services.market_intel.artifact_store import MarketIntelArtifactStore
 from core.services.market_intel.config import MarketIntelModelConfig
 from core.services.market_intel.contracts import (
@@ -155,9 +156,7 @@ def run_llm_agent_stages(
                         {
                             "ticker": run.ticker,
                             "as_of": run.as_of.isoformat(),
-                            "source_artifacts": [
-                                artifact.to_payload() for artifact in artifacts
-                            ],
+                            "source_artifacts": [artifact.to_payload() for artifact in artifacts],
                             "evidence": _evidence_pack(evidence),
                         },
                         sort_keys=True,
@@ -183,7 +182,7 @@ def run_llm_agent_stages(
             {
                 "model": analyst_response.model,
                 "elapsed_seconds": round(analyst_response.elapsed_seconds, 6),
-                "section_count": len(_list_value(analyst_payload.get("sections"))),
+                "section_count": len(as_list(analyst_payload.get("sections"))),
             },
         )
     except Exception as exc:
@@ -202,15 +201,15 @@ def run_llm_agent_stages(
                 messages=[
                     {
                         "role": "system",
-                    "content": (
-                        "You are the skeptic gate. Review candidate thesis sections against "
-                        "the evidence pack. Flag unsupported, overstated, stale, or weak claims."
-                        " Return at most three findings. If there are no issues, return an empty"
-                        " findings array. Do not penalize omitted sections when the analyst is "
-                        "explicitly preserving a data gap. Return only one JSON object matching the schema. "
-                        "Do not write markdown."
-                    ),
-                },
+                        "content": (
+                            "You are the skeptic gate. Review candidate thesis sections against "
+                            "the evidence pack. Flag unsupported, overstated, stale, or weak claims."
+                            " Return at most three findings. If there are no issues, return an empty"
+                            " findings array. Do not penalize omitted sections when the analyst is "
+                            "explicitly preserving a data gap. Return only one JSON object matching the schema. "
+                            "Do not write markdown."
+                        ),
+                    },
                     {
                         "role": "user",
                         "content": json.dumps(
@@ -243,7 +242,7 @@ def run_llm_agent_stages(
                 {
                     "model": skeptic_response.model,
                     "elapsed_seconds": round(skeptic_response.elapsed_seconds, 6),
-                    "finding_count": len(_list_value(skeptic_payload.get("findings"))),
+                    "finding_count": len(as_list(skeptic_payload.get("findings"))),
                 },
             )
         except Exception as exc:
@@ -327,9 +326,7 @@ def _validate_skeptic_payload(payload: dict[str, Any]) -> None:
         raise ValueError("skeptic payload missing findings array")
     if not isinstance(approved_sections, list):
         raise ValueError("skeptic payload missing approved_sections array")
-    allowed_severities = set(
-        SKEPTIC_SCHEMA["properties"]["findings"]["items"]["properties"]["severity"]["enum"]
-    )
+    allowed_severities = set(SKEPTIC_SCHEMA["properties"]["findings"]["items"]["properties"]["severity"]["enum"])
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict):
             raise ValueError(f"skeptic finding {index} was not an object")
@@ -345,7 +342,3 @@ def _validate_skeptic_payload(payload: dict[str, Any]) -> None:
             raise ValueError(f"skeptic finding {index} missing note")
         if not isinstance(refs, list) or not all(isinstance(ref, str) and ref.strip() for ref in refs):
             raise ValueError(f"skeptic finding {index} missing evidence_refs")
-
-
-def _list_value(value: Any) -> list[Any]:
-    return value if isinstance(value, list) else []

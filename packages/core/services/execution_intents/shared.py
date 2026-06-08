@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 from core.services.option_structures import (
@@ -14,7 +13,8 @@ from core.services.trading_lifecycle import (
     validate_lifecycle_transition,
     normalize_lifecycle_state,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
+    as_mapping,
     as_text,
     coerce_float,
     coerce_int,
@@ -47,10 +47,6 @@ TERMINAL_INTENT_STATES = {
     ExecutionIntentState.SUPERSEDED.value,
 }
 _UNCHANGED = object()
-
-
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _intent_payload(intent: dict[str, Any]) -> dict[str, Any]:
@@ -325,12 +321,12 @@ def _submitted_age_seconds(attempt: dict[str, Any]) -> float | None:
 def _repricing_policy(intent: dict[str, Any], attempt: dict[str, Any]) -> dict[str, Any]:
     payload = _intent_payload(intent)
     request = _attempt_request(attempt)
-    exit_policy = _mapping(request.get("exit_policy")) or _mapping(payload.get("exit_policy"))
+    exit_policy = as_mapping(request.get("exit_policy")) or as_mapping(payload.get("exit_policy"))
     return (
-        _mapping(request.get("repricing_policy"))
-        or _mapping(payload.get("repricing_policy"))
-        or _mapping(payload.get("repricing"))
-        or _mapping(exit_policy.get("repricing"))
+        as_mapping(request.get("repricing_policy"))
+        or as_mapping(payload.get("repricing_policy"))
+        or as_mapping(payload.get("repricing"))
+        or as_mapping(exit_policy.get("repricing"))
     )
 
 

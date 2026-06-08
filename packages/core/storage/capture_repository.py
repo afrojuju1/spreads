@@ -7,14 +7,11 @@ from uuid import uuid4
 
 from sqlalchemy import delete, select
 
+from core.value_coercion import utc_now
 from core.storage.base import RepositoryBase
 from core.storage.capture_models import CaptureSummaryModel, CaptureTargetModel
 from core.storage.records import CaptureSummaryRecord, CaptureTargetRecord
 from core.storage.serializers import parse_date, parse_datetime, render_value
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _capture_target_id(
@@ -53,7 +50,7 @@ class CaptureRepository(RepositoryBase):
         priority: int = 100,
         rows: list[dict[str, Any]],
     ) -> list[CaptureTargetRecord]:
-        now = _utc_now()
+        now = utc_now()
         with self.session_scope() as session:
             existing_rows = session.scalars(
                 select(CaptureTargetModel)
@@ -165,7 +162,7 @@ class CaptureRepository(RepositoryBase):
         if reasons:
             statement = statement.where(CaptureTargetModel.reason.in_(reasons))
         if active_only:
-            as_of_dt = parse_datetime(as_of) or _utc_now()
+            as_of_dt = parse_datetime(as_of) or utc_now()
             statement = statement.where((CaptureTargetModel.expires_at.is_(None)) | (CaptureTargetModel.expires_at > as_of_dt))
         statement = statement.order_by(
             CaptureTargetModel.priority.asc(),
@@ -206,7 +203,7 @@ class CaptureRepository(RepositoryBase):
         metadata: dict[str, Any],
         captured_at: str | datetime | None = None,
     ) -> CaptureSummaryRecord:
-        now = _utc_now()
+        now = utc_now()
         captured_at_dt = parse_datetime(captured_at) or now
         row = CaptureSummaryModel(
             capture_summary_id=_capture_summary_id(source, captured_at_dt),

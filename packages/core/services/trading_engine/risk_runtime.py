@@ -9,7 +9,7 @@ from core.services.risk_manager import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
 )
-from core.services.value_coercion import as_text, coerce_float
+from core.value_coercion import as_text, coerce_float
 from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ("open", "partial_close")

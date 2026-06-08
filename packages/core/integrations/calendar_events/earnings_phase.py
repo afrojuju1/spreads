@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Iterable
+
+from core.storage.serializers import parse_datetime as _parse_datetime
 
 from .config import (
     EARNINGS_POST_EVENT_FRESH_DAYS,
@@ -11,14 +13,6 @@ from .config import (
     EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS,
 )
 from .models import CalendarEventRecord, EarningsEventPhase, EventSessionTiming, SourceConfidence
-
-
-def _parse_datetime(value: str | datetime) -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _days_between(start: datetime, end: datetime) -> int:

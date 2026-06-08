@@ -17,7 +17,7 @@ from core.services.session_positions import (
     CLOSE_TRADE_INTENT,
     OPEN_TRADE_INTENT,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,

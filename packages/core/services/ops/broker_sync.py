@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from core.services.value_coercion import coerce_int
+from core.value_coercion import coerce_int
 
 from .shared import _seconds_since
 

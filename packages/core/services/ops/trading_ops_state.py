@@ -29,7 +29,9 @@ from core.services.trading_engine.portfolio_runtime import describe_position_exi
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.storage.engine_models import CandidateRunModel, CandidateSymbolDiagnosticModel, TickerSourceObservationModel, TickerSourceRunModel
-from core.services.value_coercion import (
+from core.value_coercion import (
+    as_list,
+    as_mapping,
     as_text,
     coerce_float,
     coerce_int,
@@ -134,14 +136,6 @@ class _FlowProjection:
     degraded_flows: list[dict[str, Any]]
     statuses: tuple[str, ...]
     attention: list[dict[str, str]]
-
-
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
-def _sequence(value: Any) -> list[Any]:
-    return list(value) if isinstance(value, list) else []
 
 
 def _age_seconds(value: Any, *, now: datetime) -> float | None:
@@ -315,13 +309,13 @@ def _summarize_execution_attempt(
 def _symbols_from_ticker_source_run(ticker_source_run: Mapping[str, Any] | None) -> list[str]:
     if ticker_source_run is None:
         return []
-    evidence = _mapping(ticker_source_run.get("evidence"))
-    snapshot = _mapping(evidence.get("snapshot"))
-    entries = _sequence(snapshot.get("entries"))
-    symbols = [str(_mapping(entry).get("symbol") or "").strip().upper() for entry in entries if str(_mapping(entry).get("symbol") or "").strip()]
+    evidence = as_mapping(ticker_source_run.get("evidence"))
+    snapshot = as_mapping(evidence.get("snapshot"))
+    entries = as_list(snapshot.get("entries"))
+    symbols = [str(as_mapping(entry).get("symbol") or "").strip().upper() for entry in entries if str(as_mapping(entry).get("symbol") or "").strip()]
     if symbols:
         return list(dict.fromkeys(symbols))
-    tickers = _sequence(ticker_source_run.get("symbols"))
+    tickers = as_list(ticker_source_run.get("symbols"))
     return [str(symbol).strip().upper() for symbol in tickers if str(symbol or "").strip()]
 
 
@@ -546,8 +540,8 @@ def _candidate_state(
     if stale and status == "healthy":
         status = "degraded"
     candidate_count = coerce_int(candidate_run.get("candidate_count")) or 0
-    summary = _mapping(candidate_run.get("summary"))
-    diagnostics = [dict(row) for row in _sequence(candidate_run.get("diagnostics")) if isinstance(row, Mapping)]
+    summary = as_mapping(candidate_run.get("summary"))
+    diagnostics = [dict(row) for row in as_list(candidate_run.get("diagnostics")) if isinstance(row, Mapping)]
     return {
         "status": status,
         "raw_status": raw_status,
@@ -557,8 +551,8 @@ def _candidate_state(
         "symbol_count": coerce_int(candidate_run.get("symbol_count")) or 0,
         "candidate_count": candidate_count,
         "diagnostic_status": summary.get("diagnostic_status"),
-        "symbol_status_counts": _mapping(summary.get("symbol_status_counts")),
-        "top_rejection_counts": _mapping(summary.get("top_rejection_counts")),
+        "symbol_status_counts": as_mapping(summary.get("symbol_status_counts")),
+        "top_rejection_counts": as_mapping(summary.get("top_rejection_counts")),
         "diagnostics": diagnostics,
         "latest_run": dict(candidate_run),
         "reason": "candidate_run_stale" if stale else ("no_candidates" if candidate_count == 0 else None),
@@ -789,10 +783,10 @@ def _project_jobs(
     jobs = build_jobs_compact_state(db_target=db_target, limit=25, storage=storage)
     return _JobsProjection(
         payload=jobs,
-        summary=_mapping(jobs.get("summary")),
-        details=_mapping(jobs.get("details")),
+        summary=as_mapping(jobs.get("summary")),
+        details=as_mapping(jobs.get("details")),
         statuses=(str(jobs.get("status") or "unknown"),),
-        attention=[dict(row) for row in _sequence(jobs.get("attention")) if isinstance(row, Mapping)],
+        attention=[dict(row) for row in as_list(jobs.get("attention")) if isinstance(row, Mapping)],
     )
 
 
@@ -840,7 +834,7 @@ def _project_account(
             )
         )
 
-    account = _mapping(account_snapshot.get("account"))
+    account = as_mapping(account_snapshot.get("account"))
     if account_snapshot.get("status") != "ready":
         statuses.append("blocked")
         attention.append(
@@ -881,7 +875,7 @@ def _project_engine(
         market_date=market_date,
         now=now,
     )
-    engine_summary = _mapping(engine_ops.get("summary"))
+    engine_summary = as_mapping(engine_ops.get("summary"))
     engine_status = str(engine_ops.get("status") or "unknown")
     attention: list[dict[str, str]] = []
     if engine_status in {"degraded", "blocked"}:
@@ -1050,8 +1044,8 @@ def _project_positions(
             )
         )
 
-    mark_error = as_text(_mapping(broker_sync.get("summary")).get("mark_error"))
-    broker_unquoted_positions = coerce_int(_mapping(broker_sync.get("summary")).get("unquoted_position_count")) or 0
+    mark_error = as_text(as_mapping(broker_sync.get("summary")).get("mark_error"))
+    broker_unquoted_positions = coerce_int(as_mapping(broker_sync.get("summary")).get("unquoted_position_count")) or 0
     mark_health_status = "healthy"
     if missing_mark_count or stale_mark_count or broker_unquoted_positions or mark_error:
         mark_health_status = "degraded"
@@ -1217,13 +1211,13 @@ def build_trading_ops_state(
     elif execution.stale_open_execution_count or execution.submit_unknown_execution_count:
         trading_allowed = False
 
-    active_intent_count = sum(int(_mapping(flow.get("intent_state")).get("active_intent_count") or 0) for flow in flows.trading_flows)
+    active_intent_count = sum(int(as_mapping(flow.get("intent_state")).get("active_intent_count") or 0) for flow in flows.trading_flows)
     primary_flow = next(
         (flow for flow in flows.trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"),
         flows.trading_flows[0] if flows.trading_flows else {},
     )
-    primary_capacity = _mapping(primary_flow.get("capacity"))
-    primary_position_state = _mapping(primary_flow.get("position_state"))
+    primary_capacity = as_mapping(primary_flow.get("capacity"))
+    primary_position_state = as_mapping(primary_flow.get("position_state"))
     summary = {
         "market_date": market_control.market_date,
         "market_session_status": market_control.market_session.get("status"),
@@ -1232,11 +1226,11 @@ def build_trading_ops_state(
         "trading_allowed": trading_allowed,
         "environment": account.account_snapshot.get("environment"),
         "control_mode": market_control.control.get("mode"),
-        "scheduler_status": _mapping(jobs.details.get("scheduler")).get("status"),
+        "scheduler_status": as_mapping(jobs.details.get("scheduler")).get("status"),
         "worker_lane_count": jobs.summary.get("worker_lane_count"),
         "disabled_worker_lane_count": jobs.summary.get("disabled_worker_lane_count"),
-        "blocked_worker_lane_count": sum(1 for row in _sequence(jobs.details.get("worker_lanes")) if _mapping(row).get("status") == "blocked"),
-        "idle_worker_lane_count": sum(1 for row in _sequence(jobs.details.get("worker_lanes")) if _mapping(row).get("status") == "idle"),
+        "blocked_worker_lane_count": sum(1 for row in as_list(jobs.details.get("worker_lanes")) if as_mapping(row).get("status") == "blocked"),
+        "idle_worker_lane_count": sum(1 for row in as_list(jobs.details.get("worker_lanes")) if as_mapping(row).get("status") == "idle"),
         "actionable_failed_job_count": jobs.summary.get("actionable_failed_count"),
         "broker_sync_status": account.broker_sync.get("status"),
         "broker_sync_age_seconds": account.broker_sync.get("age_seconds"),
@@ -1280,8 +1274,8 @@ def build_trading_ops_state(
         "scheduler": jobs.details.get("scheduler"),
         "workers": jobs.details.get("workers"),
         "worker_lanes": jobs.details.get("worker_lanes"),
-        "running_jobs": [dict(row) for row in _sequence(jobs.details.get("running_jobs")) if _mapping(row).get("status") == "running"],
-        "queued_jobs": [dict(row) for row in _sequence(jobs.details.get("queued_jobs")) if _mapping(row).get("status") == "queued"],
+        "running_jobs": [dict(row) for row in as_list(jobs.details.get("running_jobs")) if as_mapping(row).get("status") == "running"],
+        "queued_jobs": [dict(row) for row in as_list(jobs.details.get("queued_jobs")) if as_mapping(row).get("status") == "queued"],
         "recent_job_runs": jobs.details.get("job_runs"),
         "broker_sync": account.broker_sync,
         "account_snapshot": account.account_snapshot,

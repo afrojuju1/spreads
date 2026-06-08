@@ -13,7 +13,7 @@ from core.services.trading_strategy_runtime import (
     find_management_runtime_for_position,
     resolve_management_runtimes,
 )
-from core.services.value_coercion import as_text, coerce_float
+from core.value_coercion import as_text, coerce_float
 
 from .kernel import EngineComponentRole, EngineRunRef
 from .portfolio import CloseDecisionResult, PositionSnapshot

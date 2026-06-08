@@ -14,7 +14,7 @@ from core.common import env_or_die, format_stream_timestamp, parse_float, parse_
 from core.domain.models import LiveOptionQuote
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.services.option_trade_records import normalize_trade_conditions
-from core.services.value_coercion import utc_now_iso
+from core.value_coercion import utc_now_iso
 
 DEFAULT_OPTION_STREAM_IDLE_TIMEOUT_SECONDS = 2.0
 OPTION_STREAM_SHUTDOWN_MESSAGE = "Option stream capture cancelled during API shutdown"

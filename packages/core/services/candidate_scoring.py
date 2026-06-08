@@ -12,7 +12,7 @@ from core.services.earnings_signal_features import (
     EARNINGS_SIGNAL_FIELDS,
     build_earnings_signal_bundle,
 )
-from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
 BROAD_ETF_SYMBOLS = {"XLF", "XLE", "XLI", "XLV"}

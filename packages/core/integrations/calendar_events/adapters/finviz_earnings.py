@@ -8,6 +8,8 @@ from html import unescape
 from zoneinfo import ZoneInfo
 
 from core.integrations.http_client import VendorHttpClient, VendorHttpError
+from core.value_coercion import as_text as _coerce_text, utc_now_iso as _utc_now_iso
+from core.storage.serializers import parse_datetime as _parse_datetime
 
 from .base import BaseCalendarEventAdapter
 from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS
@@ -26,16 +28,6 @@ _MARKET_CAP_PATTERN = re.compile(
     r'<div class="snapshot-td-label">Market Cap</div></td>' r'<td[^>]*><div class="snapshot-td-content"><b>([^<]+)</b></div>',
     re.S,
 )
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _parse_datetime(value: str) -> datetime:
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _parse_finviz_datetime(value: object) -> datetime | None:
@@ -61,11 +53,6 @@ def _status_for_row(row: dict[str, object]) -> str:
     if row.get("epsActual") is not None or row.get("salesActual") is not None:
         return "reported"
     return "scheduled"
-
-
-def _coerce_text(value: object) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
 
 
 def _compact_dict(payload: dict[str, object]) -> dict[str, object]:

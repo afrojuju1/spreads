@@ -20,7 +20,7 @@ from core.storage.alert_repository import (
     AlertRepository,
 )
 from core.storage.job_repository import JobRepository
-from core.services.value_coercion import as_text as _as_text, utc_now as _utc_now
+from core.value_coercion import as_text as _as_text, utc_now as _utc_now
 
 DISCORD_DELIVERY_TARGET = "discord_webhook"
 ALERT_DELIVERY_MAX_ATTEMPTS = 5

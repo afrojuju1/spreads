@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 from core.db.core import first_model_row
 from core.db.decorators import with_session
 from core.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
+    coerce_bool,
     coerce_float,
     coerce_int,
     utc_now_iso,
@@ -39,21 +40,6 @@ HISTORY_RANGE_REQUESTS: dict[AccountHistoryRange, dict[str, str | None]] = {
     },
 }
 ACCOUNT_OVERVIEW_LIVE_TIMEOUT_SECONDS = 5.0
-
-
-def _coerce_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes"}:
-            return True
-        if normalized in {"false", "0", "no"}:
-            return False
-        return None
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return None
 
 
 def _parse_history_timestamp(value: Any) -> str | None:
@@ -102,11 +88,11 @@ def _normalize_account(payload: dict[str, Any]) -> dict[str, Any]:
         "initial_margin": coerce_float(payload.get("initial_margin")),
         "maintenance_margin": coerce_float(payload.get("maintenance_margin")),
         "daytrade_count": coerce_int(payload.get("daytrade_count")),
-        "pattern_day_trader": _coerce_bool(payload.get("pattern_day_trader")),
-        "trading_blocked": _coerce_bool(payload.get("trading_blocked")),
-        "transfers_blocked": _coerce_bool(payload.get("transfers_blocked")),
-        "account_blocked": _coerce_bool(payload.get("account_blocked")),
-        "shorting_enabled": _coerce_bool(payload.get("shorting_enabled")),
+        "pattern_day_trader": coerce_bool(payload.get("pattern_day_trader")),
+        "trading_blocked": coerce_bool(payload.get("trading_blocked")),
+        "transfers_blocked": coerce_bool(payload.get("transfers_blocked")),
+        "account_blocked": coerce_bool(payload.get("account_blocked")),
+        "shorting_enabled": coerce_bool(payload.get("shorting_enabled")),
     }
 
 

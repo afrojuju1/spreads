@@ -22,7 +22,7 @@ from core.jobs.specs import (
 )
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.storage.serializers import parse_datetime
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_int,
     utc_now_iso,

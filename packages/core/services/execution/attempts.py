@@ -20,7 +20,7 @@ from core.services.session_positions import (
     sync_session_position_from_attempt,
 )
 from core.services.execution_lifecycle import project_execution_attempt_lifecycle
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
     utc_now_iso,

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.config import default_database_url
+from core.value_coercion import coerce_float
 from core.services.company_valuation.contracts import (
     CompanyValuationBenchmarkPriorEntry,
     CompanyValuationBenchmarkPriorSet,
@@ -75,15 +76,6 @@ def _normalized_as_of(value: str | datetime | None) -> datetime:
     if parsed is None:
         return datetime.now(UTC)
     return parsed.astimezone(UTC)
-
-
-def _safe_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _json_default(value: Any) -> Any:
@@ -383,9 +375,9 @@ def report_company_valuation_benchmark_priors(
         document = recompute_result.document
         valuation = dict(document.get("valuation") or {})
         quality = dict(document.get("quality") or {})
-        current_price = _safe_float(valuation.get("current_price"))
-        intrinsic_value_mid = _safe_float(valuation.get("intrinsic_value_mid"))
-        valuation_gap = _safe_float(valuation.get("valuation_gap"))
+        current_price = coerce_float(valuation.get("current_price"))
+        intrinsic_value_mid = coerce_float(valuation.get("intrinsic_value_mid"))
+        valuation_gap = coerce_float(valuation.get("valuation_gap"))
         if current_price in (None, 0.0) or intrinsic_value_mid is None:
             skipped_entries += 1
             continue
@@ -408,8 +400,8 @@ def report_company_valuation_benchmark_priors(
                 benchmark_gap=round(benchmark_gap, 6),
                 gap_delta=round(gap_delta, 6),
                 absolute_gap_delta=round(abs(gap_delta), 6),
-                valuation_confidence=_safe_float(valuation.get("confidence")),
-                quality_score=_safe_float(quality.get("total_score")),
+                valuation_confidence=coerce_float(valuation.get("confidence")),
+                quality_score=coerce_float(quality.get("total_score")),
                 analyst_count=entry.analyst_count,
                 consensus_rating=entry.consensus_rating,
                 source_url=entry.source_url,

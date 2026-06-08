@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from core.services.option_structures import candidate_legs, leg_role
-from core.services.value_coercion import coerce_float as _coerce_float
+from core.value_coercion import coerce_float as _coerce_float
 
 
 def _strategy_option_type(strategy: Any) -> str | None:

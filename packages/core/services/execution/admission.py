@@ -22,7 +22,7 @@ from core.services.risk_manager import (
 from core.services.session_positions import (
     OPEN_TRADE_INTENT,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,

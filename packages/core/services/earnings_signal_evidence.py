@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.services.option_structures import candidate_legs, leg_role
-from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:

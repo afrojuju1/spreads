@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import delete, false, func, or_, select, tuple_
 
+from core.value_coercion import as_text, utc_now
 from core.storage.alert_models import AlertEventModel
 from core.storage.base import RepositoryBase
 from core.storage.records import AlertEventRecord, AlertStateRecord
@@ -31,25 +32,10 @@ def _advisory_lock_id(key: str) -> int:
     return int.from_bytes(digest, byteorder="big", signed=True)
 
 
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
 class AlertRepository(RepositoryBase):
     def _alert_row(self, model: Any) -> AlertEventRecord:
         payload = getattr(model, "payload_json", None)
-        deploy_env = (
-            _as_text(payload.get("deploy_env"))
-            if isinstance(payload, dict)
-            else None
-        )
+        deploy_env = as_text(payload.get("deploy_env")) if isinstance(payload, dict) else None
         return self.row(model, extra={"deploy_env": deploy_env})
 
     def _alert_rows(self, models: list[Any]) -> list[AlertEventRecord]:
@@ -116,9 +102,7 @@ class AlertRepository(RepositoryBase):
         if status not in ALERT_DELIVERY_STATUSES:
             raise ValueError(f"Unsupported delivery status: {status}")
         with self.session_scope() as session:
-            session.execute(
-                select(func.pg_advisory_xact_lock(_advisory_lock_id(f"{delivery_target}|{dedupe_key}")))
-            )
+            session.execute(select(func.pg_advisory_xact_lock(_advisory_lock_id(f"{delivery_target}|{dedupe_key}"))))
             statement = (
                 select(AlertEventModel)
                 .where(AlertEventModel.record_kind == ALERT_RECORD_KIND_DELIVERY)
@@ -172,9 +156,7 @@ class AlertRepository(RepositoryBase):
         if parsed_created_at is None:
             raise ValueError("created_at is required")
         with self.session_scope() as session:
-            session.execute(
-                select(func.pg_advisory_xact_lock(_advisory_lock_id(f"score_anchor|{dedupe_key}")))
-            )
+            session.execute(select(func.pg_advisory_xact_lock(_advisory_lock_id(f"score_anchor|{dedupe_key}"))))
             statement = (
                 select(AlertEventModel)
                 .where(AlertEventModel.record_kind == ALERT_RECORD_KIND_SCORE_ANCHOR)
@@ -221,7 +203,7 @@ class AlertRepository(RepositoryBase):
         delivery_job_run_id: str,
         queued_at: str | datetime | None = None,
     ) -> AlertEventRecord:
-        queued_at_dt = parse_datetime(queued_at) or _utc_now()
+        queued_at_dt = parse_datetime(queued_at) or utc_now()
         with self.session_scope() as session:
             row = session.get(AlertEventModel, alert_id)
             if row is None:
@@ -240,7 +222,7 @@ class AlertRepository(RepositoryBase):
         worker_name: str,
         claimed_at: str | datetime | None = None,
     ) -> AlertEventRecord | None:
-        claimed_at_dt = parse_datetime(claimed_at) or _utc_now()
+        claimed_at_dt = parse_datetime(claimed_at) or utc_now()
         with self.session_scope() as session:
             row = session.get(AlertEventModel, alert_id, with_for_update=True)
             if row is None:
@@ -283,7 +265,7 @@ class AlertRepository(RepositoryBase):
     ) -> AlertEventRecord:
         if status not in ALERT_DELIVERY_STATUSES:
             raise ValueError(f"Unsupported delivery status: {status}")
-        finished_at_dt = parse_datetime(finished_at) or _utc_now()
+        finished_at_dt = parse_datetime(finished_at) or utc_now()
         delivered_at_dt = parse_datetime(delivered_at)
         next_attempt_at_dt = parse_datetime(next_attempt_at)
         with self.session_scope() as session:
@@ -312,7 +294,7 @@ class AlertRepository(RepositoryBase):
         alert_id: int,
         reset_at: str | datetime | None = None,
     ) -> AlertEventRecord | None:
-        reset_at_dt = parse_datetime(reset_at) or _utc_now()
+        reset_at_dt = parse_datetime(reset_at) or utc_now()
         with self.session_scope() as session:
             row = session.get(AlertEventModel, alert_id, with_for_update=True)
             if row is None or row.record_kind != ALERT_RECORD_KIND_DELIVERY or row.status != "dispatching":
@@ -332,7 +314,7 @@ class AlertRepository(RepositoryBase):
         stale_dispatching_before: str | datetime | None = None,
         limit: int = 200,
     ) -> list[AlertEventRecord]:
-        current = parse_datetime(now) or _utc_now()
+        current = parse_datetime(now) or utc_now()
         stale_before = parse_datetime(stale_dispatching_before)
         statement = (
             select(AlertEventModel)
@@ -341,17 +323,16 @@ class AlertRepository(RepositoryBase):
                 or_(
                     AlertEventModel.status == "pending",
                     (AlertEventModel.status == "retry_wait")
-                    & (
-                        AlertEventModel.next_attempt_at.is_(None)
-                        | (AlertEventModel.next_attempt_at <= current)
-                    ),
+                    & (AlertEventModel.next_attempt_at.is_(None) | (AlertEventModel.next_attempt_at <= current)),
                     (
-                        (AlertEventModel.status == "dispatching")
-                        & (AlertEventModel.claimed_at.is_not(None))
-                        & (AlertEventModel.claimed_at <= stale_before)
-                    )
-                    if stale_before is not None
-                    else false(),
+                        (
+                            (AlertEventModel.status == "dispatching")
+                            & (AlertEventModel.claimed_at.is_not(None))
+                            & (AlertEventModel.claimed_at <= stale_before)
+                        )
+                        if stale_before is not None
+                        else false()
+                    ),
                 )
             )
             .order_by(AlertEventModel.created_at.asc(), AlertEventModel.alert_id.asc())
@@ -410,10 +391,7 @@ class AlertRepository(RepositoryBase):
     ) -> dict[tuple[str, str], int]:
         if not session_keys:
             return {}
-        normalized_keys = [
-            (parse_date(session_date), label)
-            for session_date, label in session_keys
-        ]
+        normalized_keys = [(parse_date(session_date), label) for session_date, label in session_keys]
         statement = (
             select(
                 AlertEventModel.session_date,

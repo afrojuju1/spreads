@@ -9,7 +9,7 @@ from core.services.option_structures import (
     payload_display_fields,
     payload_structure_identity,
 )
-from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 
 def _parse_datetime(value: Any) -> datetime | None:

@@ -10,7 +10,7 @@ from core.services.option_structures import (
     structure_barrier_strike,
     structure_width,
 )
-from core.services.value_coercion import coerce_float as _coerce_float
+from core.value_coercion import coerce_float as _coerce_float
 
 BUYING_POWER_SOURCE_FIELDS = (
     "options_buying_power",

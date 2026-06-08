@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from core.services.value_coercion import as_text as _as_text, coerce_float as _coerce_float
+from core.value_coercion import as_text as _as_text, coerce_float as _coerce_float
 
 DEFAULT_DEPLOYMENT_QUALITY_THRESHOLDS = {
     "min_promotable_return_on_risk": None,

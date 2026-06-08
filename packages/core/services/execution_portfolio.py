@@ -15,7 +15,7 @@ from core.services.option_structures import (
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import assess_position_risk
 from core.services.runtime_identity import parse_live_run_scope_id
-from core.services.value_coercion import as_text, coerce_float, utc_now_iso
+from core.value_coercion import as_text, coerce_float, utc_now_iso
 from core.domain.models import LiveOptionQuote
 
 QUOTE_FEEDS = ("opra", "indicative")

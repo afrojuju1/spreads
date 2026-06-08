@@ -7,7 +7,7 @@ from typing import Any
 from core.integrations.alpaca.client import AlpacaClient
 from core.observability.logging import log_event
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.value_coercion import as_text
+from core.value_coercion import as_text
 
 from .runtimes import ALPACA_DIRECT_RUNTIME
 from .shared import BROKER_NAME

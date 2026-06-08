@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import re
 from typing import Any
 
 from core.services.trading_lifecycle import (
@@ -11,7 +10,7 @@ from core.services.trading_lifecycle import (
     is_terminal_lifecycle_state,
     normalize_lifecycle_state,
 )
-from core.services.value_coercion import as_text, coerce_float, utc_now_iso
+from core.value_coercion import as_list, as_mapping, as_text, coerce_float, safe_component, utc_now_iso
 
 BLOCKED_CLOSE_REASONS = {
     "awaiting_broker_reconciliation",
@@ -28,19 +27,6 @@ BLOCKED_CLOSE_REASONS = {
     "no_remaining_quantity",
     "position_not_open",
 }
-
-
-def _safe_component(value: Any) -> str:
-    rendered = str(value or "").strip()
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", rendered) or "unknown"
-
-
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
-def _list(value: Any) -> list[Any]:
-    return list(value) if isinstance(value, list) else []
 
 
 def normalize_position_lifecycle_state(position: Mapping[str, Any]) -> str:
@@ -96,9 +82,9 @@ def build_position_lifecycle(
     close_intents: list[Any] | None = None,
 ) -> dict[str, Any]:
     state = normalize_position_lifecycle_state(position)
-    close_rows = [dict(row) for row in _list(closes) if isinstance(row, Mapping)]
-    close_attempt_rows = [dict(row) for row in _list(close_attempts) if isinstance(row, Mapping)]
-    close_intent_rows = [dict(row) for row in _list(close_intents) if isinstance(row, Mapping)]
+    close_rows = [dict(row) for row in as_list(closes) if isinstance(row, Mapping)]
+    close_attempt_rows = [dict(row) for row in as_list(close_attempts) if isinstance(row, Mapping)]
+    close_intent_rows = [dict(row) for row in as_list(close_intents) if isinstance(row, Mapping)]
     active_close_attempt_count = sum(1 for row in close_attempt_rows if _close_attempt_is_active(row))
     pending_close_intent_count = sum(1 for row in close_intent_rows if _close_intent_is_pending(row))
     active_close_count = active_close_attempt_count + pending_close_intent_count
@@ -159,8 +145,8 @@ def build_close_decision_lifecycle(
     position_id = as_text(position.get("position_id")) or "unknown"
     reason = as_text(decision.get("reason")) or "unknown"
     state = _close_decision_state(decision)
-    details = _mapping(decision.get("decision_details"))
-    policy = _mapping(details.get("policy"))
+    details = as_mapping(decision.get("decision_details"))
+    policy = as_mapping(details.get("policy"))
     blockers = [reason] if state in {CloseDecisionState.BLOCKED.value, CloseDecisionState.UNKNOWN.value} else []
     metrics = {
         key: details.get(key)
@@ -183,7 +169,7 @@ def build_close_decision_lifecycle(
         "management_recipe_refs": [str(value) for value in decision.get("management_recipe_refs") or [] if str(value or "").strip()],
     }
     return {
-        "close_decision_id": ("close_decision:" f"{_safe_component(position_id)}:{_safe_component(decided_at_value)}:{_safe_component(reason)}"),
+        "close_decision_id": ("close_decision:" f"{safe_component(position_id)}:{safe_component(decided_at_value)}:{safe_component(reason)}"),
         "object_type": LifecycleObject.CLOSE_DECISION.value,
         "position_id": position_id,
         "decision_state": state,

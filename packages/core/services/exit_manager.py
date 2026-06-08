@@ -24,7 +24,7 @@ from core.services.trading_engine.risk_runtime import (
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
-from core.services.value_coercion import as_text, coerce_float, utc_now, utc_now_iso
+from core.value_coercion import as_text, coerce_float, utc_now, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 MANAGED_CLOSE_INTENT_TTL_MINUTES = 5

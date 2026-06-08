@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from core.services.earnings_signal_evidence import build_earnings_signal_evidence
-from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
 
 EARNINGS_SIGNAL_FIELDS = (
     "direction_signal",

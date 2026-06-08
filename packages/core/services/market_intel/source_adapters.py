@@ -11,6 +11,7 @@ from typing import Any
 from core.common import parse_float, pick
 from core.integrations.http_client import VendorHttpClient
 from core.services.alpaca import create_alpaca_client_from_env
+from core.value_coercion import as_mapping, as_text
 from core.services.market_intel.artifact_store import MarketIntelArtifactStore
 from core.services.market_intel.contracts import (
     EvidenceItem,
@@ -449,21 +450,21 @@ def _resolve_price(
     snapshot: dict[str, Any],
     bars: list[dict[str, Any]],
 ) -> tuple[float | None, str | None, str | None]:
-    latest_trade = _mapping(snapshot.get("latestTrade") or snapshot.get("latest_trade"))
+    latest_trade = as_mapping(snapshot.get("latestTrade") or snapshot.get("latest_trade"))
     trade_price = parse_float(pick(latest_trade, "p", "price"))
     if trade_price and trade_price > 0:
-        return trade_price, "latest_trade", _text(pick(latest_trade, "t", "timestamp"))
+        return trade_price, "latest_trade", as_text(pick(latest_trade, "t", "timestamp"))
 
-    latest_quote = _mapping(snapshot.get("latestQuote") or snapshot.get("latest_quote"))
+    latest_quote = as_mapping(snapshot.get("latestQuote") or snapshot.get("latest_quote"))
     bid = parse_float(pick(latest_quote, "bp", "bid_price"))
     ask = parse_float(pick(latest_quote, "ap", "ask_price"))
     if bid and ask and bid > 0 and ask > 0:
-        return round((bid + ask) / 2.0, 6), "quote_midpoint", _text(pick(latest_quote, "t", "timestamp"))
+        return round((bid + ask) / 2.0, 6), "quote_midpoint", as_text(pick(latest_quote, "t", "timestamp"))
 
     latest_bar = _latest_bar(bars)
     close = parse_float(latest_bar.get("close") if latest_bar else None)
     if close and close > 0:
-        return close, "latest_daily_close", _text(latest_bar.get("timestamp") if latest_bar else None)
+        return close, "latest_daily_close", as_text(latest_bar.get("timestamp") if latest_bar else None)
     return None, None, None
 
 
@@ -472,23 +473,13 @@ def _latest_bar(bars: list[dict[str, Any]]) -> dict[str, Any] | None:
         return None
     row = dict(bars[-1])
     return {
-        "timestamp": _text(pick(row, "t", "timestamp")),
+        "timestamp": as_text(pick(row, "t", "timestamp")),
         "open": parse_float(pick(row, "o", "open")),
         "high": parse_float(pick(row, "h", "high")),
         "low": parse_float(pick(row, "l", "low")),
         "close": parse_float(pick(row, "c", "close")),
         "volume": parse_float(pick(row, "v", "volume")),
     }
-
-
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _text(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
 
 
 def _date_text_to_datetime(value: str | None) -> datetime | None:

@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.services.position_lifecycle import build_position_lifecycle
-from core.services.value_coercion import as_text, coerce_float
+from core.value_coercion import as_list, as_mapping, as_text, coerce_float
 
 ACTIVE_CLOSE_ATTEMPT_STATUSES = {
     "accepted",
@@ -43,18 +43,10 @@ def _round_money(value: Any) -> float | None:
     return None if parsed is None else round(parsed, 2)
 
 
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
-def _list(value: Any) -> list[Any]:
-    return list(value) if isinstance(value, list) else []
-
-
 def _is_close_attempt(row: Mapping[str, Any]) -> bool:
     if str(row.get("trade_intent") or "").strip().lower() == "close":
         return True
-    for order in _list(row.get("orders")):
+    for order in as_list(row.get("orders")):
         if not isinstance(order, Mapping):
             continue
         intent = str(order.get("position_intent") or "").strip().lower()
@@ -67,7 +59,7 @@ def _is_close_intent(row: Mapping[str, Any]) -> bool:
     action_type = str(row.get("action_type") or "").strip().lower()
     if action_type == "close":
         return True
-    payload = _mapping(row.get("payload"))
+    payload = as_mapping(row.get("payload"))
     trade_intent = str(payload.get("trade_intent") or row.get("trade_intent") or "")
     if trade_intent.strip().lower() == "close":
         return True
@@ -103,8 +95,8 @@ def _latest_close(closes: list[Any]) -> dict[str, Any] | None:
 
 
 def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
-    request = _mapping(row.get("request"))
-    close_decision = _mapping(request.get("close_decision"))
+    request = as_mapping(row.get("request"))
+    close_decision = as_mapping(request.get("close_decision"))
     return {
         "execution_attempt_id": row.get("execution_attempt_id"),
         "execution_intent_id": row.get("execution_intent_id") or request.get("execution_intent_id"),
@@ -137,8 +129,8 @@ def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _compact_intent(row: Mapping[str, Any]) -> dict[str, Any]:
-    payload = _mapping(row.get("payload"))
-    close_decision = _mapping(payload.get("close_decision"))
+    payload = as_mapping(row.get("payload"))
+    close_decision = as_mapping(payload.get("close_decision"))
     return {
         "execution_intent_id": row.get("execution_intent_id"),
         "execution_attempt_id": row.get("execution_attempt_id"),
@@ -167,7 +159,7 @@ def _position_close_proof(
     close_attempts: list[dict[str, Any]] | None = None,
     close_intents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    closes = _list(row.get("closes"))
+    closes = as_list(row.get("closes"))
     latest_close = _latest_close(closes)
     position_lifecycle = build_position_lifecycle(
         row,
@@ -197,7 +189,7 @@ def _position_close_proof(
 def _reason_count(rows: list[Mapping[str, Any]], reasons: set[str]) -> int:
     total = 0
     for row in rows:
-        reason_counts = _mapping(row.get("reason_counts"))
+        reason_counts = as_mapping(row.get("reason_counts"))
         for reason in reasons:
             total += int(reason_counts.get(reason) or 0)
     return total
@@ -212,11 +204,11 @@ def _close_decision_state(row: Mapping[str, Any]) -> str | None:
     rendered = as_text(row.get("close_decision_state"))
     if rendered is not None:
         return rendered.lower()
-    request_decision = _mapping(_mapping(row.get("request")).get("close_decision"))
+    request_decision = as_mapping(as_mapping(row.get("request")).get("close_decision"))
     rendered = as_text(request_decision.get("decision_state"))
     if rendered is not None:
         return rendered.lower()
-    payload_decision = _mapping(_mapping(row.get("payload")).get("close_decision"))
+    payload_decision = as_mapping(as_mapping(row.get("payload")).get("close_decision"))
     rendered = as_text(payload_decision.get("decision_state"))
     return None if rendered is None else rendered.lower()
 
@@ -254,7 +246,7 @@ def build_close_lifecycle_summary(
             close_attempts_by_position.setdefault(position_id, []).append(row)
     close_intents_by_position: dict[str, list[dict[str, Any]]] = {}
     for row in close_intents:
-        payload = _mapping(row.get("payload"))
+        payload = as_mapping(row.get("payload"))
         position_id = as_text(row.get("strategy_position_id")) or as_text(payload.get("position_id"))
         if position_id is not None:
             close_intents_by_position.setdefault(position_id, []).append(row)
@@ -276,12 +268,12 @@ def build_close_lifecycle_summary(
         for row in positions
     ]
     proof_rows.sort(
-        key=lambda row: str(_mapping(row.get("latest_close")).get("closed_at") or row.get("status") or ""),
+        key=lambda row: str(as_mapping(row.get("latest_close")).get("closed_at") or row.get("status") or ""),
         reverse=True,
     )
-    latest_filled_closes = [row for row in proof_rows if _mapping(row.get("latest_close"))]
+    latest_filled_closes = [row for row in proof_rows if as_mapping(row.get("latest_close"))]
     latest_filled_closes.sort(
-        key=lambda row: str(_mapping(row.get("latest_close")).get("closed_at") or ""),
+        key=lambda row: str(as_mapping(row.get("latest_close")).get("closed_at") or ""),
         reverse=True,
     )
 

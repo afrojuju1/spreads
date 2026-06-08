@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 NET_CREDIT_FAMILIES = {
     "call_credit_spread",

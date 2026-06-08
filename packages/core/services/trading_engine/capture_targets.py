@@ -7,7 +7,7 @@ from typing import Any
 
 from core.services.option_structures import normalize_legs, position_legs
 from core.services.positions import enrich_position_row
-from core.services.value_coercion import as_text, utc_now
+from core.value_coercion import as_text, utc_now
 
 CAPTURE_OWNER_POSITION = "position"
 CAPTURE_OWNER_WORKING_INTENT = "working_intent"

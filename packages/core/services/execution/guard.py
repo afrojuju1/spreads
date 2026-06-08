@@ -18,7 +18,7 @@ from core.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
 )
 from core.services.session_positions import OPEN_TRADE_INTENT
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,

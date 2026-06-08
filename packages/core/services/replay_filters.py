@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from core.services.value_coercion import coerce_float as _coerce_float, coerce_int as _coerce_int
+from core.value_coercion import coerce_float as _coerce_float, coerce_int as _coerce_int
 from core.services.entry_recipes import evaluate_entry_recipes
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
 from core.services.strategy_registry import resolve_strategy_definition

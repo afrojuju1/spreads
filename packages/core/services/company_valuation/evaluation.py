@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.common import clamp
+from core.value_coercion import coerce_float
 from core.services.company_valuation.contracts import (
     CompanyValuationDocument,
     CompanyValuationIdentity,
@@ -50,15 +51,6 @@ class CompanyValuationRecomputeResult:
         return asdict(self)
 
 
-def _safe_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _normalized_as_of(value: str | datetime | None) -> datetime:
     parsed = parse_datetime(value) if isinstance(value, str) else value
     if parsed is None:
@@ -94,41 +86,41 @@ def _quality_scores(
 ) -> dict[str, float]:
     growth_score = _mean(
         [
-            _score_linear(_safe_float(features.get("revenue_ttm_growth")), low=-0.05, high=0.20),
-            _score_linear(_safe_float(features.get("deferred_revenue_growth")), low=-0.02, high=0.25),
+            _score_linear(coerce_float(features.get("revenue_ttm_growth")), low=-0.05, high=0.20),
+            _score_linear(coerce_float(features.get("deferred_revenue_growth")), low=-0.02, high=0.25),
         ]
     )
     profitability_score = _mean(
         [
-            _score_linear(_safe_float(features.get("gross_margin_ttm")), low=0.10, high=0.75),
-            _score_linear(_safe_float(features.get("operating_margin_ttm")), low=-0.05, high=0.30),
-            _score_linear(_safe_float(features.get("net_margin_ttm")), low=-0.05, high=0.22),
+            _score_linear(coerce_float(features.get("gross_margin_ttm")), low=0.10, high=0.75),
+            _score_linear(coerce_float(features.get("operating_margin_ttm")), low=-0.05, high=0.30),
+            _score_linear(coerce_float(features.get("net_margin_ttm")), low=-0.05, high=0.22),
         ]
     )
     cash_flow_score = _mean(
         [
-            _score_linear(_safe_float(features.get("free_cash_flow_margin_ttm")), low=-0.04, high=0.20),
-            _score_inverse(_safe_float(features.get("capex_intensity")), good=0.00, bad=0.18),
+            _score_linear(coerce_float(features.get("free_cash_flow_margin_ttm")), low=-0.04, high=0.20),
+            _score_inverse(coerce_float(features.get("capex_intensity")), good=0.00, bad=0.18),
         ]
     )
     capital_efficiency_score = _mean(
         [
-            _score_linear(_safe_float(features.get("roic_ttm")), low=0.00, high=0.25),
-            _score_linear(_safe_float(features.get("asset_turnover")), low=0.20, high=1.80),
-            _score_linear(_safe_float(features.get("inventory_turns")), low=2.0, high=10.0),
+            _score_linear(coerce_float(features.get("roic_ttm")), low=0.00, high=0.25),
+            _score_linear(coerce_float(features.get("asset_turnover")), low=0.20, high=1.80),
+            _score_linear(coerce_float(features.get("inventory_turns")), low=2.0, high=10.0),
         ]
     )
     balance_sheet_score = _mean(
         [
-            _score_inverse(_safe_float(features.get("net_leverage")), good=0.0, bad=4.0),
-            _score_linear(_safe_float(features.get("current_ratio")), low=1.0, high=2.5),
-            _score_inverse(_safe_float(features.get("debt_to_equity")), good=0.0, bad=2.0),
+            _score_inverse(coerce_float(features.get("net_leverage")), good=0.0, bad=4.0),
+            _score_linear(coerce_float(features.get("current_ratio")), low=1.0, high=2.5),
+            _score_inverse(coerce_float(features.get("debt_to_equity")), good=0.0, bad=2.0),
         ]
     )
     shareholder_score = _mean(
         [
-            _score_inverse(_safe_float(features.get("diluted_share_growth_ttm")), good=-0.03, bad=0.08),
-            _score_inverse(_safe_float(features.get("sbc_as_pct_revenue")), good=0.0, bad=0.18),
+            _score_inverse(coerce_float(features.get("diluted_share_growth_ttm")), good=-0.03, bad=0.08),
+            _score_inverse(coerce_float(features.get("sbc_as_pct_revenue")), good=0.0, bad=0.18),
         ]
     )
     reporting_quality_score = clamp(required_feature_coverage, 0.0, 1.0) * 100.0
@@ -171,16 +163,16 @@ def _build_quality_breakdown(
     total_score = weighted_total if total_weight == 100 else (weighted_total / max(total_weight, 1)) * 100.0
 
     reason_codes: list[str] = list(feature_result.ownership_signal.reason_codes)
-    revenue_growth = _safe_float(feature_result.financial_features.get("revenue_ttm_growth"))
+    revenue_growth = coerce_float(feature_result.financial_features.get("revenue_ttm_growth"))
     if revenue_growth is not None and revenue_growth >= 0.15:
         reason_codes.append("revenue_growth_strong_positive")
     if revenue_growth is not None and revenue_growth <= -0.05:
         reason_codes.append("revenue_growth_negative_caution")
-    if (_safe_float(feature_result.financial_features.get("free_cash_flow_ttm")) or 0.0) > 0.0:
+    if (coerce_float(feature_result.financial_features.get("free_cash_flow_ttm")) or 0.0) > 0.0:
         reason_codes.append("free_cash_flow_positive")
-    if (_safe_float(feature_result.financial_features.get("diluted_share_growth_ttm")) or 0.0) >= 0.05:
+    if (coerce_float(feature_result.financial_features.get("diluted_share_growth_ttm")) or 0.0) >= 0.05:
         reason_codes.append("dilution_negative")
-    if (_safe_float(feature_result.financial_features.get("net_leverage")) or 0.0) >= 3.0:
+    if (coerce_float(feature_result.financial_features.get("net_leverage")) or 0.0) >= 3.0:
         reason_codes.append("leverage_above_threshold")
     if feature_result.required_feature_coverage < 0.8:
         reason_codes.append("missing_core_facts")
@@ -189,9 +181,7 @@ def _build_quality_breakdown(
     if bool(issuer_row.get("stressed_operator_flag")):
         reason_codes.append("stressed_operator_overlay")
 
-    confidence = 0.45 + (feature_result.required_feature_coverage * 0.35) + (
-        feature_result.ownership_signal.confidence * 0.20
-    )
+    confidence = 0.45 + (feature_result.required_feature_coverage * 0.35) + (feature_result.ownership_signal.confidence * 0.20)
     if bool(issuer_row.get("limited_coverage_flag")):
         confidence -= 0.15
     return QualityBreakdown(
@@ -208,7 +198,7 @@ def _risk_free_rate(curve_snapshot: dict[str, Any] | None) -> tuple[float, bool]
     if not points:
         points = dict((curve_snapshot or {}).get("curve_points") or {})
     for key in ("10y", "7y", "5y", "3y", "2y"):
-        value = _safe_float(points.get(key))
+        value = coerce_float(points.get(key))
         if value is not None and value > 0.0:
             return (value, True)
     return (0.045, False)
@@ -227,7 +217,7 @@ def _template_multiple_anchors(template: Any) -> dict[str, float]:
     if isinstance(configured, dict):
         anchors: dict[str, float] = {}
         for key, value in configured.items():
-            numeric = _safe_float(value)
+            numeric = coerce_float(value)
             if numeric is None or numeric <= 0.0:
                 continue
             anchors[str(key)] = float(numeric)
@@ -260,9 +250,9 @@ def _quality_premium_factor(
     if full_score <= floor_score:
         return 0.0
     factor = clamp((quality_score - floor_score) / (full_score - floor_score), 0.0, 1.0)
-    free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
-    revenue_growth = _safe_float(features.get("revenue_ttm_growth")) or 0.0
-    net_leverage = _safe_float(features.get("net_leverage"))
+    free_cash_flow_ttm = coerce_float(features.get("free_cash_flow_ttm"))
+    revenue_growth = coerce_float(features.get("revenue_ttm_growth")) or 0.0
+    net_leverage = coerce_float(features.get("net_leverage"))
     if free_cash_flow_ttm in (None, 0.0) or free_cash_flow_ttm < 0.0:
         factor *= 0.35
     if revenue_growth < 0.0:
@@ -273,12 +263,12 @@ def _quality_premium_factor(
 
 
 def _starting_fcf(features: dict[str, Any], template: Any) -> tuple[float | None, bool]:
-    free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
+    free_cash_flow_ttm = coerce_float(features.get("free_cash_flow_ttm"))
     if free_cash_flow_ttm is not None and free_cash_flow_ttm > 0.0:
         return (free_cash_flow_ttm, False)
-    revenue_ttm = _safe_float(features.get("revenue_ttm"))
-    operating_margin_ttm = _safe_float(features.get("operating_margin_ttm")) or 0.0
-    free_cash_flow_margin_ttm = _safe_float(features.get("free_cash_flow_margin_ttm"))
+    revenue_ttm = coerce_float(features.get("revenue_ttm"))
+    operating_margin_ttm = coerce_float(features.get("operating_margin_ttm")) or 0.0
+    free_cash_flow_margin_ttm = coerce_float(features.get("free_cash_flow_margin_ttm"))
     normalized_from_ebit_ratio = _template_float(
         template,
         "valuation_model_mix",
@@ -305,10 +295,10 @@ def _valuation_context(
 ) -> tuple[list[str], float]:
     reason_codes: list[str] = []
     confidence_penalty = 0.0
-    free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
-    net_leverage = _safe_float(features.get("net_leverage")) or 0.0
-    revenue_growth = _safe_float(features.get("revenue_ttm_growth")) or 0.0
-    operating_margin = _safe_float(features.get("operating_margin_ttm"))
+    free_cash_flow_ttm = coerce_float(features.get("free_cash_flow_ttm"))
+    net_leverage = coerce_float(features.get("net_leverage")) or 0.0
+    revenue_growth = coerce_float(features.get("revenue_ttm_growth")) or 0.0
+    operating_margin = coerce_float(features.get("operating_margin_ttm"))
     if free_cash_flow_ttm is not None and free_cash_flow_ttm <= 0.0:
         reason_codes.append("valuation_negative_fcf_low_confidence")
         confidence_penalty += _template_float(
@@ -375,11 +365,9 @@ def _dcf_value_per_share(
     required_feature_coverage: float,
     quality_score: float,
 ) -> tuple[float | None, dict[str, Any], list[str], float]:
-    shares = _safe_float(features.get("diluted_shares_latest")) or _safe_float(
-        features.get("shares_outstanding_latest")
-    )
-    revenue_growth = _safe_float(features.get("revenue_ttm_growth"))
-    operating_income_ttm = _safe_float(features.get("operating_income_ttm"))
+    shares = coerce_float(features.get("diluted_shares_latest")) or coerce_float(features.get("shares_outstanding_latest"))
+    revenue_growth = coerce_float(features.get("revenue_ttm_growth"))
+    operating_income_ttm = coerce_float(features.get("operating_income_ttm"))
     starting_fcf, normalized_fcf = _starting_fcf(features, template)
     if shares in (None, 0.0) or starting_fcf is None or starting_fcf <= 0.0:
         return (None, {}, ["valuation_negative_fcf_low_confidence"], 0.2)
@@ -388,9 +376,7 @@ def _dcf_value_per_share(
 
     risk_free_rate, curve_available = _risk_free_rate(treasury_curve_snapshot)
     spread_bps = int(template.valuation_model_mix.get("discount_rate_spread_bps") or 450)
-    spread_bps += int(
-        template.valuation_model_mix.get("cyclical_discount_rate_spread_bps") or 0
-    )
+    spread_bps += int(template.valuation_model_mix.get("cyclical_discount_rate_spread_bps") or 0)
     quality_factor = _quality_premium_factor(
         quality_score=quality_score,
         template=template,
@@ -418,8 +404,7 @@ def _dcf_value_per_share(
         0.5,
     )
     terminal_growth = clamp(
-        (revenue_growth if revenue_growth is not None else 0.03)
-        * terminal_growth_multiplier,
+        (revenue_growth if revenue_growth is not None else 0.03) * terminal_growth_multiplier,
         terminal_growth_floor,
         terminal_growth_cap,
     )
@@ -436,18 +421,12 @@ def _dcf_value_per_share(
     present_value = 0.0
     for year in range(1, forecast_years + 1):
         blend_divisor = max(forecast_years - 1, 1)
-        growth_rate = initial_growth + (
-            (terminal_growth - initial_growth) * ((year - 1) / blend_divisor)
-        )
+        growth_rate = initial_growth + ((terminal_growth - initial_growth) * ((year - 1) / blend_divisor))
         projected_fcf *= 1.0 + growth_rate
         present_value += projected_fcf / ((1.0 + discount_rate) ** year)
     terminal_value = (projected_fcf * (1.0 + terminal_growth)) / (discount_rate - terminal_growth)
-    enterprise_value = present_value + (
-        terminal_value / ((1.0 + discount_rate) ** forecast_years)
-    )
-    net_cash = (_safe_float(features.get("cash_and_equivalents_latest")) or 0.0) - (
-        _safe_float(features.get("long_term_debt_latest")) or 0.0
-    )
+    enterprise_value = present_value + (terminal_value / ((1.0 + discount_rate) ** forecast_years))
+    net_cash = (coerce_float(features.get("cash_and_equivalents_latest")) or 0.0) - (coerce_float(features.get("long_term_debt_latest")) or 0.0)
     equity_value = enterprise_value + net_cash
     per_share = equity_value / shares
     assumptions = {
@@ -479,12 +458,12 @@ def _multiple_value_per_share(
     features: dict[str, Any],
     multiple: float,
 ) -> float | None:
-    net_cash_per_share = _safe_float(features.get("net_cash_per_share")) or 0.0
-    operating_income_per_share = _safe_float(features.get("operating_income_per_share"))
-    free_cash_flow_per_share = _safe_float(features.get("free_cash_flow_per_share"))
-    revenue_per_share = _safe_float(features.get("revenue_per_share"))
-    net_income_per_share = _safe_float(features.get("net_income_per_share"))
-    book_value_per_share = _safe_float(features.get("book_value_per_share"))
+    net_cash_per_share = coerce_float(features.get("net_cash_per_share")) or 0.0
+    operating_income_per_share = coerce_float(features.get("operating_income_per_share"))
+    free_cash_flow_per_share = coerce_float(features.get("free_cash_flow_per_share"))
+    revenue_per_share = coerce_float(features.get("revenue_per_share"))
+    net_income_per_share = coerce_float(features.get("net_income_per_share"))
+    book_value_per_share = coerce_float(features.get("book_value_per_share"))
 
     if metric == "ev_ebit" and operating_income_per_share is not None and operating_income_per_share > 0.0:
         return (operating_income_per_share * multiple) + net_cash_per_share
@@ -516,7 +495,7 @@ def _multiples_anchor_value_per_share(
     growth_adjustment = clamp(
         1.0
         + (
-            (_safe_float(features.get("revenue_ttm_growth")) or 0.0)
+            (coerce_float(features.get("revenue_ttm_growth")) or 0.0)
             * _template_float(template, "valuation_model_mix", "growth_adjustment_factor", 0.8)
         ),
         _template_float(template, "valuation_model_mix", "growth_adjustment_min", 0.75),
@@ -600,7 +579,7 @@ def _build_valuation_summary(
         intrinsic_bear = None
         intrinsic_bull = None
 
-    current_price = _safe_float((market_snapshot or {}).get("price"))
+    current_price = coerce_float((market_snapshot or {}).get("price"))
     valuation_gap = None
     if intrinsic_mid not in (None, 0.0) and current_price not in (None, 0.0):
         valuation_gap = (intrinsic_mid / current_price) - 1.0
@@ -613,9 +592,7 @@ def _build_valuation_summary(
         limited_coverage_flag=bool(issuer_row.get("limited_coverage_flag")),
         stressed_operator_flag=bool(issuer_row.get("stressed_operator_flag")),
     )
-    reason_codes = list(
-        dict.fromkeys([*dcf_reason_codes, *anchor_reason_codes, *context_reason_codes])
-    )
+    reason_codes = list(dict.fromkeys([*dcf_reason_codes, *anchor_reason_codes, *context_reason_codes]))
     if intrinsic_mid is None:
         reason_codes.append("valuation_unavailable")
     active_confidences: list[tuple[float, float]] = []
@@ -688,9 +665,7 @@ def recompute_company_valuation(
         config_root=config_root,
     )
     feature_snapshot = (
-        repo.upsert_feature_snapshot(feature_result.feature_snapshot_payload)
-        if persist
-        else dict(feature_result.feature_snapshot_payload)
+        repo.upsert_feature_snapshot(feature_result.feature_snapshot_payload) if persist else dict(feature_result.feature_snapshot_payload)
     )
 
     point_in_time = resolve_company_valuation_point_in_time(
@@ -742,15 +717,17 @@ def recompute_company_valuation(
             "effective_template_id": str(template.template_id),
             "effective_template_version": str(template.template_version),
             "latest_filing_id": None if point_in_time.latest_filing is None else point_in_time.latest_filing.get("filing_id"),
-            "latest_statement_snapshot_id": None
-            if point_in_time.latest_statement_snapshot is None
-            else point_in_time.latest_statement_snapshot.get("snapshot_id"),
-            "latest_market_snapshot_id": None
-            if point_in_time.latest_market_snapshot is None
-            else point_in_time.latest_market_snapshot.get("market_snapshot_id"),
-            "latest_treasury_curve_snapshot_id": None
-            if point_in_time.latest_treasury_curve_snapshot is None
-            else point_in_time.latest_treasury_curve_snapshot.get("curve_snapshot_id"),
+            "latest_statement_snapshot_id": (
+                None if point_in_time.latest_statement_snapshot is None else point_in_time.latest_statement_snapshot.get("snapshot_id")
+            ),
+            "latest_market_snapshot_id": (
+                None if point_in_time.latest_market_snapshot is None else point_in_time.latest_market_snapshot.get("market_snapshot_id")
+            ),
+            "latest_treasury_curve_snapshot_id": (
+                None
+                if point_in_time.latest_treasury_curve_snapshot is None
+                else point_in_time.latest_treasury_curve_snapshot.get("curve_snapshot_id")
+            ),
             "limited_coverage_flag": bool(issuer_row.get("limited_coverage_flag")),
             "stressed_operator_flag": bool(issuer_row.get("stressed_operator_flag")),
         },
@@ -767,11 +744,9 @@ def recompute_company_valuation(
         },
         provenance={
             "filings_used": feature_result.filings_used,
-            "statement_snapshot_ids": (
-                feature_snapshot.get("dependency_refs_json")
-                or feature_snapshot.get("dependency_refs")
-                or {}
-            ).get("statement_snapshot_ids", []),
+            "statement_snapshot_ids": (feature_snapshot.get("dependency_refs_json") or feature_snapshot.get("dependency_refs") or {}).get(
+                "statement_snapshot_ids", []
+            ),
             "feature_snapshot_id": feature_snapshot.get("feature_snapshot_id"),
             "feature_version": feature_version,
             "evaluation_version": evaluation_version,
@@ -809,11 +784,7 @@ def recompute_company_valuation(
         "valuation_json": document_payload,
         "computed_at": datetime.now(UTC),
     }
-    company_valuation_snapshot = (
-        repo.upsert_company_valuation_snapshot(valuation_snapshot_payload)
-        if persist
-        else dict(valuation_snapshot_payload)
-    )
+    company_valuation_snapshot = repo.upsert_company_valuation_snapshot(valuation_snapshot_payload) if persist else dict(valuation_snapshot_payload)
 
     screening_row = CompanyValuationScreenRow(
         screening_row_id=build_screening_row_id(str(issuer_row["cik"]), as_of_dt),
@@ -828,9 +799,7 @@ def recompute_company_valuation(
         quality_confidence=quality.confidence,
         valuation_confidence=valuation.confidence,
         ownership_score=round(feature_result.ownership_signal.score, 2),
-        ownership_special_situation_flag=bool(
-            feature_result.ownership_features.get("ownership_special_situation_flag")
-        ),
+        ownership_special_situation_flag=bool(feature_result.ownership_features.get("ownership_special_situation_flag")),
         limited_coverage_flag=bool(issuer_row.get("limited_coverage_flag")),
         stressed_operator_flag=bool(issuer_row.get("stressed_operator_flag")),
         top_reason_codes=tuple(top_reason_codes),
@@ -839,11 +808,7 @@ def recompute_company_valuation(
     screening_row_payload["security_id"] = None if primary_security is None else str(primary_security["security_id"])
     screening_row_payload["top_reason_codes_json"] = screening_row_payload.pop("top_reason_codes")
     screening_row_payload["updated_at"] = datetime.now(UTC)
-    persisted_screening_row = (
-        repo.upsert_screening_row(screening_row_payload)
-        if persist
-        else dict(screening_row_payload)
-    )
+    persisted_screening_row = repo.upsert_screening_row(screening_row_payload) if persist else dict(screening_row_payload)
 
     return CompanyValuationRecomputeResult(
         feature_snapshot=feature_snapshot,

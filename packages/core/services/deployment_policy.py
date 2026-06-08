@@ -4,7 +4,7 @@ from collections.abc import Mapping
 import os
 from typing import Any
 
-from core.services.value_coercion import as_text as _as_text
+from core.value_coercion import as_text as _as_text
 
 DEPLOYMENT_MODE_SHADOW = "shadow"
 DEPLOYMENT_MODE_PAPER_AUTO = "paper_auto"

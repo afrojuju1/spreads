@@ -22,7 +22,7 @@ from core.services.company_valuation.sec_client import SecEdgarClient
 from core.services.company_valuation.templates import (
     resolve_company_valuation_template_assignment,
 )
-from core.services.value_coercion import utc_now as _utc_now
+from core.value_coercion import utc_now as _utc_now
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 

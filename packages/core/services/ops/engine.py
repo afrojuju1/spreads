@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from core.services.positions import enrich_position_row
 from core.services.trading_strategies import load_active_trading_strategies
-from core.services.value_coercion import as_text
+from core.value_coercion import as_text
 from core.storage.capture_models import CaptureSummaryModel
 from core.storage.engine_models import (
     CandidateRunModel,

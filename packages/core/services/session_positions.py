@@ -18,7 +18,7 @@ from core.services.option_structures import (
 from core.services.runtime_identity import (
     resolve_runtime_policy_fields,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,

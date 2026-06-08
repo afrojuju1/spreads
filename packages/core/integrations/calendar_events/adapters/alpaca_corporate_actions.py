@@ -5,16 +5,13 @@ from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from core.integrations.http_client import VendorHttpClient
+from core.value_coercion import utc_now_iso as _utc_now_iso
 
 from .base import BaseCalendarEventAdapter
 from ..config import ALPACA_CORPORATE_ACTION_TYPES
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _singularize(group_name: str) -> str:

@@ -43,7 +43,7 @@ from core.services.trading_engine.kernel import EngineComponentRole, EngineConte
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
 from core.services.trading_strategies import routine_should_run_now
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_runtime
-from core.services.value_coercion import utc_now, utc_now_iso as _utc_now
+from core.value_coercion import unique_text_list, utc_now, utc_now_iso as _utc_now
 
 ENTRY_INTENT_TTL_MINUTES = 5
 ENTRY_MONITOR_LIMIT = 12
@@ -352,7 +352,7 @@ def _signal_blockers(candidate: dict[str, Any], *, eligibility: str | None = Non
     if str(eligibility or "live").strip().lower() != "live":
         blockers.append("analysis_only")
     for field in ("scoring_blockers", "execution_blockers", "ranking_policy_blockers"):
-        for blocker in _normalized_blockers(candidate.get(field)):
+        for blocker in unique_text_list(candidate.get(field)):
             if blocker not in blockers:
                 blockers.append(blocker)
     return blockers
@@ -683,17 +683,6 @@ def _refresh_entry_runtime_signals(
         "engine_facts": engine_fact_summary,
         "signals": signals,
     }
-
-
-def _normalized_blockers(value: Any) -> list[str]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    blockers: list[str] = []
-    for item in value:
-        rendered = str(item or "").strip()
-        if rendered and rendered not in blockers:
-            blockers.append(rendered)
-    return blockers
 
 
 def _selected_execution_admission(

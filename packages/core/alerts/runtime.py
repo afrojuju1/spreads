@@ -4,7 +4,7 @@ from typing import Any, Mapping
 
 from core.services.alert_delivery import plan_alert_delivery
 from core.services.runtime_identity import build_live_run_scope_id
-from core.services.value_coercion import as_text as _as_text, coerce_float as _as_float
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 RUNTIME_ENTRY_SELECTED_ALERT_TYPE = "runtime_entry_selected"
 
@@ -199,7 +199,7 @@ def plan_runtime_entry_selected_alert(
         "details": details,
     }
     if not payload["created_at"]:
-        from core.services.value_coercion import utc_now_iso
+        from core.value_coercion import utc_now_iso
 
         payload["created_at"] = utc_now_iso()
 

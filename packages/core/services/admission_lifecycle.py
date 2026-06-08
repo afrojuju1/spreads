@@ -1,32 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import re
 from typing import Any
 
 from core.services.trading_lifecycle import AdmissionState, LifecycleObject
-from core.services.value_coercion import as_text as _as_text, utc_now_iso as _utc_now
-
-
-def _safe_component(value: Any) -> str:
-    rendered = str(value or "").strip()
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", rendered) or "unknown"
-
-
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
-def _list_text(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        rendered = _as_text(value)
-        return [] if rendered is None else [rendered]
-    rendered_values: list[str] = []
-    for item in value:
-        rendered = _as_text(item)
-        if rendered is not None and rendered not in rendered_values:
-            rendered_values.append(rendered)
-    return rendered_values
+from core.value_coercion import as_mapping, as_text as _as_text, safe_component, unique_text_list, utc_now_iso as _utc_now
 
 
 def normalize_admission_state(status: Any) -> str:
@@ -64,21 +42,21 @@ def normalize_lifecycle_admission(
     blockers: list[str] | None = None,
     decided_at: str | None = None,
 ) -> dict[str, Any]:
-    raw = _mapping(snapshot)
+    raw = as_mapping(snapshot)
     decided_at_value = decided_at or _as_text(raw.get("evaluated_at")) or _utc_now()
     state = normalize_admission_state(raw.get("admission_state") or raw.get("status"))
-    resolved_reason_codes = _list_text(reason_codes if reason_codes is not None else raw.get("reason_codes"))
+    resolved_reason_codes = unique_text_list(reason_codes if reason_codes is not None else raw.get("reason_codes"), accept_scalar=True)
     reason = _as_text(raw.get("reason"))
     if reason is not None and reason not in resolved_reason_codes:
         resolved_reason_codes.append(reason)
     if not resolved_reason_codes and state == AdmissionState.APPROVED.value:
         resolved_reason_codes.append("approved")
-    resolved_blockers = _list_text(blockers if blockers is not None else raw.get("blockers"))
+    resolved_blockers = unique_text_list(blockers if blockers is not None else raw.get("blockers"), accept_scalar=True)
     if state in {AdmissionState.BLOCKED.value, AdmissionState.UNKNOWN.value} and reason is not None and reason not in resolved_blockers:
         resolved_blockers.append(reason)
 
     source_id = source_object_id or _as_text(raw.get("source_object_id")) or _as_text(raw.get("execution_intent_id"))
-    admission_id = f"trade_admission:{_safe_component(admission_kind)}:" f"{_safe_component(source_object_type)}:{_safe_component(source_id)}"
+    admission_id = f"trade_admission:{safe_component(admission_kind)}:" f"{safe_component(source_object_type)}:{safe_component(source_id)}"
     return {
         **raw,
         "admission_decision_id": _as_text(raw.get("admission_decision_id")) or admission_id,
@@ -96,10 +74,10 @@ def normalize_lifecycle_admission(
         "max_loss": max_loss if max_loss is not None else raw.get("max_loss"),
         "reason_codes": resolved_reason_codes,
         "blockers": resolved_blockers,
-        "policy_snapshot": dict(policy_snapshot) if policy_snapshot is not None else _mapping(raw.get("policy_snapshot") or raw.get("policy")),
-        "capability_snapshot": dict(capability_snapshot) if capability_snapshot is not None else _mapping(raw.get("capability_snapshot")),
-        "metrics": dict(metrics) if metrics is not None else _mapping(raw.get("metrics")),
-        "evidence": dict(evidence) if evidence is not None else _mapping(raw.get("evidence")),
+        "policy_snapshot": dict(policy_snapshot) if policy_snapshot is not None else as_mapping(raw.get("policy_snapshot") or raw.get("policy")),
+        "capability_snapshot": dict(capability_snapshot) if capability_snapshot is not None else as_mapping(raw.get("capability_snapshot")),
+        "metrics": dict(metrics) if metrics is not None else as_mapping(raw.get("metrics")),
+        "evidence": dict(evidence) if evidence is not None else as_mapping(raw.get("evidence")),
         "decided_at": decided_at_value,
         "evaluated_at": decided_at_value,
     }

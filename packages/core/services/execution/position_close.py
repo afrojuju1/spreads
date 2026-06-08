@@ -24,7 +24,7 @@ from core.services.session_positions import (
     CLOSE_TRADE_INTENT,
     resolve_trade_intent,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     utc_now_iso,
 )

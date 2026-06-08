@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from core.services.value_coercion import coerce_float as _coerce_float
+from core.value_coercion import coerce_float as _coerce_float
 
 RANKING_POLICY_THRESHOLD_FIELDS = (
     "min_probability_of_profit",

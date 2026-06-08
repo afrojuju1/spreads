@@ -5,13 +5,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from core.value_coercion import utc_now_iso as _utc_now_iso
+from core.storage.serializers import parse_datetime as _parse_datetime
+
 from .base import BaseCalendarEventAdapter
 from ..config import MACRO_ASSET_SCOPE
 from ..models import CalendarEventQuery, CalendarEventRecord
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 class MacroCalendarAdapter(BaseCalendarEventAdapter):
@@ -33,8 +32,8 @@ class MacroCalendarAdapter(BaseCalendarEventAdapter):
         events = payload.get("events", [])
         source_updated_at = datetime.fromtimestamp(self.path.stat().st_mtime, tz=UTC).isoformat()
         ingested_at = _utc_now_iso()
-        window_start = datetime.fromisoformat(query.window_start)
-        window_end = datetime.fromisoformat(query.window_end)
+        window_start = _parse_datetime(query.window_start)
+        window_end = _parse_datetime(query.window_end)
         records: list[CalendarEventRecord] = []
 
         for event in events:

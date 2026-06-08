@@ -4,12 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from core.value_coercion import as_mapping
 from core.storage.records import StorageRow
 from core.storage.serializers import parse_datetime
-
-
-def _mapping(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
 
 
 def _row_tuple(rows: list[StorageRow]) -> tuple[StorageRow, ...]:
@@ -81,11 +78,11 @@ class TradeDecisionSignalRead:
 
     @property
     def selected_execution_shape(self) -> dict[str, Any]:
-        return _mapping(self.decision.get("selected_execution_shape"))
+        return as_mapping(self.decision.get("selected_execution_shape"))
 
     @property
     def signal_execution_shape(self) -> dict[str, Any]:
-        return _mapping(self.signal.get("execution_shape"))
+        return as_mapping(self.signal.get("execution_shape"))
 
     @property
     def execution_shape(self) -> dict[str, Any]:
@@ -93,7 +90,7 @@ class TradeDecisionSignalRead:
 
     @property
     def order_payload(self) -> dict[str, Any]:
-        return _mapping(self.execution_shape.get("order_payload"))
+        return as_mapping(self.execution_shape.get("order_payload"))
 
     @property
     def execution_shape_legs(self) -> list[dict[str, Any]]:
@@ -105,7 +102,7 @@ class TradeDecisionSignalRead:
 
     @property
     def economics(self) -> dict[str, Any]:
-        return _mapping(self.signal.get("economics"))
+        return as_mapping(self.signal.get("economics"))
 
     @property
     def selected_quantity(self) -> Any:

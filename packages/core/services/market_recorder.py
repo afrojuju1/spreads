@@ -24,7 +24,7 @@ from core.services.option_stream_broker import (
 )
 from core.services.option_trade_records import build_trade_records
 from core.services.trading_engine.capture_targets import refresh_engine_capture_targets
-from core.services.value_coercion import as_text as _as_text
+from core.value_coercion import as_text as _as_text
 from core.storage.factory import build_storage_context
 
 DEFAULT_POLL_SECONDS = 25.0

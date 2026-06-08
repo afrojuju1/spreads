@@ -7,6 +7,8 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from core.integrations.http_client import VendorHttpClient
+from core.value_coercion import utc_now_iso as _utc_now_iso
+from core.storage.serializers import parse_datetime as _parse_datetime
 
 from .base import BaseCalendarEventAdapter
 from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS
@@ -14,16 +16,6 @@ from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
 DOLT_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _parse_datetime(value: str) -> datetime:
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _earnings_timestamp(date_str: str, session_label: str | None) -> str:

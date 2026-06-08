@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from core.services.value_coercion import as_text
+from core.value_coercion import as_text
 
 
 def write_live_session_slot(

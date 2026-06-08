@@ -1,30 +1,19 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Iterator
 
 from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from core.value_coercion import utc_now
 from core.storage.calendar_models import CalendarEventModel, CalendarEventRefreshStateModel
 from core.storage.db import build_session_factory
+from core.storage.serializers import parse_datetime as _parse_datetime, render_value as _render_value
 
 from .models import CalendarEventRecord
-
-
-def _parse_datetime(value: str | datetime) -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
-def _render_datetime(value: datetime) -> str:
-    rendered = value.isoformat()
-    return rendered.replace("+00:00", "Z") if rendered.endswith("+00:00") else rendered
 
 
 class CalendarEventStore:
@@ -138,9 +127,9 @@ class CalendarEventStore:
         return {
             "source": row.source,
             "scope_key": row.scope_key,
-            "coverage_start": _render_datetime(row.coverage_start),
-            "coverage_end": _render_datetime(row.coverage_end),
-            "refreshed_at": _render_datetime(row.refreshed_at),
+            "coverage_start": str(_render_value(row.coverage_start)),
+            "coverage_end": str(_render_value(row.coverage_end)),
+            "refreshed_at": str(_render_value(row.refreshed_at)),
         }
 
     def has_fresh_coverage(
@@ -159,15 +148,12 @@ class CalendarEventStore:
         stored_coverage_end = _parse_datetime(row["coverage_end"])
         requested_coverage_start = _parse_datetime(coverage_start)
         requested_coverage_end = _parse_datetime(coverage_end)
-        if (
-            stored_coverage_start > requested_coverage_start
-            or stored_coverage_end < requested_coverage_end
-        ):
+        if stored_coverage_start > requested_coverage_start or stored_coverage_end < requested_coverage_end:
             return False
         if freshness_hours <= 0:
             return True
         refreshed_at = _parse_datetime(row["refreshed_at"])
-        return refreshed_at >= datetime.now(UTC) - timedelta(hours=freshness_hours)
+        return refreshed_at >= utc_now() - timedelta(hours=freshness_hours)
 
     def query_events(
         self,
@@ -184,10 +170,7 @@ class CalendarEventStore:
             .where(
                 (CalendarEventModel.symbol == symbol)
                 if not asset_scope
-                else (
-                    (CalendarEventModel.symbol == symbol)
-                    | (CalendarEventModel.asset_scope == asset_scope)
-                )
+                else ((CalendarEventModel.symbol == symbol) | (CalendarEventModel.asset_scope == asset_scope))
             )
             .order_by(CalendarEventModel.scheduled_at.asc())
         )
@@ -199,15 +182,15 @@ class CalendarEventStore:
                 event_type=row.event_type,
                 symbol=row.symbol,
                 asset_scope=row.asset_scope,
-                scheduled_at=_render_datetime(row.scheduled_at),
-                window_start=_render_datetime(row.window_start),
-                window_end=_render_datetime(row.window_end),
+                scheduled_at=str(_render_value(row.scheduled_at)),
+                window_start=str(_render_value(row.window_start)),
+                window_end=str(_render_value(row.window_end)),
                 source=row.source,
                 source_confidence=row.source_confidence,
                 status=row.status,
                 payload_json=row.payload_json,
-                ingested_at=_render_datetime(row.ingested_at),
-                source_updated_at=_render_datetime(row.source_updated_at),
+                ingested_at=str(_render_value(row.ingested_at)),
+                source_updated_at=str(_render_value(row.source_updated_at)),
             )
             for row in rows
         ]

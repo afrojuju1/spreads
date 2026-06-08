@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from core.services.alert_delivery import plan_alert_delivery
 from core.services.ticker_sources import get_latest_ticker_source_snapshot
-from core.services.value_coercion import as_text as _as_text, utc_now as _utc_now, utc_now_iso as _utc_now_text
+from core.value_coercion import as_text as _as_text, utc_now as _utc_now, utc_now_iso as _utc_now_text
 from core.storage.serializers import parse_datetime
 
 NEW_YORK = ZoneInfo("America/New_York")

@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from core.common import clamp
+from core.value_coercion import coerce_float
 from core.services.company_valuation.contracts import OwnershipEvidence, OwnershipSignal
 from core.services.company_valuation.ids import build_feature_snapshot_id
 from core.services.company_valuation.templates import (
@@ -38,15 +39,6 @@ class CompanyValuationFeatureResult:
     required_feature_coverage: float
     statement_snapshots_used: list[dict[str, Any]]
     filings_used: list[str]
-
-
-def _safe_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _ratio(numerator: float | None, denominator: float | None) -> float | None:
@@ -149,7 +141,7 @@ def _duration_snapshots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _sum_metric(rows: list[dict[str, Any]], metric_name: str) -> float | None:
     values: list[float] = []
     for row in rows:
-        value = _safe_float(_metrics(row).get(metric_name))
+        value = coerce_float(_metrics(row).get(metric_name))
         if value is None:
             return None
         values.append(value)
@@ -158,7 +150,7 @@ def _sum_metric(rows: list[dict[str, Any]], metric_name: str) -> float | None:
 
 def _latest_metric(rows: list[dict[str, Any]], metric_name: str) -> float | None:
     for row in rows:
-        value = _safe_float(_metrics(row).get(metric_name))
+        value = coerce_float(_metrics(row).get(metric_name))
         if value is not None:
             return value
     return None
@@ -183,7 +175,7 @@ def _duration_match(
     best_row: dict[str, Any] | None = None
     best_key: tuple[int, int, date] | None = None
     for row in rows:
-        value = _safe_float(_metrics(row).get(metric_name))
+        value = coerce_float(_metrics(row).get(metric_name))
         if value is None:
             continue
         row_end = _period_end(row)
@@ -208,7 +200,7 @@ def _annual_before(
     for row in rows:
         if _period_end(row) >= before_period_end:
             continue
-        value = _safe_float(_metrics(row).get(metric_name))
+        value = coerce_float(_metrics(row).get(metric_name))
         if value is not None:
             return row
     return None
@@ -221,7 +213,7 @@ def _trailing_metric_from_duration(
     metric_name: str,
 ) -> tuple[float | None, dict[str, Any] | None]:
     for current_row in duration_rows:
-        current_value = _safe_float(_metrics(current_row).get(metric_name))
+        current_value = coerce_float(_metrics(current_row).get(metric_name))
         if current_value is None:
             continue
         annual_base = _annual_before(
@@ -239,8 +231,8 @@ def _trailing_metric_from_duration(
         )
         if prior_duration is None:
             continue
-        annual_value = _safe_float(_metrics(annual_base).get(metric_name))
-        prior_duration_value = _safe_float(_metrics(prior_duration).get(metric_name))
+        annual_value = coerce_float(_metrics(annual_base).get(metric_name))
+        prior_duration_value = coerce_float(_metrics(prior_duration).get(metric_name))
         if annual_value is None or prior_duration_value is None:
             continue
         return (
@@ -265,7 +257,7 @@ def _trailing_flow_metric(
     prior_ttm = _sum_metric(quarterly_rows[4:8], metric_name) if len(quarterly_rows) >= 8 else None
     if current_ttm is not None:
         if prior_ttm is None and len(annual_rows) >= 2:
-            prior_ttm = _safe_float(_metrics(annual_rows[1]).get(metric_name))
+            prior_ttm = coerce_float(_metrics(annual_rows[1]).get(metric_name))
         return (current_ttm, prior_ttm)
 
     current_ttm, _current_refs = _trailing_metric_from_duration(
@@ -276,11 +268,11 @@ def _trailing_flow_metric(
     if current_ttm is not None:
         prior_ttm = None
         if prior_ttm is None and len(annual_rows) >= 2:
-            prior_ttm = _safe_float(_metrics(annual_rows[1]).get(metric_name))
+            prior_ttm = coerce_float(_metrics(annual_rows[1]).get(metric_name))
         return (current_ttm, prior_ttm)
 
-    current_ttm = _safe_float(_metrics(annual_rows[0]).get(metric_name)) if annual_rows else None
-    prior_ttm = _safe_float(_metrics(annual_rows[1]).get(metric_name)) if len(annual_rows) >= 2 else None
+    current_ttm = coerce_float(_metrics(annual_rows[0]).get(metric_name)) if annual_rows else None
+    prior_ttm = coerce_float(_metrics(annual_rows[1]).get(metric_name)) if len(annual_rows) >= 2 else None
     return (current_ttm, prior_ttm)
 
 
@@ -351,41 +343,41 @@ def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str
     if revenue_ttm is not None and prior_revenue_ttm not in (None, 0):
         revenue_ttm_growth = (revenue_ttm / prior_revenue_ttm) - 1.0
 
-    current_assets = _safe_float(latest_metrics.get("current_assets")) or _latest_metric(
+    current_assets = coerce_float(latest_metrics.get("current_assets")) or _latest_metric(
         statement_snapshots,
         "current_assets",
     )
-    current_liabilities = _safe_float(latest_metrics.get("current_liabilities")) or _latest_metric(
+    current_liabilities = coerce_float(latest_metrics.get("current_liabilities")) or _latest_metric(
         statement_snapshots,
         "current_liabilities",
     )
-    inventory = _safe_float(latest_metrics.get("inventory")) or _latest_metric(
+    inventory = coerce_float(latest_metrics.get("inventory")) or _latest_metric(
         statement_snapshots,
         "inventory",
     )
-    total_assets = _safe_float(latest_metrics.get("total_assets")) or _latest_metric(
+    total_assets = coerce_float(latest_metrics.get("total_assets")) or _latest_metric(
         statement_snapshots,
         "total_assets",
     )
-    cash_and_equivalents = _safe_float(latest_metrics.get("cash_and_equivalents")) or _latest_metric(
+    cash_and_equivalents = coerce_float(latest_metrics.get("cash_and_equivalents")) or _latest_metric(
         statement_snapshots,
         "cash_and_equivalents",
     )
-    long_term_debt = _safe_float(latest_metrics.get("long_term_debt")) or _latest_metric(
+    long_term_debt = coerce_float(latest_metrics.get("long_term_debt")) or _latest_metric(
         statement_snapshots,
         "long_term_debt",
     )
-    total_liabilities = _safe_float(latest_metrics.get("total_liabilities")) or _latest_metric(
+    total_liabilities = coerce_float(latest_metrics.get("total_liabilities")) or _latest_metric(
         statement_snapshots,
         "total_liabilities",
     )
-    stockholders_equity = _safe_float(latest_metrics.get("stockholders_equity")) or _latest_metric(
+    stockholders_equity = coerce_float(latest_metrics.get("stockholders_equity")) or _latest_metric(
         statement_snapshots,
         "stockholders_equity",
     )
     shares_outstanding = (
-        _safe_float(latest_metrics.get("shares_outstanding"))
-        or _safe_float(latest_metrics.get("diluted_weighted_average_shares"))
+        coerce_float(latest_metrics.get("shares_outstanding"))
+        or coerce_float(latest_metrics.get("diluted_weighted_average_shares"))
         or _latest_metric(statement_snapshots, "shares_outstanding")
         or _latest_metric(
             statement_snapshots,
@@ -393,15 +385,15 @@ def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str
         )
     )
     diluted_shares_latest = (
-        _safe_float(latest_metrics.get("diluted_weighted_average_shares"))
+        coerce_float(latest_metrics.get("diluted_weighted_average_shares"))
         or _latest_metric(statement_snapshots, "diluted_weighted_average_shares")
         or shares_outstanding
     )
     diluted_shares_prior = None
     if len(quarterly) >= 5:
-        diluted_shares_prior = _safe_float(_metrics(quarterly[4]).get("diluted_weighted_average_shares"))
+        diluted_shares_prior = coerce_float(_metrics(quarterly[4]).get("diluted_weighted_average_shares"))
     elif len(annual) >= 2:
-        diluted_shares_prior = _safe_float(_metrics(annual[1]).get("diluted_weighted_average_shares"))
+        diluted_shares_prior = coerce_float(_metrics(annual[1]).get("diluted_weighted_average_shares"))
     diluted_share_growth_ttm = None
     if diluted_shares_latest is not None and diluted_shares_prior not in (None, 0):
         diluted_share_growth_ttm = (diluted_shares_latest / diluted_shares_prior) - 1.0
@@ -412,15 +404,15 @@ def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str
         duration_rows=duration,
         metric_name="stock_based_compensation",
     )
-    deferred_revenue_latest = _safe_float(latest_metrics.get("deferred_revenue")) or _latest_metric(
+    deferred_revenue_latest = coerce_float(latest_metrics.get("deferred_revenue")) or _latest_metric(
         statement_snapshots,
         "deferred_revenue",
     )
     deferred_revenue_prior = None
     if len(quarterly) >= 5:
-        deferred_revenue_prior = _safe_float(_metrics(quarterly[4]).get("deferred_revenue"))
+        deferred_revenue_prior = coerce_float(_metrics(quarterly[4]).get("deferred_revenue"))
     elif len(annual) >= 2:
-        deferred_revenue_prior = _safe_float(_metrics(annual[1]).get("deferred_revenue"))
+        deferred_revenue_prior = coerce_float(_metrics(annual[1]).get("deferred_revenue"))
     deferred_revenue_growth = None
     if deferred_revenue_latest is not None and deferred_revenue_prior not in (None, 0):
         deferred_revenue_growth = (deferred_revenue_latest / deferred_revenue_prior) - 1.0
@@ -543,7 +535,7 @@ def _compute_ownership_features(
                 insider_latest_available_at or available_at,
                 available_at,
             )
-        shares_delta = _safe_float(row.get("shares_delta")) or 0.0
+        shares_delta = coerce_float(row.get("shares_delta")) or 0.0
         code = str(row.get("transaction_code") or "").upper()
         if code in {"A", "P"}:
             insider_net_shares += shares_delta
@@ -557,7 +549,7 @@ def _compute_ownership_features(
     passive_holder_count = 0
     position_latest_available_at: datetime | None = None
     for row in latest_positions.values():
-        pct = _safe_float(row.get("ownership_pct")) or 0.0
+        pct = coerce_float(row.get("ownership_pct")) or 0.0
         max_ownership_pct = max(max_ownership_pct, pct)
         total_ownership_pct += pct
         if bool(row.get("control_intent_flag")):
@@ -594,7 +586,7 @@ def _compute_ownership_features(
             institutional_option_position_count += 1
             continue
         institutional_holder_count += 1
-        share_count = _safe_float(row.get("share_count")) or 0.0
+        share_count = coerce_float(row.get("share_count")) or 0.0
         institutional_total_shares += share_count
         institutional_top_holder_share_count = max(
             institutional_top_holder_share_count,

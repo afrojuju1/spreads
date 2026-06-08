@@ -10,7 +10,7 @@ from core.services.execution_lifecycle import (
 from core.services.runtime_identity import (
     build_live_run_scope_id,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     utc_now_iso,
 )

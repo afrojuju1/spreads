@@ -6,7 +6,7 @@ from typing import Any
 import pandas_market_calendars as mcal
 
 from core.services.option_structures import net_premium_kind
-from core.services.value_coercion import as_text, coerce_float, coerce_int
+from core.value_coercion import as_text, coerce_bool, coerce_float, coerce_int
 from core.storage.serializers import parse_datetime
 
 DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE = 10
@@ -16,16 +16,6 @@ DEFAULT_EXIT_POLICY = {
     "stop_multiple": 2.0,
     "force_close_at": None,
 }
-
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return False
 
 
 def _calendar_close(session_date: str, market_calendar: str = "NYSE") -> datetime | None:
@@ -42,7 +32,7 @@ def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
     policy = dict(DEFAULT_EXIT_POLICY)
     if "enabled" in raw_policy:
-        policy["enabled"] = _coerce_bool(raw_policy["enabled"])
+        policy["enabled"] = coerce_bool(raw_policy["enabled"], default=False)
     for key in ("profit_target_pct", "stop_multiple"):
         if key not in raw_policy:
             continue

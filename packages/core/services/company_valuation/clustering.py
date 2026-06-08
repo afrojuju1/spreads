@@ -12,6 +12,7 @@ from sklearn.cluster import HDBSCAN, MiniBatchKMeans
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.preprocessing import StandardScaler
+from core.value_coercion import coerce_float
 
 DEFAULT_CLUSTER_FEATURE_COLUMNS = (
     "ff__revenue_ttm_growth",
@@ -94,22 +95,7 @@ class CompanyValuationClusteringResult:
 
 
 def _normalized_template_ids(values: tuple[str, ...] | None) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            str(value).strip()
-            for value in (values or ())
-            if str(value or "").strip()
-        )
-    )
-
-
-def _safe_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return tuple(dict.fromkeys(str(value).strip() for value in (values or ()) if str(value or "").strip()))
 
 
 def _as_float_series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -146,11 +132,7 @@ def _load_dataset(dataset_root: Path) -> pd.DataFrame:
 
 
 def _prepare_feature_matrix(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    available_columns = [
-        column
-        for column in DEFAULT_CLUSTER_FEATURE_COLUMNS
-        if column in frame.columns
-    ]
+    available_columns = [column for column in DEFAULT_CLUSTER_FEATURE_COLUMNS if column in frame.columns]
     if not available_columns:
         raise ValueError("No configured clustering feature columns are available in the dataset")
     working = frame.copy()
@@ -319,17 +301,17 @@ def _proposed_cluster_label(
     template_id: str,
     medians: dict[str, Any],
 ) -> str:
-    gross_margin = _safe_float(medians.get("ff__gross_margin_ttm")) or 0.0
-    roic = _safe_float(medians.get("ff__roic_ttm")) or 0.0
-    capex_intensity = _safe_float(medians.get("ff__capex_intensity")) or 0.0
-    asset_turnover = _safe_float(medians.get("ff__asset_turnover")) or 0.0
-    market_cap = _safe_float(medians.get("market_cap_at_as_of")) or 0.0
-    net_leverage = _safe_float(medians.get("ff__net_leverage")) or 0.0
-    quality_score = _safe_float(medians.get("quality_score")) or 0.0
-    free_cash_flow_margin = _safe_float(medians.get("ff__free_cash_flow_margin_ttm")) or 0.0
-    operating_margin = _safe_float(medians.get("ff__operating_margin_ttm")) or 0.0
-    revenue_growth = _safe_float(medians.get("ff__revenue_ttm_growth")) or 0.0
-    ps_multiple = _safe_float(medians.get("ps_at_as_of")) or 0.0
+    gross_margin = coerce_float(medians.get("ff__gross_margin_ttm")) or 0.0
+    roic = coerce_float(medians.get("ff__roic_ttm")) or 0.0
+    capex_intensity = coerce_float(medians.get("ff__capex_intensity")) or 0.0
+    asset_turnover = coerce_float(medians.get("ff__asset_turnover")) or 0.0
+    market_cap = coerce_float(medians.get("market_cap_at_as_of")) or 0.0
+    net_leverage = coerce_float(medians.get("ff__net_leverage")) or 0.0
+    quality_score = coerce_float(medians.get("quality_score")) or 0.0
+    free_cash_flow_margin = coerce_float(medians.get("ff__free_cash_flow_margin_ttm")) or 0.0
+    operating_margin = coerce_float(medians.get("ff__operating_margin_ttm")) or 0.0
+    revenue_growth = coerce_float(medians.get("ff__revenue_ttm_growth")) or 0.0
+    ps_multiple = coerce_float(medians.get("ps_at_as_of")) or 0.0
     if template_id == "industrial_manufacturing":
         if gross_margin >= 0.40 and ps_multiple >= 3.0:
             return "electrification_automation_compounder"
@@ -341,12 +323,7 @@ def _proposed_cluster_label(
             return "cyclical_heavy_equipment"
         return "diversified_industrial_platform"
     if template_id == "energy_asset_heavy":
-        if (
-            quality_score < 50.0
-            or net_leverage >= 3.0
-            or free_cash_flow_margin <= 0.08
-            or operating_margin <= 0.0
-        ):
+        if quality_score < 50.0 or net_leverage >= 3.0 or free_cash_flow_margin <= 0.08 or operating_margin <= 0.0:
             return "stressed_operator"
         if market_cap >= 100_000_000_000:
             return "healthy_energy_core"
@@ -362,7 +339,7 @@ def _multiple_regime_rank(
     scored: list[tuple[int, float]] = []
     for summary in cluster_summaries:
         cluster_id = int(summary["cluster_id"])
-        value = _safe_float(summary.get("median_features", {}).get(column))
+        value = coerce_float(summary.get("median_features", {}).get(column))
         if value is None:
             continue
         scored.append((cluster_id, value))
@@ -445,9 +422,7 @@ def _issuer_cluster_mapping(
 
 def _template_markdown_block(template_id: str, summary: dict[str, Any]) -> str:
     lines = [f"## `{template_id}`", ""]
-    lines.append(
-        f"- rows: `{summary['row_count']}` | issuers: `{summary['issuer_count']}` | feature columns: `{len(summary['feature_columns'])}`"
-    )
+    lines.append(f"- rows: `{summary['row_count']}` | issuers: `{summary['issuer_count']}` | feature columns: `{len(summary['feature_columns'])}`")
     best = summary["kmeans"]["best"]
     lines.append(
         f"- best `MiniBatchKMeans`: `k={best['k']}` with silhouette `{best['silhouette_score']}` and rolling ARI `{best['rolling_stability_ari']}`"
@@ -459,9 +434,7 @@ def _template_markdown_block(template_id: str, summary: dict[str, Any]) -> str:
     lines.append("")
     lines.append("Issuer mapping:")
     for row in summary["issuer_cluster_map"]:
-        lines.append(
-            f"- `{row['ticker']}` -> cluster `{row['dominant_cluster']}` (`{row['dominant_fraction']:.2%}` dominant)"
-        )
+        lines.append(f"- `{row['ticker']}` -> cluster `{row['dominant_cluster']}` (`{row['dominant_fraction']:.2%}` dominant)")
     lines.append("")
     lines.append("Candidate sub-templates:")
     for cluster in summary["cluster_summaries"]:
@@ -509,9 +482,7 @@ def analyze_company_valuation_research_dataset(
     if "as_of_year" not in frame.columns and "as_of" in frame.columns:
         frame["as_of_year"] = frame["as_of"].dt.year
 
-    template_ids = _normalized_template_ids(request.template_ids) or tuple(
-        sorted(str(value) for value in frame["template_id"].dropna().unique())
-    )
+    template_ids = _normalized_template_ids(request.template_ids) or tuple(sorted(str(value) for value in frame["template_id"].dropna().unique()))
     template_summaries: dict[str, Any] = {}
     assignment_frames: list[pd.DataFrame] = []
     errors: list[str] = []
@@ -519,9 +490,7 @@ def analyze_company_valuation_research_dataset(
     for template_id in template_ids:
         template_frame = frame.loc[frame["template_id"] == template_id].copy()
         if len(template_frame) < request.min_rows_per_template:
-            errors.append(
-                f"{template_id}: not enough rows for clustering ({len(template_frame)} < {request.min_rows_per_template})"
-            )
+            errors.append(f"{template_id}: not enough rows for clustering ({len(template_frame)} < {request.min_rows_per_template})")
             continue
         try:
             matrix_frame, feature_columns = _prepare_feature_matrix(template_frame)
@@ -562,9 +531,7 @@ def analyze_company_valuation_research_dataset(
                     label_column="kmeans_cluster",
                 ),
                 "cluster_summaries": cluster_summaries,
-                "hdbscan_cluster_counts": dict(
-                    sorted(Counter(int(value) for value in hdbscan_model.labels_).items())
-                ),
+                "hdbscan_cluster_counts": dict(sorted(Counter(int(value) for value in hdbscan_model.labels_).items())),
             }
         except Exception as exc:
             errors.append(f"{template_id}: {exc}")

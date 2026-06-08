@@ -10,7 +10,7 @@ from core.services.deployment_policy import (
 )
 from core.services.trading_engine.close_policy import normalize_exit_policy
 from core.services.risk_manager import normalize_risk_policy
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,

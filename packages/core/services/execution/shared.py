@@ -18,7 +18,7 @@ from core.services.option_structures import (
     normalize_strategy_family,
     order_payload_legs,
 )
-from core.services.value_coercion import (
+from core.value_coercion import (
     as_text,
     coerce_float,
 )
