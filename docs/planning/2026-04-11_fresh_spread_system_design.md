@@ -1346,7 +1346,7 @@ The design is working when:
 Internal:
 
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md)
-- [scanners/service.py](../../packages/core/services/scanners/service.py)
+- stale manual scanner CLI service deleted during the DataEngine candidate-builder refactor
 - [scanners/runtime.py](../../packages/core/services/scanners/runtime.py)
 - [collections/runtime.py](../../packages/core/services/collections/runtime.py)
 - [collections/cycle.py](../../packages/core/services/collections/cycle.py)

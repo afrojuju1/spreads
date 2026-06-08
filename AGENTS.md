@@ -10,7 +10,7 @@
 - Prefer `uv run` for Python commands in this repo.
 - Treat [docs/current_system_state.md](docs/current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries.
 - Do not duplicate the domain ownership map in `AGENTS.md`. If ownership, object vocabulary, or runtime topology matters, read or update [docs/current_system_state.md](docs/current_system_state.md).
-- For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
+- For Alpaca-related research, candidate-building, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 - Current execution direction: `spreads` owns the live paper runtime. The active execution adapter is `alpaca_direct`; Nautilus Trader is retained only as historical context and a source of architectural ideas. Do not route new live Spreads work through Nautilus, Rust bridge paths, or host-managed Nautilus services unless the user explicitly asks to re-enable a separate experiment.
 - Canonical operator state is split between `TradingOpsState` and `StorageOpsState`. Do not add parallel operator products, compatibility routes, or duplicate status pages outside those read models.
 
@@ -69,7 +69,7 @@
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/Projects/spreads`.
 - Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
 - Runtime resource policy lives in [docs/current_system_state.md](docs/current_system_state.md). Market-closed `market_recorder_idle` logs are expected and healthy; do not treat recorder idling outside market hours as a capture outage.
-- Do not tell operators to run removed or currently unshipped `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first and create a bead before reintroducing a historical evaluation CLI.
+- Do not tell operators to run removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first and create a bead before reintroducing a historical evaluation CLI.
 - For offline selection research or policy tuning, start by validating current strategy config and stored engine facts. If a historical evaluator is needed, design it explicitly against the current ticker-source/candidate/signal/decision model instead of reviving old audit/backtest wrappers.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.

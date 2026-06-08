@@ -168,14 +168,14 @@ def _build_strategy_union_result(
 ) -> dict[str, Any]:
     symbols = build_entry_strategy_symbols(
         config_root=config_root,
-        scanner_strategy=_as_optional_text(recipe_args.get("scanner_strategy")),
-        scanner_profile=_as_optional_text(recipe_args.get("scanner_profile")),
+        candidate_builder_key=_as_optional_text(recipe_args.get("candidate_builder")),
+        build_profile=_as_optional_text(recipe_args.get("build_profile")),
     )
     source_tags = [f"recipe:{str(recipe or '').strip().lower()}"]
-    if (scanner_profile := _as_optional_text(recipe_args.get("scanner_profile"))) is not None:
-        source_tags.append(f"profile:{scanner_profile}")
-    if (scanner_strategy := _as_optional_text(recipe_args.get("scanner_strategy"))) is not None:
-        source_tags.append(f"strategy:{scanner_strategy}")
+    if (build_profile := _as_optional_text(recipe_args.get("build_profile"))) is not None:
+        source_tags.append(f"build_profile:{build_profile}")
+    if (candidate_builder := _as_optional_text(recipe_args.get("candidate_builder"))) is not None:
+        source_tags.append(f"candidate_builder:{candidate_builder}")
     generated_at = _iso_now()
     return {
         "status": "completed",
@@ -627,8 +627,8 @@ def _finviz_source_config(
     recipe_args: Mapping[str, Any],
 ) -> tuple[str | None, str | None]:
     source = str(recipe_args.get("source") or "auto").strip().lower()
-    scanner_url = (
-        _recipe_text_arg(recipe_args, "scanner_url", env_field_name="scanner_url_env")
+    source_url = (
+        _recipe_text_arg(recipe_args, "source_url", env_field_name="source_url_env")
         or _recipe_text_arg(recipe_args, "csv_url", env_field_name="csv_url_env")
         or _recipe_text_arg(recipe_args, "url", env_field_name="url_env")
     )
@@ -636,8 +636,8 @@ def _finviz_source_config(
         recipe_args, "path", env_field_name="path_env"
     )
 
-    if source in {"auto", "csv_export", "csv_url", "url"} and scanner_url:
-        return "csv_url", scanner_url
+    if source in {"auto", "csv_export", "csv_url", "url"} and source_url:
+        return "csv_url", source_url
     if source in {"auto", "csv_file", "local_csv", "file"} and csv_path:
         return "local_csv", csv_path
     if source not in {"auto", "csv_export", "csv_url", "url", "csv_file", "local_csv", "file"}:

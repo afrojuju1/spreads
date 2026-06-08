@@ -194,12 +194,12 @@ def prune_retained_data(
     )
 
     with build_storage_context(db_target) as storage:
-        missing_tables = [family.parent_table for family in families if not storage.history.schema_has_tables(family.parent_table)]
+        missing_tables = [family.parent_table for family in families if not storage.market_ticks.schema_has_tables(family.parent_table)]
         if missing_tables:
             raise RuntimeError(f"Tick storage tables are missing: {', '.join(missing_tables)}.")
 
         table_results: list[dict[str, Any]] = []
-        with storage.history.session_scope() as session:
+        with storage.market_ticks.session_scope() as session:
             for family in families:
                 table_results.append(
                     maintain_partitions(
@@ -241,12 +241,12 @@ def build_retention_status(
     )
 
     with build_storage_context(db_target) as storage:
-        missing_tables = [family.parent_table for family in families if not storage.history.schema_has_tables(family.parent_table)]
+        missing_tables = [family.parent_table for family in families if not storage.market_ticks.schema_has_tables(family.parent_table)]
         if missing_tables:
             raise RuntimeError(f"Tick storage tables are missing: {', '.join(missing_tables)}.")
 
         table_results: list[dict[str, Any]] = []
-        with storage.history.session_scope() as session:
+        with storage.market_ticks.session_scope() as session:
             storage_stats = _table_storage_stats(session)
             for family in families:
                 status = partition_status(

@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import argparse
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -214,9 +212,7 @@ class SpreadCandidate:
     ranking_policy: dict[str, Any] = field(default_factory=dict)
     ranking_policy_status: str = "passed"
     ranking_policy_blockers: tuple[str, ...] = ()
-    ranking_policy_margin_to_pass: dict[str, float | None] = field(
-        default_factory=dict
-    )
+    ranking_policy_margin_to_pass: dict[str, float | None] = field(default_factory=dict)
     lower_breakeven: float | None = None
     upper_breakeven: float | None = None
     side_balance_score: float | None = None
@@ -242,22 +238,6 @@ class SpreadCandidate:
 
 
 @dataclass(frozen=True)
-class SymbolScanResult:
-    symbol: str
-    underlying_type: str
-    spot_price: float
-    args: argparse.Namespace
-    setup: UnderlyingSetupContext | None
-    candidates: list[SpreadCandidate]
-    run_id: str
-    quoted_contract_count: int = 0
-    alpaca_delta_contract_count: int = 0
-    delta_contract_count: int = 0
-    local_delta_contract_count: int = 0
-    diagnostics: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class SymbolMarketSlice:
     symbol: str
     underlying_type: str
@@ -269,12 +249,6 @@ class SymbolMarketSlice:
     call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]
     put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate]
-
-
-@dataclass(frozen=True)
-class UniverseScanFailure:
-    symbol: str
-    error: str
 
 
 def serialize_spread_candidate(candidate: SpreadCandidate) -> dict[str, Any]:
@@ -292,7 +266,5 @@ __all__ = [
     "serialize_spread_candidate",
     "SpreadCandidate",
     "SymbolMarketSlice",
-    "SymbolScanResult",
     "UnderlyingSetupContext",
-    "UniverseScanFailure",
 ]

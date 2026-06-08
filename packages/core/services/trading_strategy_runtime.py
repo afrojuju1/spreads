@@ -48,8 +48,8 @@ class StrategyBuildSettings:
     build: StrategyBuildConfig
     liquidity: StrategyLiquidityRules
     risk: StrategyRiskDefaults
-    scanner_strategy: str
-    scanner_profile: str
+    candidate_builder_key: str
+    build_profile: str
     dte_min: int | None
     dte_max: int | None
     short_delta_min: float | None
@@ -145,8 +145,8 @@ def build_strategy_build_settings(strategy: TradingStrategyConfig) -> StrategyBu
         build=strategy.build,
         liquidity=strategy.liquidity,
         risk=strategy.position_sizing,
-        scanner_strategy=strategy.scanner_strategy,
-        scanner_profile=strategy.scanner_profile,
+        candidate_builder_key=strategy.candidate_builder_key,
+        build_profile=strategy.build_profile,
         dte_min=_optional_int(builder_params.get("dte_min")),
         dte_max=_optional_int(builder_params.get("dte_max")),
         short_delta_min=_optional_float(builder_params.get("short_delta_min")),
@@ -156,7 +156,7 @@ def build_strategy_build_settings(strategy: TradingStrategyConfig) -> StrategyBu
         min_open_interest=_optional_int(liquidity_rules.get("min_open_interest")),
         max_leg_spread_pct_mid=_optional_float(liquidity_rules.get("max_leg_spread_pct_mid")),
         min_return_on_risk=resolve_strategy_min_return_on_risk(
-            strategy.scanner_profile,
+            strategy.build_profile,
             risk_defaults=strategy.risk_defaults,
         ),
         min_fill_ratio=_optional_float(builder_params.get("min_fill_ratio")),

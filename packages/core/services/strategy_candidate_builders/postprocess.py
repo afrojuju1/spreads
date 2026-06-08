@@ -186,7 +186,7 @@ def build_selection_notes(candidate: SpreadCandidate, args: Any) -> tuple[str, .
     notes: list[str] = []
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
     delta_target = args.short_delta_target
-    if args.profile == "0dte":
+    if args.build_profile == "0dte":
         session_bucket = candidate_session_bucket(args) or "off_hours"
         notes.append(f"session-{format_session_bucket(session_bucket)}")
         delta_target = zero_dte_delta_target(session_bucket)

@@ -118,7 +118,7 @@ def build_long_straddles(
             candidate = SpreadCandidate(
                 underlying_symbol=symbol,
                 strategy="long_straddle",
-                profile=args.profile,
+                profile=args.build_profile,
                 expiration_date=expiration_date,
                 days_to_expiration=days_to_expiration,
                 underlying_price=spot_price,
@@ -302,7 +302,7 @@ def build_long_strangles(
                 candidate = SpreadCandidate(
                     underlying_symbol=symbol,
                     strategy="long_strangle",
-                    profile=args.profile,
+                    profile=args.build_profile,
                     expiration_date=expiration_date,
                     days_to_expiration=days_to_expiration,
                     underlying_price=spot_price,

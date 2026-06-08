@@ -588,7 +588,7 @@ def select_live_signals(
                 selection_state="promotable",
                 selection_rank=index,
                 state_reason="selected_promotable",
-                origin="live_scan",
+                origin="engine_selection",
                 eligibility="live",
             )
         )
@@ -601,7 +601,7 @@ def select_live_signals(
                 selection_state="monitor",
                 selection_rank=next_rank,
                 state_reason="selected_monitor",
-                origin="live_scan",
+                origin="engine_selection",
                 eligibility="live",
             )
         )

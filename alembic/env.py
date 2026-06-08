@@ -19,7 +19,6 @@ from core.storage import lifecycle_models as storage_lifecycle_models  # noqa: F
 from core.storage import market_tick_models as storage_market_tick_models  # noqa: F401
 from core.storage import signal_models as storage_signal_models  # noqa: F401
 from core.storage.db import Base
-from core.storage import models as storage_models  # noqa: F401
 
 config = context.config
 

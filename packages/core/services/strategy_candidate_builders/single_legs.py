@@ -58,7 +58,7 @@ def _short_single_leg_stress_loss(
         )
         - entry_credit
     )
-    # Keep naked shorts finite on the scanner path with a conservative
+    # Keep naked shorts finite on the candidate-builder path with a conservative
     # expected-move stress proxy rather than implying live undefined-risk support.
     return max(intrinsic_loss, entry_credit)
 
@@ -306,7 +306,7 @@ def build_single_legs(
             candidate = SpreadCandidate(
                 underlying_symbol=symbol,
                 strategy=strategy,
-                profile=args.profile,
+                profile=args.build_profile,
                 expiration_date=expiration_date,
                 days_to_expiration=days_to_expiration,
                 underlying_price=spot_price,

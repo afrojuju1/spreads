@@ -63,6 +63,29 @@ uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_manage 
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type execution_intent_dispatch --limit 5 --json
 ```
 
+## Market-Open Validation
+
+After deploying runtime, scheduler, worker, candidate-builder, ticker-source, or execution changes, validate the first live window from the NUC target:
+
+```bash
+uv run spreads status --env ade-nucbox-k8-plus
+uv run spreads trading --env ade-nucbox-k8-plus --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type ticker_source --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type execution_intent_dispatch --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_manage --limit 5 --json
+```
+
+Confirm:
+
+- `ticker_source:finviz_momentum` refreshes during the market window.
+- `momentum_long_calls` builds a current candidate run from the resolved ticker source.
+- candidate diagnostics explain zero-candidate cases with concrete rejection counts.
+- trade decisions either skip with clear reasons or select only allowed entries.
+- selected decisions create at most the configured allowed intents.
+- `alpaca_direct` dispatch records attempts, orders, fills, and broker sync facts.
+- open positions reconcile to broker state and close paths use the normal intent/attempt/fill flow.
+
 ## Rollout Rhythm
 
 After changing job config, scheduler code, worker-imported code, or trading policy:
@@ -74,7 +97,14 @@ uv run spreads config validate --json
 uv run python -m py_compile <touched-python-files>
 ```
 
-2. Restart only affected Docker services:
+2. For the live target, deploy through the shipped deploy CLI:
+
+```bash
+uv run spreads deploy up --env ade-nucbox-k8-plus --build
+uv run spreads deploy restart --env ade-nucbox-k8-plus scheduler worker-runtime worker-data
+```
+
+For a purely local Docker stack, restart only affected services:
 
 ```bash
 docker compose restart scheduler worker-runtime worker-data

@@ -246,19 +246,6 @@ app.add_typer(config_app, name="config")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(lifecycle_app, name="lifecycle")
 app.add_typer(retention_app, name="retention")
-
-
-@app.command(
-    "scan",
-    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run the spread scanner.",
-)
-def scan_command(ctx: typer.Context) -> None:
-    from core.services.scanners.service import main as scan_main
-
-    run_passthrough(ctx=ctx, entrypoint=scan_main)
-
-
 app.add_typer(market_intel_app, name="market-intel")
 
 

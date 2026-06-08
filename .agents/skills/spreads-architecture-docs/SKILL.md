@@ -65,7 +65,7 @@ When editing repo instructions:
 - root `AGENTS.md` should point architecture and ownership questions to `docs/current_system_state.md`
 - package-level `AGENTS.md` files should name the real current owners, not stale monoliths
 - do not turn `AGENTS.md` into an architecture encyclopedia; put domain ownership in `docs/current_system_state.md`
-- avoid stale references to old surfaces like `scanner.py`, `live_collector.py`, `execution.py`, or `ops_visibility.py` as if they still own the split responsibilities
+- avoid stale references to old monolith surfaces as if they still own the split responsibilities
 
 ## Repo Skill Rules
 

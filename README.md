@@ -1,8 +1,8 @@
 # spreads
 
-Alpaca-based options spread scanner, live collector, and operator dashboard.
+Spreads trading engine, Alpaca paper execution runtime, and operator dashboard.
 
-It scans candidate spreads, runs live collection sessions, persists runtime history to Postgres, delivers Discord alerts through a durable outbox, and renders a web UI for operators.
+It resolves ticker sources, builds strategy candidates, records engine facts in Postgres, routes approved intents through Alpaca paper execution, delivers Discord alerts through a durable outbox, and renders a web UI for operators.
 
 ## What Is Here
 
@@ -11,7 +11,7 @@ It scans candidate spreads, runs live collection sessions, persists runtime hist
 - `packages/web`
   - Next.js operator dashboard
 - `packages/core/services`
-  - scanner, session, account, alert, execution, and runtime logic
+  - trading engine, candidate-building, account, alert, execution, and runtime logic
 - `packages/core/jobs`
   - scheduler and ARQ worker entrypoints
 - `packages/core/storage`
@@ -79,16 +79,22 @@ Main local surfaces:
 
 ## Common Commands
 
-Scan a symbol:
+Check live trading state:
 
 ```bash
-uv run spreads scan --symbol SPY
+uv run spreads trading --env ade-nucbox-k8-plus
 ```
 
-Run a collector profile:
+Check job health:
 
 ```bash
-uv run spreads collect --profile weekly --universe explore_10
+uv run spreads jobs --env ade-nucbox-k8-plus
+```
+
+Validate runtime config:
+
+```bash
+uv run spreads config validate --json
 ```
 
 Run the scheduler directly:
@@ -117,7 +123,7 @@ uv run ruff check .
 - In Docker, `web` is the canonical frontend dev path. It bind-mounts source and auto-syncs `node_modules` from `packages/web/package-lock.json` on container start or restart.
 - `worker-runtime`, `worker-data`, and `scheduler` do not hot-reload. Restart those containers after backend changes they import.
 - Prefer using the existing Docker services for runtime checks instead of starting duplicate local processes.
-- Postgres is the source of truth for runtime history, sessions, alerts, jobs, execution, engine facts, and positions.
+- Postgres is the source of truth for runtime state, sessions, alerts, jobs, execution, engine facts, market ticks, and positions.
 
 ## Useful Docs
 
@@ -132,6 +138,6 @@ The repo is actively evolving toward:
 
 - durable alert delivery
 - stronger session and trading visibility
-- one canonical `spreads` CLI for operator workflows
+- one canonical `spreads` CLI over trading, jobs, storage, logs, deploys, and config
 
 The planning docs in [`docs/planning`](docs/planning) are the best place to see in-flight architecture and execution plans.

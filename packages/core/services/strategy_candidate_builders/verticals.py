@@ -191,7 +191,7 @@ def build_vertical_spreads(
                 candidate = SpreadCandidate(
                     underlying_symbol=symbol,
                     strategy=strategy,
-                    profile=args.profile,
+                    profile=args.build_profile,
                     expiration_date=expiration_date,
                     days_to_expiration=days_to_expiration,
                     underlying_price=spot_price,

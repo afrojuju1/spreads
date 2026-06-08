@@ -26,7 +26,7 @@ Current shipped operator surfaces:
 - `spreads storage` is the canonical storage and retention surface
 - `spreads jobs` and `spreads jobs lanes` are the canonical scheduler/worker surfaces
 - `spreads positions` is the shipped position drilldown
-- do not tell operators to use removed or currently unshipped `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands
+- do not tell operators to use removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands
 
 ## First Principle
 

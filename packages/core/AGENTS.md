@@ -8,7 +8,7 @@
 - `services/market_recorder.py` is the sole owner of the Alpaca option websocket connection in the normal runtime. Do not add API-owned reactive option stream capture paths; strategies and APIs should consume recorder-backed persisted rows or shared services over that state unless an explicit architecture change is being made.
 - When multiple hosts share one Alpaca account, only one live `market-recorder` should own the option websocket at a time. Stop secondary/local recorders before validating another host's live capture.
 - Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
-- Keep the recent package splits canonical. Do not reintroduce monolithic ownership around old scanner, execution, or fragmented ops-visibility mental models.
+- Keep the recent package splits canonical. Do not reintroduce monolithic ownership around old candidate-building, execution, or fragmented ops-visibility mental models.
 - For multi-leg options work, keep `legs[]` canonical end to end. Do not add new 3+ leg special cases around `short_symbol` / `long_symbol`, and route quote/mark math through the shared structure snapshot path.
 - For long-vol families such as `long_straddle` and `long_strangle`, keep their two-long-leg `mleg` debit shape canonical. Do not force them through vertical-only live validation or exposure math. If a seeded strategy stays disabled or shadow-mode, that must be a config/operator-policy choice, not a hard-coded execution limitation.
 - Prefer small composable helpers when they remove duplication, but do not add abstraction layers with only one caller and no clear reuse value.

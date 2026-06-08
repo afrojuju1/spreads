@@ -14,9 +14,6 @@ def make_storage_row(values: Mapping[str, Any] | None = None, /, **kwargs: Any) 
     return payload
 
 
-ScanRunRecord = StorageRow
-ScanCandidateRecord = StorageRow
-SessionTopRunRecord = StorageRow
 OptionQuoteTickRecord = StorageRow
 OptionTradeTickRecord = StorageRow
 AlertEventRecord = StorageRow
@@ -53,9 +50,6 @@ __all__ = [
     "StorageRow",
     "RecordMapping",
     "make_storage_row",
-    "ScanRunRecord",
-    "ScanCandidateRecord",
-    "SessionTopRunRecord",
     "OptionQuoteTickRecord",
     "OptionTradeTickRecord",
     "AlertEventRecord",

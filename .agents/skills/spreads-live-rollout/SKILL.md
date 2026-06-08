@@ -94,7 +94,7 @@ If multiple backend runtime surfaces changed, restart only the affected services
 
 In practice:
 
-- most changes under ticker sources, candidate building, scanner math, capture, market data, strategy entry, or shared backend code imported by data jobs require at least `worker-data`
+- most changes under ticker sources, candidate building, capture, market data, strategy entry, or shared backend code imported by data jobs require at least `worker-data`
 - most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
 - if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
 - changes limited to `packages/core/cli/` do not require worker or scheduler restarts unless the touched module is imported by runtime services
@@ -136,7 +136,7 @@ Do not assume reseeding alone changes already-enqueued runs.
 - `capture_status=healthy` plus `risk_status=blocked` is a policy gate, not a collector outage.
 - `recovery_state=clear` means recovery is no longer the blocker.
 - recorder-backed quote rows are the canonical live stream path; a direct collector stream should be treated as fallback or a bug depending on current code.
-- selected signals with blocked execution-admission counters are not alert failures and not selection bugs by themselves; verify intent `execution_admission` state before changing scanners or alerting.
+- selected signals with blocked execution-admission counters are not alert failures and not selection bugs by themselves; verify intent `execution_admission` state before changing candidate builders or alerting.
 
 ## Rollout Close-Out
 

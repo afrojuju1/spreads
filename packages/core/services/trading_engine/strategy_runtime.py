@@ -416,7 +416,7 @@ def _signal_row_from_selection(
     symbol = str(candidate.get("underlying_symbol") or row.get("underlying_symbol") or "").upper()
     eligibility = _runtime_signal_eligibility(runtime, row)
     policy_fields = resolve_runtime_policy_fields(
-        profile=runtime.build_settings.scanner_profile,
+        profile=runtime.build_settings.build_profile,
         root_symbol=symbol,
     )
     return {
@@ -430,7 +430,7 @@ def _signal_row_from_selection(
         "config_hash": runtime.config_hash,
         "strategy_family": runtime.trade_structure,
         "trade_structure": runtime.trade_structure,
-        "profile": runtime.build_settings.scanner_profile,
+        "profile": runtime.build_settings.build_profile,
         "style_profile": str(policy_fields["style_profile"]),
         "horizon_intent": str(policy_fields["horizon_intent"]),
         "product_class": str(policy_fields["product_class"]),
@@ -599,7 +599,7 @@ def _refresh_entry_runtime_signals(
         previous_selection_memory=previous_selection_memory,
         top_promotable=_entry_candidate_limit(runtime_with_symbols),
         top_monitor=ENTRY_MONITOR_LIMIT,
-        profile=runtime_with_symbols.build_settings.scanner_profile,
+        profile=runtime_with_symbols.build_settings.build_profile,
         signal_cycle_context={
             "ticker_set": ticker_summary,
             "candidate_build": _candidate_result_summary(candidate_result),

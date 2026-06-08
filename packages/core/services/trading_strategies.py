@@ -281,11 +281,11 @@ class TradingStrategyConfig:
         return self.trade_structure
 
     @property
-    def scanner_strategy(self) -> str:
-        return self.strategy_spec.scanner_strategy
+    def candidate_builder_key(self) -> str:
+        return self.strategy_spec.candidate_builder_key
 
     @property
-    def scanner_profile(self) -> str:
+    def build_profile(self) -> str:
         dte_max = int(self.build.dte.maximum)
         if dte_max <= 3:
             return "micro"
@@ -552,16 +552,16 @@ def cadence_minutes(schedule: dict[str, Any] | RoutineSchedule) -> int:
 def active_entry_strategies(
     config_root: str | Path | None = None,
     *,
-    scanner_strategy: str | None = None,
-    scanner_profile: str | None = None,
+    candidate_builder_key: str | None = None,
+    build_profile: str | None = None,
 ) -> list[TradingStrategyConfig]:
     rows: list[TradingStrategyConfig] = []
     for strategy in load_active_trading_strategies(config_root).values():
         if strategy.entry is None or not strategy.entry.enabled:
             continue
-        if scanner_strategy is not None and strategy.scanner_strategy != scanner_strategy:
+        if candidate_builder_key is not None and strategy.candidate_builder_key != candidate_builder_key:
             continue
-        if scanner_profile is not None and strategy.scanner_profile != scanner_profile:
+        if build_profile is not None and strategy.build_profile != build_profile:
             continue
         rows.append(strategy)
     return rows
@@ -570,13 +570,13 @@ def active_entry_strategies(
 def build_entry_strategy_symbols(
     config_root: str | Path | None = None,
     *,
-    scanner_strategy: str | None = None,
-    scanner_profile: str | None = None,
+    candidate_builder_key: str | None = None,
+    build_profile: str | None = None,
 ) -> tuple[str, ...]:
     strategies = active_entry_strategies(
         config_root,
-        scanner_strategy=scanner_strategy,
-        scanner_profile=scanner_profile,
+        candidate_builder_key=candidate_builder_key,
+        build_profile=build_profile,
     )
     return tuple(sorted({symbol for strategy in strategies for symbol in strategy.symbols}))
 

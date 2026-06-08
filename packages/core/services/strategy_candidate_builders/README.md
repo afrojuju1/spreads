@@ -3,7 +3,7 @@
 This package is the target owner for option candidate construction used by the
 DataEngine.
 
-It replaces the stale `services.scanners` boundary with typed contracts for:
+It owns typed contracts for:
 
 - strategy candidate build settings
 - market data requests and coverage summaries

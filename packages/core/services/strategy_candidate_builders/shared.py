@@ -13,7 +13,7 @@ from core.services.strategy_candidate_builders.runtime_context import (
 
 def effective_min_credit(width: float, args: Any) -> float:
     threshold = args.min_credit
-    if args.profile != "0dte":
+    if args.build_profile != "0dte":
         return threshold
     session_bucket = candidate_session_bucket(args) or "off_hours"
     if session_bucket != "late":

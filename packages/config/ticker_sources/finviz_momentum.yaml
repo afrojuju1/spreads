@@ -8,7 +8,7 @@ allow_off_hours: false
 recipe: finviz_screener
 recipe_args:
   source: auto
-  scanner_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o1000,sh_price_o10,sh_relvol_o1.5,ta_change_u&o=-relativevolume
+  source_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o1000,sh_price_o10,sh_relvol_o1.5,ta_change_u&o=-relativevolume
   min_price: 10
   min_market_cap: 1000000000
   min_volume: 1000000

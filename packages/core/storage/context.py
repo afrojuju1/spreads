@@ -11,7 +11,7 @@ from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.run_history_repository import RunHistoryRepository
+from core.storage.market_tick_repository import MarketTickRepository
 from core.storage.signal_repository import SignalRepository
 from core.storage.trading_store import TradingStore
 
@@ -68,8 +68,8 @@ class StorageContext:
         return self._build_repository("signals", SignalRepository)  # type: ignore[return-value]
 
     @property
-    def history(self) -> RunHistoryRepository:
-        return self._build_repository("history", RunHistoryRepository)  # type: ignore[return-value]
+    def market_ticks(self) -> MarketTickRepository:
+        return self._build_repository("market_ticks", MarketTickRepository)  # type: ignore[return-value]
 
     @property
     def jobs(self) -> JobRepository:

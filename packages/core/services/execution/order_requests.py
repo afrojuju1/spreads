@@ -113,7 +113,7 @@ def _validate_uncapped_debit_live_quality(
             "live_quote": dict(live_snapshot),
         }
 
-    scanned_midpoint_value, _ = _resolve_candidate_entry_prices(dict(candidate_payload))
+    candidate_midpoint_value, _ = _resolve_candidate_entry_prices(dict(candidate_payload))
     min_retention_pct = _clamp_fraction(
         coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
         minimum=0.5,
@@ -129,15 +129,15 @@ def _validate_uncapped_debit_live_quality(
             premium_kind="debit",
         ),
     }
-    if scanned_midpoint_value is not None and scanned_midpoint_value > 0:
+    if candidate_midpoint_value is not None and candidate_midpoint_value > 0:
         debit_ceiling = _execution_retention_bound(
-            midpoint_value=scanned_midpoint_value,
+            midpoint_value=candidate_midpoint_value,
             premium_kind="debit",
             min_retention_pct=min_retention_pct,
         )
         live_quote.update(
             {
-                "scanned_debit": scanned_midpoint_value,
+                "candidate_debit": candidate_midpoint_value,
                 "debit_ceiling": debit_ceiling,
                 "min_retention_pct": min_retention_pct,
             }

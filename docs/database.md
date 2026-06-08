@@ -53,7 +53,7 @@ uv run alembic downgrade -1
 
 ## DB Selection
 
-The runtime history backend is Postgres only.
+Runtime storage is Postgres only.
 
 Resolution order:
 
@@ -98,7 +98,7 @@ The runtime also accepts legacy `DISCORD_WEBHOOK_URL` if that is already present
 
 If the webhook is missing, alert rows are still persisted in Postgres with status `skipped`.
 
-Operator analytics are exposed through the ops CLI and API read models; ad hoc scanner commands should not become new durable ownership paths.
+Operator analytics are exposed through the ops CLI and API read models; ad hoc candidate-builder commands should not become new durable ownership paths.
 
 ## API
 

@@ -4,38 +4,24 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import delete, func, select
 
-from core.services.option_structures import (
-    fallback_vertical_legs,
-    legs_identity_key,
-    normalize_legs,
-    primary_short_long_symbols,
-    structure_strike_path,
-    structure_symbol_path,
-)
 from core.storage.base import RepositoryBase
 from core.storage.market_tick_models import OptionQuoteTickModel, OptionTradeTickModel
-from core.storage.models import ScanCandidateModel, ScanRunModel
 from core.storage.records import (
     OptionQuoteTickRecord,
     OptionTradeTickRecord,
-    ScanCandidateRecord,
-    ScanRunRecord,
-    SessionTopRunRecord,
 )
-from core.storage.serializers import parse_date, parse_datetime, render_value
+from core.storage.serializers import parse_datetime, render_value
 
 
-class RunHistoryRepository(RepositoryBase):
+class MarketTickRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        return self.schema_has_tables("scan_runs", "scan_candidates", "option_quote_ticks")
+        return self.schema_has_tables("option_quote_ticks")
 
     def table_counts(self) -> dict[str, int]:
         with self.session_factory() as session:
             counts = {
-                "scan_runs": int(session.scalar(select(func.count()).select_from(ScanRunModel)) or 0),
-                "scan_candidates": int(session.scalar(select(func.count()).select_from(ScanCandidateModel)) or 0),
                 "option_quote_ticks": int(session.scalar(select(func.count()).select_from(OptionQuoteTickModel)) or 0),
             }
             if self.schema_has_tables("option_trade_ticks"):
@@ -47,227 +33,6 @@ class RunHistoryRepository(RepositoryBase):
             if self.schema_has_tables("option_trade_ticks"):
                 session.execute(delete(OptionTradeTickModel))
             session.execute(delete(OptionQuoteTickModel))
-            session.execute(delete(ScanCandidateModel))
-            session.execute(delete(ScanRunModel))
-
-    def _candidate_structure_payload(
-        self,
-        candidate: Any,
-    ) -> tuple[list[dict[str, Any]], str | None]:
-        expiration_date = getattr(candidate, "expiration_date", None)
-        legs = normalize_legs(getattr(candidate, "legs", None), expiration_date=expiration_date)
-        if not legs:
-            order_payload = getattr(candidate, "order_payload", None)
-            if isinstance(order_payload, dict):
-                legs = normalize_legs(
-                    order_payload.get("legs"),
-                    expiration_date=expiration_date,
-                )
-        if not legs:
-            legs = fallback_vertical_legs(
-                short_symbol=getattr(candidate, "short_symbol", None),
-                long_symbol=getattr(candidate, "long_symbol", None),
-                expiration_date=expiration_date,
-            )
-        structure_identity = getattr(candidate, "structure_identity", None)
-        if structure_identity is None and legs:
-            structure_identity = legs_identity_key(
-                strategy=getattr(candidate, "strategy", None),
-                legs=legs,
-            )
-        return legs, structure_identity
-
-    def _scan_candidate_extra(
-        self,
-        candidate: ScanCandidateModel | None,
-    ) -> dict[str, Any]:
-        if candidate is None:
-            return {
-                "short_symbol": None,
-                "long_symbol": None,
-                "symbol_path": None,
-                "strike_path": None,
-            }
-        legs = list(candidate.legs_json or [])
-        short_symbol, long_symbol = primary_short_long_symbols(legs)
-        return {
-            "short_symbol": short_symbol,
-            "long_symbol": long_symbol,
-            "symbol_path": structure_symbol_path(legs),
-            "strike_path": structure_strike_path(legs, strategy=candidate.strategy),
-        }
-
-    def _session_top_run_row(
-        self,
-        run: ScanRunModel,
-        candidate: ScanCandidateModel | None,
-    ) -> SessionTopRunRecord:
-        return self.row(
-            run,
-            aliases={"setup_json": "setup_json"},
-            extra={
-                **self._scan_candidate_extra(candidate),
-                "midpoint_credit": None if candidate is None else candidate.midpoint_credit,
-                "quality_score": None if candidate is None else candidate.quality_score,
-                "calendar_status": None if candidate is None else candidate.calendar_status,
-                "expected_move": None if candidate is None else candidate.expected_move,
-                "short_vs_expected_move": None if candidate is None else candidate.short_vs_expected_move,
-            },
-        )
-
-    def save_run(
-        self,
-        *,
-        run_id: str,
-        generated_at: str,
-        symbol: str,
-        strategy: str,
-        session_label: str | None,
-        profile: str,
-        spot_price: float,
-        output_path: str,
-        filters: dict[str, Any],
-        setup_status: str | None,
-        setup_score: float | None,
-        setup_payload: dict[str, Any] | None,
-        candidates: list[Any],
-    ) -> None:
-        with self.session_scope() as session:
-            run = session.get(ScanRunModel, run_id)
-            if run is None:
-                run = ScanRunModel(run_id=run_id)
-                session.add(run)
-
-            run.generated_at = parse_datetime(generated_at)
-            run.symbol = symbol
-            run.strategy = strategy
-            run.session_label = session_label
-            run.profile = profile
-            run.spot_price = spot_price
-            run.candidate_count = len(candidates)
-            run.output_path = output_path
-            run.filters_json = filters
-            run.setup_status = setup_status
-            run.setup_score = setup_score
-            run.setup_json = setup_payload
-            run.candidates = [
-                self._build_scan_candidate_model(run_id=run_id, rank=rank, candidate=candidate) for rank, candidate in enumerate(candidates, start=1)
-            ]
-
-    def _build_scan_candidate_model(
-        self,
-        *,
-        run_id: str,
-        rank: int,
-        candidate: Any,
-    ) -> ScanCandidateModel:
-        legs, structure_identity = self._candidate_structure_payload(candidate)
-        if structure_identity is None:
-            raise ValueError("Scan candidate is missing canonical structure identity")
-        return ScanCandidateModel(
-            run_id=run_id,
-            rank=rank,
-            strategy=candidate.strategy,
-            expiration_date=parse_date(candidate.expiration_date),
-            structure_identity=structure_identity,
-            legs_json=list(legs),
-            width=candidate.width,
-            midpoint_credit=candidate.midpoint_credit,
-            natural_credit=candidate.natural_credit,
-            breakeven=candidate.breakeven,
-            max_profit=candidate.max_profit,
-            max_loss=candidate.max_loss,
-            quality_score=candidate.quality_score,
-            return_on_risk=candidate.return_on_risk,
-            short_otm_pct=candidate.short_otm_pct,
-            calendar_status=candidate.calendar_status,
-            setup_status=getattr(candidate, "setup_status", None),
-            expected_move=candidate.expected_move,
-            short_vs_expected_move=candidate.short_vs_expected_move,
-        )
-
-    def get_run(self, run_id: str) -> ScanRunRecord | None:
-        with self.session_factory() as session:
-            run = session.get(ScanRunModel, run_id)
-        if run is None:
-            return None
-        return self.row(run)
-
-    def get_latest_run(self, symbol: str, strategy: str | None = None) -> ScanRunRecord | None:
-        statement = select(ScanRunModel).where(ScanRunModel.symbol == symbol.upper())
-        if strategy is not None:
-            statement = statement.where(ScanRunModel.strategy == strategy)
-        statement = statement.order_by(ScanRunModel.generated_at.desc()).limit(1)
-        with self.session_factory() as session:
-            run = session.scalar(statement)
-        if run is None:
-            return None
-        return self.row(run)
-
-    def list_candidates(self, run_id: str) -> list[ScanCandidateRecord]:
-        statement = (
-            select(ScanCandidateModel, ScanRunModel.symbol)
-            .join(ScanRunModel, ScanRunModel.run_id == ScanCandidateModel.run_id)
-            .where(ScanCandidateModel.run_id == run_id)
-            .order_by(ScanCandidateModel.rank.asc())
-        )
-        with self.session_factory() as session:
-            rows = session.execute(statement).all()
-        return [
-            self.row(
-                candidate,
-                extra={
-                    **self._scan_candidate_extra(candidate),
-                    "underlying_symbol": underlying_symbol,
-                },
-            )
-            for candidate, underlying_symbol in rows
-        ]
-
-    def list_runs(
-        self,
-        *,
-        limit: int,
-        symbol: str | None = None,
-        strategy: str | None = None,
-    ) -> list[ScanRunRecord]:
-        statement = select(ScanRunModel)
-        if symbol:
-            statement = statement.where(ScanRunModel.symbol == symbol.upper())
-        if strategy:
-            statement = statement.where(ScanRunModel.strategy == strategy)
-        statement = statement.order_by(ScanRunModel.generated_at.desc()).limit(limit)
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
-
-    def list_session_top_runs(
-        self,
-        *,
-        session_date: str,
-        session_label: str | None = None,
-    ) -> list[SessionTopRunRecord]:
-        session_start, session_end = session_bounds(session_date)
-
-        statement = (
-            select(ScanRunModel, ScanCandidateModel)
-            .outerjoin(
-                ScanCandidateModel,
-                and_(
-                    ScanCandidateModel.run_id == ScanRunModel.run_id,
-                    ScanCandidateModel.rank == 1,
-                ),
-            )
-            .where(ScanRunModel.generated_at >= session_start)
-            .where(ScanRunModel.generated_at < session_end)
-            .order_by(ScanRunModel.generated_at.asc())
-        )
-        if session_label:
-            statement = statement.where(ScanRunModel.session_label == session_label)
-
-        with self.session_factory() as session:
-            rows = session.execute(statement).all()
-        return [self._session_top_run_row(run, candidate) for run, candidate in rows]
 
     def list_session_quote_ticks(
         self,

@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-06
+Last updated: 2026-06-08
 
 ## Top-Level Boundaries
 
@@ -15,7 +15,7 @@ Last updated: 2026-06-06
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into option quote/trade ticks plus `capture_summaries`. |
-| Engine data and candidate building | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, stale `services/scanners/` internals | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. The current `services/scanners/` package is retained only as stale candidate-builder implementation infrastructure; do not expand it as a product surface, orchestration path, or ownership boundary. Scanner math, ranking-policy, and runtime candidate filters are delegated build policy and persist diagnostics under engine-owned candidate facts. |
+| Engine data and candidate building | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/strategy_candidate_builders/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. `services/strategy_candidate_builders/` owns market slices, option construction, ranking policy, and diagnostics under engine-owned candidate facts. There is no separate candidate-building CLI flow or orchestration boundary. |
 | Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyEngine owns entry orchestration: ticker resolution, candidate build, live signal selection, trade decisions, admission handoff, and intent creation. Helper modules are pure policy delegates, not alternate orchestration paths. |
 | Execution and portfolio state | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/execution_intents/`, `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | PortfolioEngine owns close decisions and close-policy evaluation. RiskEngine-owned close admission validates position/reconciliation/order readiness. The manage job refreshes marks, applies close admission, and creates close intents; execution services dispatch intents and persist broker attempts/orders/fills. |
 | Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, retention, and capture state. Operator surfaces should project current domain facts instead of reintroducing removed product pages. |
@@ -33,7 +33,7 @@ Last updated: 2026-06-06
 - `source` names the candidate source for a strategy. Current source types are `static` and `dynamic`.
 - Current runtime identity is `trading_strategy_id`, `ticker_source`, candidate runs, trade signals, trade decisions, admissions, intents, attempts, and positions. Do not add compatibility wrappers outside that model.
 - Trade candidates, trade signals, trade decisions, and admission decisions are the active strategy-entry facts.
-- Capture is desired state, not a scanner side effect. The priority order is open positions, working intents/attempts, selected candidates, then watch candidates.
+- Capture is desired state, not a candidate-build side effect. The priority order is open positions, working intents/attempts, selected candidates, then watch candidates.
 - `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime. It reads `capture_targets` by priority and records `capture_summaries`.
 - `execution_intents` is the control-plane handoff boundary. It selects an execution runtime before broker submission.
 - `alpaca_direct` is the active Python-native runtime for equity, single-leg option, and Alpaca order-payload submission.
@@ -47,7 +47,7 @@ Last updated: 2026-06-06
 | Domain object | Meaning | Source of truth / owner | Must not own |
 |---|---|---|---|
 | Trading strategy | Operator/product trading unit with source, trade structure, routines, risk, limits, execution settings, and config hash. | `packages/config/trading_strategies`, `services/trading_strategies.py` | Discovery-session identity, broker facts, or dashboard-only state. |
-| Trade structure | Reusable option construction family. | `services/strategy_builders.py`, `services/option_structures.py`, scanner builders | Runtime owner identity. |
+| Trade structure | Reusable option construction family. | `services/strategy_builders.py`, `services/strategy_candidate_builders/`, `services/option_structures.py` | Runtime owner identity. |
 | Routine | Scheduled strategy behavior such as entry or manage. | `services/trading_strategy_runtime.py`, generated job specs | Broker submission facts. |
 | Ticker source | Reusable static or dynamic symbol source. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
 | Ticker source run | One materialized ticker-source refresh plus selected, observed, and filtered ticker observations. | `ticker_source_runs`, `ticker_source_observations`, `ticker_source_state`, `services/ticker_sources.py` | Strategy candidate ownership, execution ownership, or broker facts. |
@@ -62,7 +62,7 @@ Last updated: 2026-06-06
 | Position | Day/session-local ownership and PnL projection. | `services/session_positions.py`, `portfolio_positions`, close records | Broker inventory as independent truth. |
 | Close | Decision, admission, intent, attempt, and fill path that reduces or exits a position. | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/exit_manager.py`, `services/execution_intents/`, `services/execution/` | Direct broker-submit bypasses from management jobs or dashboard-only close decisions. |
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`, `broker_sync_state`, `account_snapshots` | Trading decisions or owner attribution. |
-| Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Scanner diagnostics or broker order truth. |
+| Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Candidate diagnostics or broker order truth. |
 | Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade tick retention. |
 | Trading ops state | Operator-facing trading health: market, control, scheduler/workers, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
 | Storage ops state | Operator-facing retention/storage health. | `services/retention.py`, storage ops surfaces | Live trading decisions. |
@@ -149,7 +149,7 @@ Each strategy owns:
 - `trading_strategy_id`
 - `trade_structure`
 - candidate `source`
-- scanner/build settings
+- candidate-build settings
 - entry and management routine schedules
 - runtime controls
 - risk and limit policy references
@@ -220,7 +220,7 @@ Current audit result for the live trading hot path:
 
 - Keep the thin engine contract modules in `services/trading_engine/`. They are ownership boundaries and typed payload shapes, not a second runtime, bus, actor framework, or alternate store.
 - Keep `execution_submit` as the broker-submit isolation job. It gives each claimed intent a durable attempt/job lifecycle and lets ops distinguish dispatch, broker submission, and unknown-submit outcomes.
-- Keep scanner/build policy helpers under DataEngine ownership. `services/scanners/` is stale implementation infrastructure retained for current candidate math and diagnostics; it should be redesigned/replaced in a future DataEngine-centered pass, not expanded. It must not become an alternate orchestration path, product surface, CLI flow, or persistence owner.
+- Keep candidate-build policy helpers under DataEngine ownership. `services/strategy_candidate_builders/` is the only active candidate-construction package; it must not become an alternate orchestration path, product surface, CLI flow, or persistence owner.
 - Merge management scheduling into `trading_strategy_manage` only. The standalone `position_exit_manager` job type is retired as an active worker surface; `services/exit_manager.py` remains the Strategy/Portfolio manage adapter.
 - Do not add a message bus, second database, actor framework, or compatibility wrapper around removed runtime surfaces.
 

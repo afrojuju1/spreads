@@ -193,7 +193,7 @@ def build_iron_condors(
                     candidate = SpreadCandidate(
                         underlying_symbol=symbol,
                         strategy="iron_condor",
-                        profile=args.profile,
+                        profile=args.build_profile,
                         expiration_date=expiration_date,
                         days_to_expiration=days_to_expiration,
                         underlying_price=spot_price,

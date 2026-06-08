@@ -61,7 +61,7 @@ def _build_call_verticals(
 
     return build_vertical_spreads(
         symbol=market_slice.symbol,
-        strategy="call_credit" if normalize_strategy_family(symbol_args.strategy) == "call_credit_spread" else "call_debit",
+        strategy="call_credit" if normalize_strategy_family(symbol_args.candidate_builder_key) == "call_credit_spread" else "call_debit",
         spot_price=market_slice.spot_price,
         contracts_by_expiration=market_slice.call_contracts_by_expiration,
         snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
@@ -78,7 +78,7 @@ def _build_put_verticals(
 
     return build_vertical_spreads(
         symbol=market_slice.symbol,
-        strategy="put_credit" if normalize_strategy_family(symbol_args.strategy) == "put_credit_spread" else "put_debit",
+        strategy="put_credit" if normalize_strategy_family(symbol_args.candidate_builder_key) == "put_credit_spread" else "put_debit",
         spot_price=market_slice.spot_price,
         contracts_by_expiration=market_slice.put_contracts_by_expiration,
         snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
@@ -208,7 +208,7 @@ def _build_short_put_candidates(
 @dataclass(frozen=True)
 class StrategySpec:
     strategy_family: str
-    scanner_strategy: str
+    candidate_builder_key: str
     display_label: str
     direction: str
     option_type: str | None
@@ -245,7 +245,7 @@ class StrategySpec:
 _SPEC_LIST = (
     StrategySpec(
         strategy_family="call_credit_spread",
-        scanner_strategy="call_credit",
+        candidate_builder_key="call_credit",
         display_label="Call Credit",
         direction="bearish",
         option_type="call",
@@ -259,7 +259,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="put_credit_spread",
-        scanner_strategy="put_credit",
+        candidate_builder_key="put_credit",
         display_label="Put Credit",
         direction="bullish",
         option_type="put",
@@ -273,7 +273,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="call_debit_spread",
-        scanner_strategy="call_debit",
+        candidate_builder_key="call_debit",
         display_label="Call Debit",
         direction="bullish",
         option_type="call",
@@ -287,7 +287,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="put_debit_spread",
-        scanner_strategy="put_debit",
+        candidate_builder_key="put_debit",
         display_label="Put Debit",
         direction="bearish",
         option_type="put",
@@ -301,7 +301,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="long_call",
-        scanner_strategy="long_call",
+        candidate_builder_key="long_call",
         display_label="Long Call",
         direction="bullish",
         option_type="call",
@@ -315,7 +315,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="long_put",
-        scanner_strategy="long_put",
+        candidate_builder_key="long_put",
         display_label="Long Put",
         direction="bearish",
         option_type="put",
@@ -329,7 +329,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="short_call",
-        scanner_strategy="short_call",
+        candidate_builder_key="short_call",
         display_label="Short Call",
         direction="bearish",
         option_type="call",
@@ -343,7 +343,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="short_put",
-        scanner_strategy="short_put",
+        candidate_builder_key="short_put",
         display_label="Short Put",
         direction="bullish",
         option_type="put",
@@ -357,7 +357,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="iron_condor",
-        scanner_strategy="iron_condor",
+        candidate_builder_key="iron_condor",
         display_label="Iron Condor",
         direction="neutral",
         option_type=None,
@@ -368,7 +368,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="long_straddle",
-        scanner_strategy="long_straddle",
+        candidate_builder_key="long_straddle",
         display_label="Long Straddle",
         direction="neutral",
         option_type=None,
@@ -379,7 +379,7 @@ _SPEC_LIST = (
     ),
     StrategySpec(
         strategy_family="long_strangle",
-        scanner_strategy="long_strangle",
+        candidate_builder_key="long_strangle",
         display_label="Long Strangle",
         direction="neutral",
         option_type=None,
@@ -439,7 +439,7 @@ def concrete_strategies(strategy: str) -> tuple[str, ...]:
         )
     if strategy == "combined":
         return ("call_credit", "put_credit")
-    return (resolve_strategy_spec(strategy).scanner_strategy,)
+    return (resolve_strategy_spec(strategy).candidate_builder_key,)
 
 
 __all__ = [

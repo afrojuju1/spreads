@@ -146,8 +146,8 @@ def _analytics_score(
 def score_candidate(candidate: SpreadCandidate, args: Any) -> float:
     premium_kind = net_premium_kind(candidate.strategy)
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
-    session_bucket = candidate_session_bucket(args) if args.profile == "0dte" else None
-    if args.profile == "0dte":
+    session_bucket = candidate_session_bucket(args) if args.build_profile == "0dte" else None
+    if args.build_profile == "0dte":
         delta_target = zero_dte_delta_target(session_bucket or "off_hours")
     elif candidate.strategy == "long_straddle":
         delta_target = 0.50
@@ -177,10 +177,10 @@ def score_candidate(candidate: SpreadCandidate, args: Any) -> float:
         width_target = 0.0
     elif candidate.strategy == "long_strangle" and candidate.expected_move is not None:
         width_target = max(candidate.expected_move * 2.0, args.min_width)
-    elif args.profile == "0dte":
+    elif args.build_profile == "0dte":
         width_target = 2.0 if session_bucket == "late" else 1.0
     else:
-        width_target = max(args.min_width, 2.0 if args.profile == "core" else args.min_width)
+        width_target = max(args.min_width, 2.0 if args.build_profile == "core" else args.min_width)
     width_window = max(args.max_width - args.min_width, 1.0)
     if candidate.strategy in {
         "long_call",

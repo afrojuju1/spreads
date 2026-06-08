@@ -525,7 +525,7 @@ def _build_features() -> list[ResearchFeature]:
                 "/v1beta1/options/trades",
             ],
             unlocks="Measures what happened after a signal, board entry, or alert across multiple windows.",
-            why_it_fits="This compounds the value of every scanner you build on top of Alpaca, not just one product surface.",
+            why_it_fits="This compounds the value of every candidate source you build on top of Alpaca, not just one product surface.",
         ),
     ]
 

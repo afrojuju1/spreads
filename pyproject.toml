@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "spreads"
 version = "0.1.0"
-description = "Alpaca-based options spread scanner"
+description = "Spreads trading engine and operator tools"
 requires-python = ">=3.11"
 dependencies = [
   "arq>=0.25.0",

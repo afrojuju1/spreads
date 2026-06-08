@@ -28,11 +28,11 @@ DEFAULT_GREEKS_SOURCE = "auto"
 def engine_snapshot_label(
     *,
     universe_label: str,
-    strategy: str,
-    profile: str,
+    candidate_builder: str,
+    build_profile: str,
     greeks_source: str,
 ) -> str:
-    return f"{universe_label}_{strategy}_{profile}_{greeks_source}".lower()
+    return f"{universe_label}_{candidate_builder}_{build_profile}_{greeks_source}".lower()
 
 
 def ticker_source_spec_from_strategy_source(source: StrategySource) -> TickerSourceSpec:
@@ -176,8 +176,6 @@ class PostgresDataEngine:
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
                 per_runtime_limit=self._candidate_limit(request),
-                history_store=self.context.storage.history,
-                session_label=entry_engine_label(runtime),
             )
         finally:
             calendar_resolver.store.close()
@@ -196,8 +194,8 @@ class PostgresDataEngine:
                 "candidate_count": len(flattened),
                 "symbol_candidate_counts": {str(symbol): len(list(rows or [])) for symbol, rows in sorted(owner_candidates.items())},
                 "label": entry_engine_label(runtime),
-                "scanner_strategy": runtime.build_settings.scanner_strategy,
-                "scanner_profile": runtime.build_settings.scanner_profile,
+                "candidate_builder": runtime.build_settings.candidate_builder_key,
+                "build_profile": runtime.build_settings.build_profile,
                 "greeks_source": base_parameters.greeks_source,
             },
         )
@@ -304,8 +302,8 @@ class PostgresDataEngine:
         greeks_source = str(request.greeks_source or DEFAULT_GREEKS_SOURCE)
         return CandidateBuildParameters(
             symbols=symbols,
-            strategy=runtime.build_settings.scanner_strategy,
-            profile=runtime.build_settings.scanner_profile,
+            candidate_builder_key=runtime.build_settings.candidate_builder_key,
+            build_profile=runtime.build_settings.build_profile,
             greeks_source=greeks_source,
             top=self._candidate_limit(request),
             per_symbol_top=max(int(request.per_symbol_top or 1), 1),
@@ -313,8 +311,8 @@ class PostgresDataEngine:
             config_root=str(self.context.config_root),
             session_label=engine_snapshot_label(
                 universe_label=entry_engine_label(runtime),
-                strategy=runtime.build_settings.scanner_strategy,
-                profile=runtime.build_settings.scanner_profile,
+                candidate_builder=runtime.build_settings.candidate_builder_key,
+                build_profile=runtime.build_settings.build_profile,
                 greeks_source=greeks_source,
             ),
         )

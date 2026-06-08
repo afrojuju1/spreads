@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime
 from typing import Any
 
 from core.domain.models import SpreadCandidate, SymbolMarketSlice, UnderlyingSetupContext
@@ -19,69 +18,12 @@ from core.services.strategy_candidate_builders.postprocess import (
     resolve_calendar_decisions_by_expiration,
 )
 from core.services.strategy_candidate_builders.ranking import rank_candidates
-from core.services.strategy_candidate_builders.replay_artifacts import write_scan_replay_artifact
 from core.services.strategy_candidate_builders.runtime_context import candidate_reference_datetime
-from core.services.strategy_candidate_builders.settings import CandidateBuildParameters, build_candidate_filter_payload
 from core.services.strategy_candidate_builders.setup import (
     analyze_underlying_setup,
     attach_underlying_setup,
-    serialize_setup_context,
 )
 from core.services.strategy_specs import resolve_strategy_spec
-from core.storage.run_history_repository import RunHistoryRepository
-
-
-def build_scan_run_id(symbol: str, strategy: str, profile: str) -> str:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    return f"{timestamp}_{symbol.lower()}_{strategy}_{profile}"
-
-
-def _build_filter_payload(parameters: Any) -> dict[str, Any]:
-    return build_candidate_filter_payload(CandidateBuildParameters.from_context(parameters))
-
-
-def persist_scan_run(
-    *,
-    history_store: RunHistoryRepository,
-    symbol_args: Any,
-    market_slice: SymbolMarketSlice,
-    setup_context: UnderlyingSetupContext | None,
-    candidates: list[SpreadCandidate],
-    candidate_filter: dict[str, Any] | None = None,
-    calendar_decisions_by_expiration: dict[str, Any] | None = None,
-    session_label: str | None = None,
-) -> str:
-    run_id = build_scan_run_id(
-        market_slice.symbol,
-        symbol_args.strategy,
-        symbol_args.profile,
-    )
-    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    output_path = write_scan_replay_artifact(
-        run_id=run_id,
-        generated_at=generated_at,
-        symbol_args=symbol_args,
-        market_slice=market_slice,
-        setup_context=setup_context,
-        candidate_filter=candidate_filter,
-        calendar_decisions_by_expiration=calendar_decisions_by_expiration,
-    )
-    history_store.save_run(
-        run_id=run_id,
-        generated_at=generated_at,
-        symbol=market_slice.symbol,
-        strategy=symbol_args.strategy,
-        session_label=session_label or getattr(symbol_args, "session_label", None),
-        profile=symbol_args.profile,
-        spot_price=market_slice.spot_price,
-        output_path=output_path,
-        filters=_build_filter_payload(symbol_args),
-        setup_status=None if setup_context is None else setup_context.status,
-        setup_score=None if setup_context is None else setup_context.score,
-        setup_payload=serialize_setup_context(setup_context),
-        candidates=candidates,
-    )
-    return run_id
 
 
 def build_setup_context_from_market_slice(*, market_slice: SymbolMarketSlice, symbol_args: Any) -> UnderlyingSetupContext | None:
@@ -91,14 +33,14 @@ def build_setup_context_from_market_slice(*, market_slice: SymbolMarketSlice, sy
         market_slice.symbol,
         market_slice.spot_price,
         list(market_slice.daily_bars),
-        strategy=symbol_args.strategy,
-        profile=symbol_args.profile,
+        strategy=symbol_args.candidate_builder_key,
+        profile=symbol_args.build_profile,
         intraday_bars=list(market_slice.intraday_bars),
     )
 
 
 def count_market_slice_coverage(*, market_slice: SymbolMarketSlice, symbol_args: Any) -> tuple[int, int, int, int]:
-    spec = resolve_strategy_spec(symbol_args.strategy)
+    spec = resolve_strategy_spec(symbol_args.candidate_builder_key)
     return spec.count_coverage(market_slice=market_slice)
 
 
@@ -107,7 +49,7 @@ def build_raw_candidates_from_market_slice(
     market_slice: SymbolMarketSlice,
     symbol_args: Any,
 ) -> list[SpreadCandidate]:
-    spec = resolve_strategy_spec(symbol_args.strategy)
+    spec = resolve_strategy_spec(symbol_args.candidate_builder_key)
     return spec.build_candidates(market_slice=market_slice, symbol_args=symbol_args)
 
 
@@ -192,7 +134,7 @@ def postprocess_market_slice_candidates(
     else:
         all_candidates = attach_calendar_decisions(
             symbol=market_slice.symbol,
-            strategy=symbol_args.strategy,
+            strategy=symbol_args.candidate_builder_key,
             underlying_type=market_slice.underlying_type,
             candidates=all_candidates,
             resolver=calendar_resolver,
@@ -230,7 +172,7 @@ def build_candidates_with_details_from_market_slice(
     setup_candidates = attach_underlying_setup(raw_candidates, setup_context)
     calendar_decisions_by_expiration = resolve_calendar_decisions_by_expiration(
         symbol=market_slice.symbol,
-        strategy=symbol_args.strategy,
+        strategy=symbol_args.candidate_builder_key,
         underlying_type=market_slice.underlying_type,
         candidates=setup_candidates,
         resolver=calendar_resolver,
@@ -329,9 +271,7 @@ __all__ = [
     "build_candidates_from_market_slice",
     "build_candidates_with_details_from_market_slice",
     "build_raw_candidates_from_market_slice",
-    "build_scan_run_id",
     "build_setup_context_from_market_slice",
     "count_market_slice_coverage",
-    "persist_scan_run",
     "postprocess_market_slice_candidates",
 ]

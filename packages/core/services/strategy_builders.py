@@ -14,7 +14,6 @@ from core.services.runtime_candidate_filters import (
 from core.services.strategy_candidate_builders.market_data import build_symbol_market_slice
 from core.services.strategy_candidate_builders.runtime import (
     build_candidates_with_details_from_market_slice,
-    persist_scan_run,
 )
 from core.services.strategy_candidate_builders.settings import (
     CandidateBuildParameters,
@@ -23,7 +22,6 @@ from core.services.strategy_candidate_builders.settings import (
 )
 from core.services.strategy_candidate_builders.single_legs import diagnose_single_leg_rejections
 from core.services.trading_strategy_runtime import EntryRuntime
-from core.storage.run_history_repository import RunHistoryRepository
 
 
 def runtime_owner_key(runtime: EntryRuntime) -> tuple[str, str]:
@@ -220,7 +218,7 @@ def _single_leg_diagnostics(
         option_type=option_type,
     )
     return diagnose_single_leg_rejections(
-        strategy=runtime.build_settings.scanner_strategy,
+        strategy=runtime.build_settings.candidate_builder_key,
         spot_price=market_slice.spot_price,
         contracts_by_expiration=contracts_by_expiration,
         snapshots_by_expiration=snapshots_by_expiration,
@@ -320,8 +318,8 @@ def build_entry_runtime_symbol_diagnostic(
             "ranking_blocked": replay_details.get("ranking_policy_blocked_exemplars") or [],
         },
         "evidence": {
-            "scanner_strategy": runtime.build_settings.scanner_strategy,
-            "scanner_profile": runtime.build_settings.scanner_profile,
+            "candidate_builder": runtime.build_settings.candidate_builder_key,
+            "build_profile": runtime.build_settings.build_profile,
             "trade_structure": runtime.trade_structure,
             "raw_pass_count": single_leg_diagnostics.get("pass_count") or 0,
             "replay_details": _json_ready({key: value for key, value in replay_details.items() if key != "calendar_decisions_by_expiration"}),
@@ -337,8 +335,6 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     calendar_resolver: Any,
     market_slice: Any,
     per_runtime_limit: int = 6,
-    history_store: RunHistoryRepository | None = None,
-    session_label: str | None = None,
 ) -> dict[str, Any]:
     runtime_parameters = build_runtime_candidate_parameters(
         symbol=symbol,
@@ -351,7 +347,6 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         symbol_args=runtime_parameters,
         calendar_resolver=calendar_resolver,
     )
-    matched_candidates: list[Any] = []
     all_rows: list[dict[str, Any]] = []
     filter_reason_counts: dict[str, int] = {}
     for candidate in candidates:
@@ -365,26 +360,9 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
                 filter_reason_counts[reason] = filter_reason_counts.get(reason, 0) + 1
             continue
         row["runtime_recipe_refs"] = list(runtime.entry_recipe_refs)
-        matched_candidates.append(candidate)
         all_rows.append(row)
 
-    run_id: str | None = None
-    if history_store is not None and matched_candidates:
-        run_id = persist_scan_run(
-            history_store=history_store,
-            symbol_args=runtime_parameters,
-            market_slice=market_slice,
-            setup_context=setup_context,
-            candidates=matched_candidates,
-            candidate_filter=candidate_filter,
-            calendar_decisions_by_expiration=replay_details.get("calendar_decisions_by_expiration"),
-            session_label=session_label,
-        )
-
     rows = [dict(row) for row in all_rows[: max(int(per_runtime_limit), 1)]]
-    if run_id is not None:
-        for row in rows:
-            row["run_id"] = run_id
 
     diagnostic = build_entry_runtime_symbol_diagnostic(
         runtime=runtime,
@@ -405,7 +383,6 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         "replay_details": replay_details,
         "all_rows": all_rows,
         "rows": rows,
-        "run_id": run_id,
         "runtime_filter_reason_counts": dict(sorted(filter_reason_counts.items())),
         "diagnostic": diagnostic,
     }
@@ -418,8 +395,6 @@ def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
     calendar_resolver: Any,
     market_slices_by_symbol: dict[str, Any],
     per_runtime_limit: int = 6,
-    history_store: RunHistoryRepository | None = None,
-    session_label: str | None = None,
 ) -> tuple[dict[tuple[str, str], dict[str, list[dict[str, Any]]]], dict[tuple[str, str], list[dict[str, Any]]]]:
     candidates_by_runtime: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
     diagnostics_by_runtime: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -440,8 +415,6 @@ def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
                 calendar_resolver=calendar_resolver,
                 market_slice=market_slice,
                 per_runtime_limit=per_runtime_limit,
-                history_store=history_store,
-                session_label=session_label,
             )
             owner_key = runtime_owner_key(runtime)
             diagnostics_by_runtime.setdefault(owner_key, []).append(dict(result.get("diagnostic") or {}))
@@ -460,8 +433,6 @@ def build_entry_runtime_candidates_from_market_slices(
     calendar_resolver: Any,
     market_slices_by_symbol: dict[str, Any],
     per_runtime_limit: int = 6,
-    history_store: RunHistoryRepository | None = None,
-    session_label: str | None = None,
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime, _diagnostics_by_runtime = build_entry_runtime_candidates_with_diagnostics_from_market_slices(
         entry_runtimes=entry_runtimes,
@@ -469,8 +440,6 @@ def build_entry_runtime_candidates_from_market_slices(
         calendar_resolver=calendar_resolver,
         market_slices_by_symbol=market_slices_by_symbol,
         per_runtime_limit=per_runtime_limit,
-        history_store=history_store,
-        session_label=session_label,
     )
     return candidates_by_runtime
 
@@ -483,8 +452,6 @@ def build_entry_runtime_candidates_with_diagnostics(
     calendar_resolver: Any,
     greeks_provider: Any,
     per_runtime_limit: int = 6,
-    history_store: RunHistoryRepository | None = None,
-    session_label: str | None = None,
 ) -> tuple[dict[tuple[str, str], dict[str, list[dict[str, Any]]]], dict[tuple[str, str], list[dict[str, Any]]]]:
     runtimes_by_symbol: dict[str, list[EntryRuntime]] = {}
     for runtime in entry_runtimes:
@@ -511,8 +478,6 @@ def build_entry_runtime_candidates_with_diagnostics(
         calendar_resolver=calendar_resolver,
         market_slices_by_symbol=market_slices_by_symbol,
         per_runtime_limit=per_runtime_limit,
-        history_store=history_store,
-        session_label=session_label,
     )
 
 
@@ -524,8 +489,6 @@ def build_entry_runtime_candidates(
     calendar_resolver: Any,
     greeks_provider: Any,
     per_runtime_limit: int = 6,
-    history_store: RunHistoryRepository | None = None,
-    session_label: str | None = None,
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime, _diagnostics_by_runtime = build_entry_runtime_candidates_with_diagnostics(
         entry_runtimes=entry_runtimes,
@@ -534,8 +497,6 @@ def build_entry_runtime_candidates(
         calendar_resolver=calendar_resolver,
         greeks_provider=greeks_provider,
         per_runtime_limit=per_runtime_limit,
-        history_store=history_store,
-        session_label=session_label,
     )
     return candidates_by_runtime
 

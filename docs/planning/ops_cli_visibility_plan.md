@@ -15,6 +15,7 @@ Current shipped-surface note:
 - The current audit builder lives in `packages/core/services/audit_snapshot.py`.
 - Use [System Architecture](../current_system_state.md) as the canonical source of truth for current ownership and CLI/runtime boundaries.
 - Module and command references below should be read as historical planning context unless they still match the current shipped surface.
+- The old manual scanner CLI plan was retired; do not reintroduce it as a wrapper command.
 
 ## Shipped Scope
 
@@ -162,7 +163,6 @@ The direction is to move the repo onto one canonical CLI:
 - `spreads trading`
 - `spreads sessions`
 - `spreads sessions <session-id>`
-- planned later: `spreads scan`
 - planned later: `spreads collect`
 - planned later: `spreads analyze`
 
@@ -764,7 +764,6 @@ spreads jobs [--job-type TYPE] [--status STATUS]
 spreads jobs run <job-run-id>
 spreads audit <session-id>
 spreads doctor
-spreads scan ...
 spreads collect ...
 spreads analyze ...
 ```
@@ -813,13 +812,12 @@ Migration policy:
 
 1. Add `spreads` first.
 2. Implement new visibility commands only under `spreads`.
-3. Add `scan`, `collect`, and `analyze` under `spreads` as wrappers around existing service entrypoints.
+3. Add durable operator commands only when they map to current service-owned state.
 4. Keep the old binaries only as temporary compatibility shims during migration.
 5. Remove the old one-off script entrypoints after docs, automation, and operator usage have moved over.
 
 Compatibility mapping:
 
-- `spreads-scan` -> planned `spreads scan`
 - `spreads-collect` -> planned `spreads collect`
 - `spreads-analyze` -> planned `spreads analyze`
 

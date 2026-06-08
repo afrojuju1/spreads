@@ -101,8 +101,8 @@ def _ranking_value_payload(context: Any) -> dict[str, float | None]:
 class CandidateBuildParameters:
     symbol: str | None = None
     symbols: tuple[str, ...] = ()
-    strategy: str = "call_credit"
-    profile: str = "core"
+    candidate_builder_key: str = "call_credit"
+    build_profile: str = "core"
     min_dte: int | None = None
     max_dte: int | None = None
     short_delta_min: float | None = None
@@ -155,8 +155,8 @@ class CandidateBuildParameters:
         return cls(
             symbol=_optional_text(getattr(context, "symbol", defaults.symbol)),
             symbols=_symbol_tuple(getattr(context, "symbols", defaults.symbols)),
-            strategy=str(getattr(context, "strategy", defaults.strategy) or defaults.strategy),
-            profile=str(getattr(context, "profile", defaults.profile) or defaults.profile),
+            candidate_builder_key=str(getattr(context, "candidate_builder_key", defaults.candidate_builder_key) or defaults.candidate_builder_key),
+            build_profile=str(getattr(context, "build_profile", defaults.build_profile) or defaults.build_profile),
             min_dte=_optional_int(getattr(context, "min_dte", defaults.min_dte)),
             max_dte=_optional_int(getattr(context, "max_dte", defaults.max_dte)),
             short_delta_min=_optional_float(getattr(context, "short_delta_min", defaults.short_delta_min)),
@@ -208,8 +208,8 @@ class CandidateBuildParameters:
     def as_context_payload(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
-            "strategy": self.strategy,
-            "profile": self.profile,
+            "candidate_builder_key": self.candidate_builder_key,
+            "build_profile": self.build_profile,
             "min_dte": self.min_dte,
             "max_dte": self.max_dte,
             "short_delta_min": self.short_delta_min,
@@ -289,7 +289,7 @@ def _config_backed_ranking_builder_params(
     configs = tuple(
         strategy_config
         for strategy_config in _cached_strategy_configs(_normalized_strategy_config_root(config_root))
-        if strategy_config.enabled and strategy_config.scanner_profile == profile_name and strategy_config.strategy_family == strategy_family
+        if strategy_config.enabled and strategy_config.build_profile == profile_name and strategy_config.strategy_family == strategy_family
     )
     return _aggregate_ranking_builder_params(configs)
 
@@ -309,7 +309,7 @@ def resolve_ranking_builder_params(
     if config_backed_params:
         return "trading_strategy", config_backed_params
     if normalized_strategy_family not in PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES:
-        raise ValueError(f"No config-backed ranking defaults exist for {normalized_strategy_family} on profile {profile_name}.")
+        raise ValueError(f"No config-backed ranking defaults exist for {normalized_strategy_family} on build profile {profile_name}.")
     return (
         "profile_fallback",
         resolve_ranking_policy(
@@ -340,23 +340,25 @@ def apply_candidate_profile_defaults(
     *,
     config_root: str | Path | None = None,
 ) -> CandidateBuildParameters:
-    profile = PROFILE_CONFIGS[parameters.profile]
+    profile = PROFILE_CONFIGS[parameters.build_profile]
     underlying_key = infer_underlying_key(underlying_type)
-    normalized_strategy = normalize_strategy_family(parameters.strategy)
+    normalized_strategy = normalize_strategy_family(parameters.candidate_builder_key)
     effective_config_root = config_root if config_root is not None else parameters.config_root
     resolved_config_root = (
         _normalized_strategy_config_root(effective_config_root) if effective_config_root not in (None, "") else parameters.config_root
     )
     _ranking_source, ranking_builder_params = resolve_ranking_builder_params(
-        profile_name=parameters.profile,
+        profile_name=parameters.build_profile,
         strategy_family=normalized_strategy,
         config_root=resolved_config_root,
     )
     strategy_profile_override = resolve_strategy_profile_override(
-        profile_name=parameters.profile,
+        profile_name=parameters.build_profile,
         strategy=normalized_strategy,
     )
-    directional_long_defaults = DIRECTIONAL_LONG_DELTA_DEFAULTS.get(parameters.profile) if normalized_strategy in {"long_call", "long_put"} else None
+    directional_long_defaults = (
+        DIRECTIONAL_LONG_DELTA_DEFAULTS.get(parameters.build_profile) if normalized_strategy in {"long_call", "long_put"} else None
+    )
 
     updates: dict[str, Any] = {
         "config_root": resolved_config_root,
@@ -444,8 +446,8 @@ def apply_strategy_build_settings(
             short_delta_target = (float(settings.short_delta_min) + float(settings.short_delta_max)) / 2.0
 
     updates: dict[str, Any] = {
-        "strategy": settings.scanner_strategy,
-        "profile": settings.scanner_profile,
+        "candidate_builder_key": settings.candidate_builder_key,
+        "build_profile": settings.build_profile,
         "min_dte": settings.dte_min,
         "max_dte": settings.dte_max,
         "short_delta_min": settings.short_delta_min,
@@ -477,7 +479,7 @@ def apply_strategy_build_settings(
 
 
 def validate_candidate_profile_scope(symbol: str, parameters: CandidateBuildParameters, underlying_type: str) -> None:
-    if parameters.profile != "0dte":
+    if parameters.build_profile != "0dte":
         return
     if underlying_type != "etf_index_proxy":
         raise ValueError("0dte profile is currently limited to ETF/index proxies")
@@ -487,7 +489,7 @@ def validate_candidate_profile_scope(symbol: str, parameters: CandidateBuildPara
 
 
 def validate_candidate_build_parameters(parameters: CandidateBuildParameters) -> None:
-    normalized_strategy = normalize_strategy_family(parameters.strategy)
+    normalized_strategy = normalize_strategy_family(parameters.candidate_builder_key)
     if parameters.min_dte is None or parameters.max_dte is None or parameters.min_dte < 0 or parameters.max_dte < parameters.min_dte:
         raise ValueError("Expected 0 <= min-dte <= max-dte")
     if (
@@ -599,11 +601,11 @@ def build_market_slice_parameters(
 
 def build_candidate_filter_payload(parameters: CandidateBuildParameters) -> dict[str, Any]:
     return {
-        "strategy": parameters.strategy,
-        "profile": parameters.profile,
+        "candidate_builder": parameters.candidate_builder_key,
+        "build_profile": parameters.build_profile,
         "session_label": parameters.session_label,
         "greeks_source": parameters.greeks_source,
-        "session_bucket": (candidate_session_bucket(parameters) if parameters.profile == "0dte" else None),
+        "session_bucket": (candidate_session_bucket(parameters) if parameters.build_profile == "0dte" else None),
         "evaluation_date": parameters.evaluation_date,
         "evaluation_timestamp": parameters.evaluation_timestamp,
         "min_dte": parameters.min_dte,
