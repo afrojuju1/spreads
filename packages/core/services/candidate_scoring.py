@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -63,7 +64,239 @@ DEFINED_RISK_SHORT_PREMIUM_FAMILIES = {
     "put_credit_spread",
     "iron_condor",
 }
+POST_EVENT_SHORT_PREMIUM_SIGNAL_FAMILIES = {
+    "call_credit_spread",
+    "put_credit_spread",
+    "short_call",
+    "short_put",
+}
 SUPPORTED_EARNINGS_HORIZONS = {"next_daily", "near_term", "post_event"}
+EARNINGS_SIGNAL_THRESHOLD_DEFAULTS: dict[str, Any] = {
+    "active": False,
+    "lead_signal": None,
+    "lead_signal_min": None,
+    "lead_signal_subsignal_min": None,
+    "pricing_signal_min": None,
+    "pricing_signal_subsignal_min": None,
+    "dte_min": None,
+    "dte_max": None,
+    "dte_ideal_min": None,
+    "dte_ideal_max": None,
+    "options_bias_alignment_required": False,
+    "debit_width_ratio_max": None,
+    "modeled_move_vs_implied_move_min": None,
+    "modeled_move_vs_break_even_move_min": None,
+    "neutral_regime_signal_min": None,
+    "residual_iv_richness_min": None,
+}
+
+
+@dataclass(frozen=True)
+class EarningsSignalThresholdRule:
+    earnings_phase: str
+    families: frozenset[str]
+    values: Mapping[str, Any]
+    friday_confirmation_bonus: bool = False
+
+    def matches(self, *, family: str, earnings_phase: str) -> bool:
+        return earnings_phase == self.earnings_phase and family in self.families
+
+    def build_thresholds(self, *, friday_after_hours_event: bool) -> dict[str, Any]:
+        thresholds = dict(EARNINGS_SIGNAL_THRESHOLD_DEFAULTS)
+        thresholds.update(self.values)
+        if self.friday_confirmation_bonus:
+            lead_signal_min = _as_float(thresholds.get("lead_signal_min"))
+            if lead_signal_min is not None:
+                bonus = 0.05 if friday_after_hours_event else 0.0
+                thresholds["lead_signal_min"] = round(min(lead_signal_min + bonus, 0.99), 2)
+        return thresholds
+
+
+EARNINGS_SIGNAL_THRESHOLD_RULES = (
+    EarningsSignalThresholdRule(
+        earnings_phase="pre_event_runup",
+        families=frozenset(DIRECTIONAL_DEBIT_FAMILIES),
+        values={
+            "active": True,
+            "lead_signal": "direction_signal",
+            "lead_signal_min": 0.65,
+            "lead_signal_subsignal_min": 2,
+            "pricing_signal_min": 0.55,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 4,
+            "dte_max": 15,
+            "dte_ideal_min": 4,
+            "dte_ideal_max": 12,
+            "options_bias_alignment_required": True,
+            "debit_width_ratio_max": 0.60,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="pre_event_runup",
+        families=frozenset(LONG_VOL_FAMILIES),
+        values={
+            "active": True,
+            "lead_signal": "jump_risk_signal",
+            "lead_signal_min": 0.70,
+            "lead_signal_subsignal_min": 2,
+            "pricing_signal_min": 0.60,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 2,
+            "dte_max": 10,
+            "dte_ideal_min": 2,
+            "dte_ideal_max": 7,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="through_event",
+        families=frozenset(DIRECTIONAL_DEBIT_FAMILIES),
+        values={
+            "active": True,
+            "lead_signal": "direction_signal",
+            "lead_signal_min": 0.70,
+            "lead_signal_subsignal_min": 2,
+            "pricing_signal_min": 0.60,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 2,
+            "dte_max": 10,
+            "dte_ideal_min": 2,
+            "dte_ideal_max": 7,
+            "options_bias_alignment_required": True,
+            "debit_width_ratio_max": 0.60,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="through_event",
+        families=frozenset({"long_straddle"}),
+        values={
+            "active": True,
+            "lead_signal": "jump_risk_signal",
+            "lead_signal_min": 0.70,
+            "lead_signal_subsignal_min": 2,
+            "pricing_signal_min": 0.60,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 2,
+            "dte_max": 10,
+            "dte_ideal_min": 2,
+            "dte_ideal_max": 7,
+            "modeled_move_vs_implied_move_min": 1.10,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="through_event",
+        families=frozenset({"long_strangle"}),
+        values={
+            "active": True,
+            "lead_signal": "jump_risk_signal",
+            "lead_signal_min": 0.70,
+            "lead_signal_subsignal_min": 2,
+            "pricing_signal_min": 0.60,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 2,
+            "dte_max": 10,
+            "dte_ideal_min": 2,
+            "dte_ideal_max": 7,
+            "modeled_move_vs_break_even_move_min": 1.05,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="post_event_fresh",
+        families=frozenset(DIRECTIONAL_DEBIT_FAMILIES),
+        friday_confirmation_bonus=True,
+        values={
+            "active": True,
+            "lead_signal": "post_event_confirmation_signal",
+            "lead_signal_min": 0.65,
+            "lead_signal_subsignal_min": 3,
+            "pricing_signal_min": 0.55,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 2,
+            "dte_max": 15,
+            "dte_ideal_min": 2,
+            "dte_ideal_max": 10,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="post_event_fresh",
+        families=frozenset(POST_EVENT_SHORT_PREMIUM_SIGNAL_FAMILIES),
+        friday_confirmation_bonus=True,
+        values={
+            "active": True,
+            "lead_signal": "post_event_confirmation_signal",
+            "lead_signal_min": 0.65,
+            "lead_signal_subsignal_min": 3,
+            "pricing_signal_min": 0.55,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 2,
+            "dte_max": 15,
+            "dte_ideal_min": 2,
+            "dte_ideal_max": 10,
+        },
+    ),
+    EarningsSignalThresholdRule(
+        earnings_phase="post_event_fresh",
+        families=frozenset({"iron_condor"}),
+        friday_confirmation_bonus=True,
+        values={
+            "active": True,
+            "lead_signal": "post_event_confirmation_signal",
+            "lead_signal_min": 0.70,
+            "lead_signal_subsignal_min": 3,
+            "pricing_signal_min": 0.60,
+            "pricing_signal_subsignal_min": 1,
+            "dte_min": 3,
+            "dte_max": 15,
+            "dte_ideal_min": 3,
+            "dte_ideal_max": 12,
+            "neutral_regime_signal_min": 0.60,
+            "residual_iv_richness_min": 0.60,
+        },
+    ),
+)
+
+
+@dataclass(frozen=True)
+class SignalMetricGate:
+    threshold_key: str
+    bundle_key: str
+    missing_blocker: str
+    failing_blocker: str
+    ceiling: bool = False
+
+
+SIGNAL_METRIC_GATES = (
+    SignalMetricGate(
+        threshold_key="debit_width_ratio_max",
+        bundle_key="debit_width_ratio",
+        missing_blocker="missing_debit_width_ratio",
+        failing_blocker="debit_width_ratio_too_high",
+        ceiling=True,
+    ),
+    SignalMetricGate(
+        threshold_key="modeled_move_vs_implied_move_min",
+        bundle_key="modeled_move_vs_implied_move",
+        missing_blocker="missing_modeled_move_vs_implied_move",
+        failing_blocker="modeled_move_vs_implied_move_too_low",
+    ),
+    SignalMetricGate(
+        threshold_key="modeled_move_vs_break_even_move_min",
+        bundle_key="modeled_move_vs_break_even_move",
+        missing_blocker="missing_modeled_move_vs_break_even_move",
+        failing_blocker="modeled_move_vs_break_even_move_too_low",
+    ),
+    SignalMetricGate(
+        threshold_key="neutral_regime_signal_min",
+        bundle_key="neutral_regime_signal",
+        missing_blocker="missing_neutral_regime_signal",
+        failing_blocker="neutral_regime_signal_too_low",
+    ),
+    SignalMetricGate(
+        threshold_key="residual_iv_richness_min",
+        bundle_key="residual_iv_richness",
+        missing_blocker="missing_residual_iv_richness",
+        failing_blocker="residual_iv_richness_too_low",
+    ),
+)
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -161,161 +394,60 @@ def earnings_signal_thresholds(
     earnings_phase: str,
     friday_after_hours_event: bool = False,
 ) -> dict[str, Any]:
-    thresholds: dict[str, Any] = {
-        "active": False,
-        "lead_signal": None,
-        "lead_signal_min": None,
-        "lead_signal_subsignal_min": None,
-        "pricing_signal_min": None,
-        "pricing_signal_subsignal_min": None,
-        "dte_min": None,
-        "dte_max": None,
-        "dte_ideal_min": None,
-        "dte_ideal_max": None,
-        "options_bias_alignment_required": False,
-        "debit_width_ratio_max": None,
-        "modeled_move_vs_implied_move_min": None,
-        "modeled_move_vs_break_even_move_min": None,
-        "neutral_regime_signal_min": None,
-        "residual_iv_richness_min": None,
-    }
-    if earnings_phase == "pre_event_runup" and family in DIRECTIONAL_DEBIT_FAMILIES:
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "direction_signal",
-                "lead_signal_min": 0.65,
-                "lead_signal_subsignal_min": 2,
-                "pricing_signal_min": 0.55,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 4,
-                "dte_max": 15,
-                "dte_ideal_min": 4,
-                "dte_ideal_max": 12,
-                "options_bias_alignment_required": True,
-                "debit_width_ratio_max": 0.60,
-            }
-        )
-    elif earnings_phase == "pre_event_runup" and family in LONG_VOL_FAMILIES:
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "jump_risk_signal",
-                "lead_signal_min": 0.70,
-                "lead_signal_subsignal_min": 2,
-                "pricing_signal_min": 0.60,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 2,
-                "dte_max": 10,
-                "dte_ideal_min": 2,
-                "dte_ideal_max": 7,
-            }
-        )
-    elif earnings_phase == "through_event" and family in DIRECTIONAL_DEBIT_FAMILIES:
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "direction_signal",
-                "lead_signal_min": 0.70,
-                "lead_signal_subsignal_min": 2,
-                "pricing_signal_min": 0.60,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 2,
-                "dte_max": 10,
-                "dte_ideal_min": 2,
-                "dte_ideal_max": 7,
-                "options_bias_alignment_required": True,
-                "debit_width_ratio_max": 0.60,
-            }
-        )
-    elif earnings_phase == "through_event" and family == "long_straddle":
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "jump_risk_signal",
-                "lead_signal_min": 0.70,
-                "lead_signal_subsignal_min": 2,
-                "pricing_signal_min": 0.60,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 2,
-                "dte_max": 10,
-                "dte_ideal_min": 2,
-                "dte_ideal_max": 7,
-                "modeled_move_vs_implied_move_min": 1.10,
-            }
-        )
-    elif earnings_phase == "through_event" and family == "long_strangle":
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "jump_risk_signal",
-                "lead_signal_min": 0.70,
-                "lead_signal_subsignal_min": 2,
-                "pricing_signal_min": 0.60,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 2,
-                "dte_max": 10,
-                "dte_ideal_min": 2,
-                "dte_ideal_max": 7,
-                "modeled_move_vs_break_even_move_min": 1.05,
-            }
-        )
-    elif earnings_phase == "post_event_fresh" and family in DIRECTIONAL_DEBIT_FAMILIES:
-        confirmation_min = 0.65 + (0.05 if friday_after_hours_event else 0.0)
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "post_event_confirmation_signal",
-                "lead_signal_min": round(min(confirmation_min, 0.99), 2),
-                "lead_signal_subsignal_min": 3,
-                "pricing_signal_min": 0.55,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 2,
-                "dte_max": 15,
-                "dte_ideal_min": 2,
-                "dte_ideal_max": 10,
-            }
-        )
-    elif earnings_phase == "post_event_fresh" and family in {
-        "call_credit_spread",
-        "put_credit_spread",
-        "short_call",
-        "short_put",
-    }:
-        confirmation_min = 0.65 + (0.05 if friday_after_hours_event else 0.0)
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "post_event_confirmation_signal",
-                "lead_signal_min": round(min(confirmation_min, 0.99), 2),
-                "lead_signal_subsignal_min": 3,
-                "pricing_signal_min": 0.55,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 2,
-                "dte_max": 15,
-                "dte_ideal_min": 2,
-                "dte_ideal_max": 10,
-            }
-        )
-    elif earnings_phase == "post_event_fresh" and family == "iron_condor":
-        confirmation_min = 0.70 + (0.05 if friday_after_hours_event else 0.0)
-        thresholds.update(
-            {
-                "active": True,
-                "lead_signal": "post_event_confirmation_signal",
-                "lead_signal_min": round(min(confirmation_min, 0.99), 2),
-                "lead_signal_subsignal_min": 3,
-                "pricing_signal_min": 0.60,
-                "pricing_signal_subsignal_min": 1,
-                "dte_min": 3,
-                "dte_max": 15,
-                "dte_ideal_min": 3,
-                "dte_ideal_max": 12,
-                "neutral_regime_signal_min": 0.60,
-                "residual_iv_richness_min": 0.60,
-            }
-        )
-    return thresholds
+    for rule in EARNINGS_SIGNAL_THRESHOLD_RULES:
+        if rule.matches(family=family, earnings_phase=earnings_phase):
+            return rule.build_thresholds(friday_after_hours_event=friday_after_hours_event)
+    return dict(EARNINGS_SIGNAL_THRESHOLD_DEFAULTS)
+
+
+def _signal_entry(bundle: Mapping[str, Any], signal_name: str) -> Mapping[str, Any]:
+    signals = bundle.get("signals")
+    if not isinstance(signals, Mapping):
+        return {}
+    entry = signals.get(signal_name)
+    return entry if isinstance(entry, Mapping) else {}
+
+
+def _append_minimum_gate_blocker(
+    blockers: list[str],
+    *,
+    value: float | int | None,
+    minimum: float | int | None,
+    missing_blocker: str,
+    below_blocker: str,
+) -> None:
+    if minimum is None:
+        return
+    if value is None:
+        blockers.append(missing_blocker)
+    elif value < minimum:
+        blockers.append(below_blocker)
+
+
+def _append_metric_gate_blocker(
+    blockers: list[str],
+    *,
+    bundle: Mapping[str, Any],
+    thresholds: Mapping[str, Any],
+    gate: SignalMetricGate,
+) -> None:
+    threshold = _as_float(thresholds.get(gate.threshold_key))
+    if threshold is None:
+        return
+    value = _as_float(bundle.get(gate.bundle_key))
+    if value is None:
+        blockers.append(gate.missing_blocker)
+    elif gate.ceiling and value > threshold:
+        blockers.append(gate.failing_blocker)
+    elif not gate.ceiling and value < threshold:
+        blockers.append(gate.failing_blocker)
+
+
+def _earnings_signal_coverage_count(bundle: Mapping[str, Any]) -> int:
+    signals = bundle.get("signals")
+    if not isinstance(signals, Mapping):
+        return 0
+    return sum(1 for field in EARNINGS_SIGNAL_FIELDS if isinstance(signals.get(field), Mapping) and signals[field].get("score") is not None)
 
 
 def evaluate_earnings_signal_gate(
@@ -342,14 +474,14 @@ def evaluate_earnings_signal_gate(
             "blockers": blockers,
             "bundle": bundle,
             "thresholds": thresholds,
-            "coverage_count": sum(1 for field in EARNINGS_SIGNAL_FIELDS if bundle["signals"][field]["score"] is not None),
+            "coverage_count": _earnings_signal_coverage_count(bundle),
         }
 
     lead_signal = str(thresholds.get("lead_signal") or "")
-    lead_entry = bundle["signals"].get(lead_signal, {}) if isinstance(bundle.get("signals"), Mapping) else {}
+    lead_entry = _signal_entry(bundle, lead_signal)
     lead_score = _as_float(lead_entry.get("score"))
     lead_subsignal_count = _as_int(lead_entry.get("subsignal_count"))
-    pricing_entry = bundle["signals"].get("pricing_signal", {})
+    pricing_entry = _signal_entry(bundle, "pricing_signal")
     pricing_score = _as_float(pricing_entry.get("score"))
     pricing_subsignal_count = _as_int(pricing_entry.get("subsignal_count"))
 
@@ -360,33 +492,34 @@ def evaluate_earnings_signal_gate(
     ):
         blockers.append("earnings_dte_out_of_range")
 
-    lead_signal_min = _as_float(thresholds.get("lead_signal_min"))
-    if lead_signal_min is not None:
-        if lead_score is None:
-            blockers.append(f"missing_{lead_signal}")
-        elif lead_score < lead_signal_min:
-            blockers.append(f"{lead_signal}_below_threshold")
-
-    lead_signal_subsignal_min = _as_int(thresholds.get("lead_signal_subsignal_min"))
-    if lead_signal_subsignal_min is not None:
-        if lead_subsignal_count is None:
-            blockers.append(f"missing_{lead_signal}_subsignal_count")
-        elif lead_subsignal_count < lead_signal_subsignal_min:
-            blockers.append(f"{lead_signal}_subsignal_count_too_low")
-
-    pricing_signal_min = _as_float(thresholds.get("pricing_signal_min"))
-    if pricing_signal_min is not None:
-        if pricing_score is None:
-            blockers.append("missing_pricing_signal")
-        elif pricing_score < pricing_signal_min:
-            blockers.append("pricing_signal_below_threshold")
-
-    pricing_signal_subsignal_min = _as_int(thresholds.get("pricing_signal_subsignal_min"))
-    if pricing_signal_subsignal_min is not None:
-        if pricing_subsignal_count is None:
-            blockers.append("missing_pricing_signal_subsignal_count")
-        elif pricing_subsignal_count < pricing_signal_subsignal_min:
-            blockers.append("pricing_signal_subsignal_count_too_low")
+    _append_minimum_gate_blocker(
+        blockers,
+        value=lead_score,
+        minimum=_as_float(thresholds.get("lead_signal_min")),
+        missing_blocker=f"missing_{lead_signal}",
+        below_blocker=f"{lead_signal}_below_threshold",
+    )
+    _append_minimum_gate_blocker(
+        blockers,
+        value=lead_subsignal_count,
+        minimum=_as_int(thresholds.get("lead_signal_subsignal_min")),
+        missing_blocker=f"missing_{lead_signal}_subsignal_count",
+        below_blocker=f"{lead_signal}_subsignal_count_too_low",
+    )
+    _append_minimum_gate_blocker(
+        blockers,
+        value=pricing_score,
+        minimum=_as_float(thresholds.get("pricing_signal_min")),
+        missing_blocker="missing_pricing_signal",
+        below_blocker="pricing_signal_below_threshold",
+    )
+    _append_minimum_gate_blocker(
+        blockers,
+        value=pricing_subsignal_count,
+        minimum=_as_int(thresholds.get("pricing_signal_subsignal_min")),
+        missing_blocker="missing_pricing_signal_subsignal_count",
+        below_blocker="pricing_signal_subsignal_count_too_low",
+    )
 
     if thresholds.get("options_bias_alignment_required"):
         options_bias_alignment = bundle.get("options_bias_alignment")
@@ -395,45 +528,13 @@ def evaluate_earnings_signal_gate(
         elif not bool(options_bias_alignment):
             blockers.append("options_bias_alignment_not_confirmed")
 
-    debit_width_ratio_max = _as_float(thresholds.get("debit_width_ratio_max"))
-    if debit_width_ratio_max is not None:
-        debit_width_ratio = _as_float(bundle.get("debit_width_ratio"))
-        if debit_width_ratio is None:
-            blockers.append("missing_debit_width_ratio")
-        elif debit_width_ratio > debit_width_ratio_max:
-            blockers.append("debit_width_ratio_too_high")
-
-    modeled_move_vs_implied_move_min = _as_float(thresholds.get("modeled_move_vs_implied_move_min"))
-    if modeled_move_vs_implied_move_min is not None:
-        metric = _as_float(bundle.get("modeled_move_vs_implied_move"))
-        if metric is None:
-            blockers.append("missing_modeled_move_vs_implied_move")
-        elif metric < modeled_move_vs_implied_move_min:
-            blockers.append("modeled_move_vs_implied_move_too_low")
-
-    modeled_move_vs_break_even_move_min = _as_float(thresholds.get("modeled_move_vs_break_even_move_min"))
-    if modeled_move_vs_break_even_move_min is not None:
-        metric = _as_float(bundle.get("modeled_move_vs_break_even_move"))
-        if metric is None:
-            blockers.append("missing_modeled_move_vs_break_even_move")
-        elif metric < modeled_move_vs_break_even_move_min:
-            blockers.append("modeled_move_vs_break_even_move_too_low")
-
-    neutral_regime_signal_min = _as_float(thresholds.get("neutral_regime_signal_min"))
-    if neutral_regime_signal_min is not None:
-        metric = _as_float(bundle.get("neutral_regime_signal"))
-        if metric is None:
-            blockers.append("missing_neutral_regime_signal")
-        elif metric < neutral_regime_signal_min:
-            blockers.append("neutral_regime_signal_too_low")
-
-    residual_iv_richness_min = _as_float(thresholds.get("residual_iv_richness_min"))
-    if residual_iv_richness_min is not None:
-        metric = _as_float(bundle.get("residual_iv_richness"))
-        if metric is None:
-            blockers.append("missing_residual_iv_richness")
-        elif metric < residual_iv_richness_min:
-            blockers.append("residual_iv_richness_too_low")
+    for gate in SIGNAL_METRIC_GATES:
+        _append_metric_gate_blocker(
+            blockers,
+            bundle=bundle,
+            thresholds=thresholds,
+            gate=gate,
+        )
 
     return {
         "active": True,
@@ -441,7 +542,7 @@ def evaluate_earnings_signal_gate(
         "blockers": blockers,
         "bundle": bundle,
         "thresholds": thresholds,
-        "coverage_count": sum(1 for field in EARNINGS_SIGNAL_FIELDS if bundle["signals"][field]["score"] is not None),
+        "coverage_count": _earnings_signal_coverage_count(bundle),
     }
 
 
@@ -911,6 +1012,83 @@ def product_policy_blockers(
     return blockers
 
 
+@dataclass(frozen=True)
+class CandidateSelectionPolicyContext:
+    candidate: Mapping[str, Any]
+    family: str
+    style_profile: str
+    product_class_value: str
+    horizon_band_value: str
+    earnings_phase: str
+    earnings_timing_confidence: str
+    signal_gate: Mapping[str, Any]
+
+
+CandidateSelectionBlockerRule = Callable[[CandidateSelectionPolicyContext], list[str]]
+
+
+def _product_policy_blocker_rule(context: CandidateSelectionPolicyContext) -> list[str]:
+    return product_policy_blockers(
+        family=context.family,
+        style_profile=context.style_profile,
+        product_class_value=context.product_class_value,
+        horizon_band_value=context.horizon_band_value,
+    )
+
+
+def _earnings_phase_policy_blocker_rule(context: CandidateSelectionPolicyContext) -> list[str]:
+    return earnings_phase_policy_blockers(
+        family=context.family,
+        earnings_phase=context.earnings_phase,
+        product_class_value=context.product_class_value,
+        horizon_band_value=context.horizon_band_value,
+        earnings_timing_confidence=context.earnings_timing_confidence,
+    )
+
+
+def _signal_gate_blocker_rule(context: CandidateSelectionPolicyContext) -> list[str]:
+    return list(context.signal_gate.get("blockers") or [])
+
+
+def _profile_blocker_rule(context: CandidateSelectionPolicyContext) -> list[str]:
+    return profile_specific_blockers(
+        candidate=context.candidate,
+        style_profile=context.style_profile,
+    )
+
+
+def _data_quality_blocker_rule(context: CandidateSelectionPolicyContext) -> list[str]:
+    if str(context.candidate.get("data_status") or "") != "clean":
+        return ["data_quality_not_clean"]
+    return []
+
+
+def _calendar_risk_blocker_rule(context: CandidateSelectionPolicyContext) -> list[str]:
+    if calendar_blocks_strategy(
+        calendar_status=str(context.candidate.get("calendar_status") or ""),
+        style_profile=context.style_profile,
+    ):
+        return ["calendar_risk_present"]
+    return []
+
+
+CANDIDATE_SELECTION_BLOCKER_RULES: tuple[CandidateSelectionBlockerRule, ...] = (
+    _product_policy_blocker_rule,
+    _earnings_phase_policy_blocker_rule,
+    _signal_gate_blocker_rule,
+    _profile_blocker_rule,
+    _data_quality_blocker_rule,
+    _calendar_risk_blocker_rule,
+)
+
+
+def candidate_selection_policy_blockers(context: CandidateSelectionPolicyContext) -> list[str]:
+    blockers: list[str] = []
+    for rule in CANDIDATE_SELECTION_BLOCKER_RULES:
+        blockers.extend(rule(context))
+    return blockers
+
+
 def build_candidate_selection_score(
     candidate: Mapping[str, Any],
     *,
@@ -943,41 +1121,20 @@ def build_candidate_selection_score(
         earnings_phase=earnings_phase,
         days_to_expiration=days_to_expiration,
     )
+    policy_context = CandidateSelectionPolicyContext(
+        candidate=candidate,
+        family=family,
+        style_profile=resolved_style,
+        product_class_value=product_class_value,
+        horizon_band_value=horizon_band_value,
+        earnings_phase=earnings_phase,
+        earnings_timing_confidence=str(candidate.get("earnings_timing_confidence") or "unknown").strip().lower(),
+        signal_gate=signal_gate,
+    )
 
     resolved_blockers = list(blockers or [])
     if not resolved_blockers:
-        resolved_blockers.extend(
-            product_policy_blockers(
-                family=family,
-                style_profile=resolved_style,
-                product_class_value=product_class_value,
-                horizon_band_value=horizon_band_value,
-            )
-        )
-        resolved_blockers.extend(
-            earnings_phase_policy_blockers(
-                family=family,
-                earnings_phase=earnings_phase,
-                product_class_value=product_class_value,
-                horizon_band_value=horizon_band_value,
-                earnings_timing_confidence=str(candidate.get("earnings_timing_confidence") or "unknown").strip().lower(),
-            )
-        )
-        resolved_blockers.extend(list(signal_gate["blockers"]))
-        resolved_blockers.extend(
-            profile_specific_blockers(
-                candidate=candidate,
-                style_profile=resolved_style,
-            )
-        )
-        if str(candidate.get("data_status") or "") != "clean":
-            resolved_blockers.append("data_quality_not_clean")
-        calendar_status = str(candidate.get("calendar_status") or "")
-        if calendar_blocks_strategy(
-            calendar_status=calendar_status,
-            style_profile=resolved_style,
-        ):
-            resolved_blockers.append("calendar_risk_present")
+        resolved_blockers.extend(candidate_selection_policy_blockers(policy_context))
 
     resolved_policy_state = (
         str(policy_state or "").strip().lower()

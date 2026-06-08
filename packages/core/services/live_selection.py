@@ -89,6 +89,30 @@ def _candidate_monitor_floor(
     return float((candidate.get("score_thresholds") or {}).get("monitor_floor") or thresholds["monitor_score_floor"])
 
 
+def candidate_execution_blockers(
+    candidate: dict[str, Any],
+    *,
+    thresholds: dict[str, Any],
+    scorecard: dict[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    if str(scorecard["state"]) == "blocked":
+        blockers.extend(list(scorecard["blockers"]))
+    if not promotable_candidate_is_eligible(candidate):
+        blockers.append("selection_not_live_ready")
+    if not _meets_midpoint_credit_floor(
+        candidate,
+        thresholds.get("min_promotable_midpoint_credit"),
+    ):
+        blockers.append("midpoint_credit_below_promotable_floor")
+    if not candidate_meets_return_on_risk_floor(
+        candidate,
+        thresholds.get("min_promotable_return_on_risk"),
+    ):
+        blockers.append("return_on_risk_below_promotable_floor")
+    return blockers
+
+
 def _scored_candidate(
     candidate: dict[str, Any],
     *,
@@ -105,21 +129,11 @@ def _scored_candidate(
             **dict(signal_cycle_context or {}),
         },
     )
-    execution_blockers: list[str] = []
-    if str(scorecard["state"]) == "blocked":
-        execution_blockers.extend(list(scorecard["blockers"]))
-    if not promotable_candidate_is_eligible(candidate):
-        execution_blockers.append("selection_not_live_ready")
-    if not _meets_midpoint_credit_floor(
+    execution_blockers = candidate_execution_blockers(
         candidate,
-        thresholds.get("min_promotable_midpoint_credit"),
-    ):
-        execution_blockers.append("midpoint_credit_below_promotable_floor")
-    if not candidate_meets_return_on_risk_floor(
-        candidate,
-        thresholds.get("min_promotable_return_on_risk"),
-    ):
-        execution_blockers.append("return_on_risk_below_promotable_floor")
+        thresholds=thresholds,
+        scorecard=scorecard,
+    )
     execution_penalty = min(float(len(execution_blockers)) * 12.0, 30.0)
     execution_score = round(
         max(float(scorecard["execution_score"]) - execution_penalty, 0.0),
