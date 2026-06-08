@@ -19,6 +19,7 @@ def _routine_payload(routine: StrategyRoutine | None) -> dict[str, Any] | None:
     return {
         "enabled": routine.enabled,
         "cadence_minutes": routine.schedule.cadence_minutes,
+        "offset_seconds": routine.schedule.offset_seconds,
         "market_hours_only": routine.schedule.market_hours_only,
         "start_et": routine.schedule.window.start_et,
         "end_et": routine.schedule.window.end_et,

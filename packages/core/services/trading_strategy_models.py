@@ -435,11 +435,14 @@ class RoutineScheduleWindow:
 class RoutineSchedule:
     cadence_minutes: int
     market_hours_only: bool = False
+    offset_seconds: int = 0
     window: RoutineScheduleWindow = field(default_factory=RoutineScheduleWindow)
 
     def __post_init__(self) -> None:
         if self.cadence_minutes <= 0:
             raise ValueError("routine.schedule.cadence_minutes must be > 0")
+        if self.offset_seconds < 0:
+            raise ValueError("routine.schedule.offset_seconds must be >= 0")
 
     @classmethod
     def from_payload(
@@ -453,6 +456,7 @@ class RoutineSchedule:
         return cls(
             cadence_minutes=cadence_minutes,
             market_hours_only=bool(mapping.get("market_hours_only", False)),
+            offset_seconds=_optional_int(mapping.get("offset_seconds")) or 0,
             window=RoutineScheduleWindow.from_payload(mapping.get("window")),
         )
 
@@ -461,6 +465,8 @@ class RoutineSchedule:
             "cadence": f"{self.cadence_minutes}m",
             "market_hours_only": self.market_hours_only,
         }
+        if self.offset_seconds:
+            payload["offset_seconds"] = self.offset_seconds
         if self.window.start_et is not None:
             payload["start_time_et"] = self.window.start_et
         if self.window.end_et is not None:

@@ -26,6 +26,10 @@ If another design or planning doc disagrees about current ownership, `docs/curre
 
 Use these only for the roles they now own:
 
+- [docs/planning/2026-06-08_trading_engine_inspiration_repos.md](../../../docs/planning/2026-06-08_trading_engine_inspiration_repos.md)
+  - external trading-engine repos/frameworks to check first when designing trading-engine, source/scanner, strategy-quality, execution, risk, or portfolio refactors
+- [docs/planning/2026-06-08_entry_quality_pipeline_refactor.md](../../../docs/planning/2026-06-08_entry_quality_pipeline_refactor.md)
+  - review proposal for the target `quality_profile` / `EntryQualityPipeline` refactor; not current shipped runtime behavior until implemented through beads
 - [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
   - candidate, signal, decision, and admission ownership inside the broader system
 - [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)
@@ -35,6 +39,18 @@ Use these only for the roles they now own:
 
 Do not let these supporting docs become rival top-level architecture sources.
 Older planning docs may still mention pre-cutover `replay` or `audit_replay` surfaces; when they do, prefer the current names and boundaries from `docs/current_system_state.md`.
+For target-state proposals, keep the distinction explicit: `docs/current_system_state.md` describes what is live now, while proposal docs describe future beads to implement.
+
+## Inspiration Repos
+
+For trading-engine architecture, scanner/source, strategy-quality, execution, risk, or portfolio refactor work:
+
+1. Start from [docs/planning/2026-06-08_trading_engine_inspiration_repos.md](../../../docs/planning/2026-06-08_trading_engine_inspiration_repos.md).
+2. Borrow the smallest Spreads-native boundary or pattern that solves the current problem.
+3. If research finds a better repo/framework for the active design problem, propose adding it to the inspiration list with:
+   - the specific pattern to borrow
+   - what not to copy
+   - why it improves on the current list
 
 ## Boundary Map Belongs In Current System State
 
@@ -82,6 +98,7 @@ When editing repo-local skills under `.agents/skills`:
 - one canonical overall architecture doc
 - no duplicated top-level ownership maps with conflicting claims
 - clear separation between current architecture and target architecture
+- target proposals are labeled as proposals until their beads are implemented and `docs/current_system_state.md` is updated
 - explicit note when a doc is historical, supporting, or canonical
 - no fake abstractions or naming that hides the real service owner
 - no documentation drift that treats alerts as the source of truth or pushes execution-admission logic back into account snapshot/read-model services

@@ -18,6 +18,7 @@ build:
 entry:
   schedule:
     cadence_minutes: 2
+    offset_seconds: 30
     market_hours_only: true
     window:
       start_et: "10:00"

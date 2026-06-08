@@ -14,6 +14,8 @@ Use these entrypoints:
 - [Lifecycle Storage Shape](./2026-06-03_lifecycle_storage_shape.md) for the `spr-g9s.3` schema note covering lifecycle fact tables, the position projection, cutover posture, and schema CLI
 - [Trading Lifecycle Bead Plan](./2026-06-03_trading_lifecycle_bead_plan.md) for the ready-to-create bead breakdown, dependency order, and acceptance criteria for the lifecycle rewrite
 - [Strategy Sourcing, Candidate Scanning, And Capture Architecture](./2026-06-03_strategy_sourcing_scanning_capture_architecture.md) for the target source resolver, candidate-build, strategy-entry, and capture-controller direction that replaces discovery-run ownership
+- [Trading Engine Inspiration Repos](./2026-06-08_trading_engine_inspiration_repos.md) for the small set of external repos/frameworks Spreads should keep borrowing boundaries and patterns from without embedding their runtimes
+- [Entry Quality Pipeline Refactor Proposal](./2026-06-08_entry_quality_pipeline_refactor.md) for the proposed centralized `quality_profile` pipeline that replaces scattered entry gates with staged, explainable filter evidence
 - [Market Data Storage And Logging Design](./2026-06-05_market_data_storage_and_logging.md) for the `spr-zuy.6` storage decision covering raw option tick partitions, DB event-log removal, consistent structured logging, retention by partition drop, and partition-aware storage ops state
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
@@ -44,9 +46,9 @@ Use these entrypoints:
 
 Implementation and evaluation companion:
 
-- use `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>` for canonical historical evaluation
-- use `uv run spreads backtest compare --left-json <path> --right-json <path>` for artifact-to-artifact comparison
-- treat `uv run spreads analyze` as the legacy post-close report surface, not the canonical backtest/evaluation path
+- No canonical historical-evaluation CLI is currently shipped.
+- For offline selection research or policy tuning, validate the current strategy config and stored ticker-source/candidate/signal/decision facts first.
+- If a historical evaluator or policy comparison tool is needed, create/update a bead and design it against the current ticker-source/candidate/signal/decision model instead of reviving removed `replay`, `audit`, `backtest`, or `analyze` wrappers.
 
 Detailed design specifications:
 
@@ -64,7 +66,7 @@ Legacy or earlier architecture context:
 
 These are historical context unless a task explicitly names one of them as the active source of truth.
 
-Older planning docs may still mention pre-cutover `replay`, `audit_replay`, `packages/core/cli/replay.py`, or `services/opportunity_replay.py` surfaces. Current shipped naming is `backtest` for historical evaluation and `audit_snapshot.py` behind the `spreads audit` operator view.
+Older planning docs may still mention pre-cutover `replay`, `audit_replay`, `backtest`, `analyze`, `packages/core/cli/replay.py`, or `services/opportunity_replay.py` surfaces. Treat those references as historical context unless a new bead explicitly reintroduces a current evaluator against the current ticker-source/candidate/signal/decision model.
 
 - [0DTE System Architecture](./0dte_system_architecture.md)
 - [Trading Engine Architecture](./trading_engine_architecture.md)

@@ -20,6 +20,8 @@
 - For Python quality checks, use the required and advisory Ruff commands in [docs/development/python_quality.md](docs/development/python_quality.md). Keep complexity scans report-only unless a bead explicitly includes that cleanup.
 - Before implementing, check whether the change duplicates logic, creates a parallel path, or deepens a weak abstraction. If it does, prefer a small structural cleanup or shared helper/service extraction.
 - Extend one canonical path per behavior instead of maintaining near-duplicate flows.
+- For trading-engine architecture, strategy-quality, scanner/source, execution, risk, or portfolio refactor work, start from [docs/planning/2026-06-08_trading_engine_inspiration_repos.md](docs/planning/2026-06-08_trading_engine_inspiration_repos.md) and borrow patterns from the listed inspiration repos before inventing a local shape.
+- If research surfaces another repo or framework with a clearly better pattern for the active design problem, propose adding it to the inspiration list with the specific pattern to borrow and what not to copy. Do not silently expand the inspiration set or chase broad framework rewrites.
 - Keep the current runtime boundary explicit:
   - candidate and signal selection are account-agnostic strategy truth
   - execution admission is a separate execution/risk concern

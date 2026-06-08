@@ -340,7 +340,10 @@ def _trading_strategy_job_specs(
                     job_type=f"trading_strategy_{routine_name}",
                     enabled=True,
                     schedule_type="interval_minutes",
-                    schedule={"minutes": max(int(routine.schedule.cadence_minutes), 1)},
+                    schedule={
+                        "minutes": max(int(routine.schedule.cadence_minutes), 1),
+                        "offset_seconds": max(int(routine.schedule.offset_seconds), 0),
+                    },
                     payload={
                         "trading_strategy_id": strategy.trading_strategy_id,
                         "routine": routine_name,
