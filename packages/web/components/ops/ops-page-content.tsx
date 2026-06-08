@@ -11,6 +11,7 @@ import {
   formatBytes,
   formatCompactNumber,
   formatTimestamp,
+  EntryQualityWaterfallSummary,
   MetricTile,
   readNumber,
   readRecord,
@@ -55,6 +56,11 @@ export function OpsPageContent() {
   const storageTables = readRecordList(storageDetails.tables);
   const workers = readRecordList(tradingDetails.workers);
   const workerLanes = readRecordList(tradingDetails.worker_lanes);
+  const tradingFlows = readRecordList(tradingDetails.trading_flows);
+  const tradingFlowsWithQuality = tradingFlows.filter((flow) => {
+    const waterfall = readRecord(readRecord(flow.candidate_state).quality_waterfall);
+    return readString(waterfall.profile_id, "") !== "" || Object.keys(readRecord(waterfall.stage_counts)).length > 0;
+  });
   const runningJobs = latestJobRows(readRecordList(tradingDetails.running_jobs));
   const queuedJobs = latestJobRows(readRecordList(tradingDetails.queued_jobs));
   const engine = readRecord(tradingDetails.engine);
@@ -184,6 +190,26 @@ export function OpsPageContent() {
           </div>
         </div>
       </section>
+
+      {tradingFlowsWithQuality.length ? (
+        <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Entry Quality</div>
+          <div className="grid gap-3">
+            {tradingFlowsWithQuality.map((flow) => {
+              const candidateState = readRecord(flow.candidate_state);
+              return (
+                <div key={readString(flow.trading_strategy_id, "flow")} className="min-w-0">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-medium">{readString(flow.trading_strategy_id, "strategy")}</span>
+                    <RuntimeStatusBadge value={flow.status} />
+                  </div>
+                  <EntryQualityWaterfallSummary value={candidateState.quality_waterfall} />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">

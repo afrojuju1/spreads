@@ -17,6 +17,14 @@ STATUS_STYLES = {
     "idle": "cyan",
     "unknown": "magenta",
 }
+QUALITY_STAGE_COLUMNS = (
+    ("source_preflight", "Source"),
+    ("underlying_setup", "Setup"),
+    ("chain_viability", "Chain"),
+    ("contract_fit", "Contract"),
+    ("premium_quality", "Premium"),
+    ("selection", "Selection Filters"),
+)
 
 
 def build_console(*, no_color: bool) -> Console:
@@ -115,6 +123,83 @@ def _render_count_map(
     if len(ranked) > limit:
         rendered += ", …"
     return _truncate(rendered, length=item_length)
+
+
+def _render_stage_count_map(value: Any, *, item_length: int = 30) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    order = {"pass": 0, "watch": 1, "block": 2}
+    ranked = sorted(
+        ((str(key), int(raw_value)) for key, raw_value in value.items() if str(key or "").strip()),
+        key=lambda item: (order.get(item[0], 99), item[0]),
+    )
+    aliases = {"pass": "P", "watch": "W", "block": "B"}
+    rendered = " / ".join(f"{aliases.get(name, name)} {_render_value(count)}" for name, count in ranked if count > 0)
+    return _truncate(rendered or "-", length=item_length)
+
+
+def _waterfall_stage_counts(waterfall: dict[str, Any], stage: str) -> dict[str, Any]:
+    stage_counts = waterfall.get("stage_counts")
+    if isinstance(stage_counts, dict) and isinstance(stage_counts.get(stage), dict):
+        return dict(stage_counts[stage])
+    for row in list(waterfall.get("stage_rows") or []):
+        if isinstance(row, dict) and row.get("stage") == stage and isinstance(row.get("counts"), dict):
+            return dict(row["counts"])
+    return {}
+
+
+def _waterfall_stage_blockers(waterfall: dict[str, Any], stage: str) -> dict[str, Any]:
+    for row in list(waterfall.get("stage_rows") or []):
+        if isinstance(row, dict) and row.get("stage") == stage and isinstance(row.get("top_blocker_reasons"), dict):
+            return dict(row["top_blocker_reasons"])
+    return {}
+
+
+def _render_quality_waterfall_summary(console: Console, flow_rows: list[dict[str, Any]]) -> None:
+    rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for flow in flow_rows:
+        candidate_state = flow.get("candidate_state")
+        waterfall = candidate_state.get("quality_waterfall") if isinstance(candidate_state, dict) else None
+        if isinstance(waterfall, dict) and (waterfall.get("profile_id") or waterfall.get("stage_counts")):
+            rows.append((flow, waterfall))
+    if not rows:
+        return
+
+    for flow, waterfall in rows:
+        selection = dict(waterfall.get("selection") or {})
+        admission = dict(waterfall.get("admission") or {})
+        strategy = str(flow.get("trading_strategy_id") or flow.get("name") or "-")
+        profile = _render_value(waterfall.get("profile_id"))
+        table = Table(
+            title=f"Entry Quality Waterfall: {strategy} ({profile})",
+            header_style="bold",
+            show_lines=False,
+        )
+        table.add_column("Stage", no_wrap=True)
+        table.add_column("Counts", justify="right", no_wrap=True, min_width=13)
+        table.add_column("Top Reasons", max_width=42, overflow="ellipsis", no_wrap=True)
+        for stage, label in QUALITY_STAGE_COLUMNS:
+            table.add_row(
+                label,
+                _render_stage_count_map(_waterfall_stage_counts(waterfall, stage), item_length=36),
+                _render_count_map(
+                    _waterfall_stage_blockers(waterfall, stage),
+                    limit=3,
+                    item_length=48,
+                    normalize_names=True,
+                ),
+            )
+        table.add_row(
+            "Decision Selection",
+            _render_count_map(selection.get("decision_state_counts"), limit=4, item_length=36, normalize_names=True),
+            "-",
+        )
+        table.add_row(
+            "Admission",
+            _render_count_map(admission.get("admission_state_counts"), limit=4, item_length=36, normalize_names=True),
+            "-",
+        )
+        console.print(table)
 
 
 def _compact_count_name(value: str) -> str:
@@ -488,6 +573,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
                 ),
             )
         console.print(table)
+        _render_quality_waterfall_summary(console, flow_rows)
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:

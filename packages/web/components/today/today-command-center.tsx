@@ -12,6 +12,7 @@ import {
   formatNullableCurrency,
   formatQuantity,
   formatTimestamp,
+  EntryQualityWaterfallSummary,
   MetricTile,
   readNumber,
   readRecord,
@@ -104,6 +105,10 @@ export function TodayCommandCenter() {
   const latestCandidateRun = readRecord(candidateState.latest_run);
   const topCandidateBlockers = countEntries(candidateState.top_rejection_counts);
   const candidateDiagnostics = readRecordList(candidateState.diagnostics).slice(0, 10);
+  const qualityWaterfall = readRecord(candidateState.quality_waterfall);
+  const hasQualityWaterfall =
+    readString(qualityWaterfall.profile_id, "") !== "" ||
+    Object.keys(readRecord(qualityWaterfall.stage_counts)).length > 0;
 
   const pendingLabel = loading ? "Loading" : "-";
   const marketDate = readString(summary.market_date, "");
@@ -266,6 +271,11 @@ export function TodayCommandCenter() {
                     </Badge>
                   ))}
                 </div>
+              </div>
+            ) : null}
+            {hasQualityWaterfall ? (
+              <div className="mt-3">
+                <EntryQualityWaterfallSummary value={qualityWaterfall} compact />
               </div>
             ) : null}
             <div className="mt-3 flex flex-wrap gap-2">

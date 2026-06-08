@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from core.db.decorators import with_storage
 from core.jobs.orchestration import NEW_YORK
@@ -28,7 +28,14 @@ from core.services.execution_lifecycle import (
 from core.services.trading_engine.portfolio_runtime import describe_position_exit_state
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
-from core.storage.engine_models import CandidateRunModel, CandidateSymbolDiagnosticModel, TickerSourceObservationModel, TickerSourceRunModel
+from core.storage.engine_models import (
+    CandidateRunModel,
+    CandidateSymbolDiagnosticModel,
+    TickerSourceObservationModel,
+    TickerSourceRunModel,
+    TradeCandidateModel,
+)
+from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionModel, TradeSignalModel
 from core.storage.serializers import parse_date
 from core.value_coercion import (
     as_list,
@@ -56,6 +63,14 @@ MARK_STALE_AFTER_SECONDS = 15 * 60
 TOP_POSITION_LIMIT = 5
 RECENT_ALERT_LIMIT = 200
 SOURCE_SYMBOL_LIMIT = 25
+ENTRY_QUALITY_STAGE_ORDER = (
+    "source_preflight",
+    "underlying_setup",
+    "chain_viability",
+    "contract_fit",
+    "premium_quality",
+    "selection",
+)
 
 
 @dataclass(frozen=True)
@@ -377,7 +392,110 @@ def _candidate_symbol_diagnostic_payload(row: CandidateSymbolDiagnosticModel) ->
     }
 
 
-def _candidate_run_payload(row: CandidateRunModel, *, diagnostics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _int_count_map(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    counts: dict[str, int] = {}
+    for key, raw_count in value.items():
+        name = as_text(key)
+        count = coerce_int(raw_count)
+        if name is None or count is None or count <= 0:
+            continue
+        counts[name] = int(count)
+    return dict(sorted(counts.items()))
+
+
+def _quality_blockers_by_stage(diagnostics: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    by_stage: dict[str, Counter[str]] = {}
+    for diagnostic in diagnostics:
+        evidence = as_mapping(diagnostic.get("evidence"))
+        waterfall = as_mapping(evidence.get("quality_waterfall"))
+        for result in as_list(waterfall.get("results")):
+            if not isinstance(result, Mapping):
+                continue
+            if str(result.get("status") or "").strip().lower() != "block":
+                continue
+            stage = as_text(result.get("stage"))
+            if stage is None:
+                continue
+            stage_counts = by_stage.setdefault(stage, Counter())
+            for reason in as_list(result.get("reason_codes")):
+                reason_code = as_text(reason)
+                if reason_code is not None:
+                    stage_counts[reason_code] += 1
+    return {stage: dict(counts.most_common(8)) for stage, counts in sorted(by_stage.items())}
+
+
+def _quality_profile_from_diagnostics(diagnostics: list[dict[str, Any]]) -> str | None:
+    for diagnostic in diagnostics:
+        evidence = as_mapping(diagnostic.get("evidence"))
+        waterfall = as_mapping(evidence.get("quality_waterfall"))
+        profile_id = as_text(evidence.get("quality_profile_id") or waterfall.get("profile_id"))
+        if profile_id is not None:
+            return profile_id
+    return None
+
+
+def _quality_waterfall_state(
+    *,
+    summary: Mapping[str, Any],
+    diagnostics: list[dict[str, Any]],
+    selection_counts: Mapping[str, Any] | None,
+    admission_counts: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    raw_stage_counts = as_mapping(summary.get("filter_stage_counts"))
+    stage_counts = {stage: _int_count_map(counts) for stage, counts in raw_stage_counts.items()}
+    stage_blockers = _quality_blockers_by_stage(diagnostics)
+    stage_order = tuple(dict.fromkeys((*ENTRY_QUALITY_STAGE_ORDER, *stage_counts.keys(), *stage_blockers.keys())))
+    stage_rows = []
+    for stage in stage_order:
+        counts = stage_counts.get(stage, {})
+        blockers = stage_blockers.get(stage, {})
+        stage_rows.append(
+            {
+                "stage": stage,
+                "counts": counts,
+                "total": sum(counts.values()),
+                "top_blocker_reasons": blockers,
+            }
+        )
+
+    top_blockers = _int_count_map(summary.get("top_quality_blockers"))
+    if not top_blockers:
+        combined = Counter[str]()
+        for blockers in stage_blockers.values():
+            combined.update(blockers)
+        top_blockers = dict(combined.most_common(12))
+
+    selected_counts = _int_count_map(selection_counts)
+    admitted_counts = _int_count_map(admission_counts)
+    profile_id = as_text(summary.get("quality_profile_id")) or _quality_profile_from_diagnostics(diagnostics)
+    return {
+        "profile_id": profile_id,
+        "snapshot_count": coerce_int(summary.get("quality_snapshot_count")),
+        "blocked_snapshot_count": coerce_int(summary.get("quality_blocked_snapshot_count")),
+        "stage_counts": stage_counts,
+        "stage_rows": stage_rows,
+        "top_blocker_reasons": top_blockers,
+        "top_watch_reasons": _int_count_map(summary.get("top_quality_watch_reasons")),
+        "selection": {
+            "decision_state_counts": selected_counts,
+            "total": sum(selected_counts.values()),
+        },
+        "admission": {
+            "admission_state_counts": admitted_counts,
+            "total": sum(admitted_counts.values()),
+        },
+    }
+
+
+def _candidate_run_payload(
+    row: CandidateRunModel,
+    *,
+    diagnostics: list[dict[str, Any]] | None = None,
+    selection_counts: Mapping[str, Any] | None = None,
+    admission_counts: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "candidate_run_id": row.candidate_run_id,
         "run_key": row.run_key,
@@ -395,6 +513,8 @@ def _candidate_run_payload(row: CandidateRunModel, *, diagnostics: list[dict[str
         "candidate_count": row.candidate_count,
         "summary": dict(row.summary_json or {}),
         "diagnostics": list(diagnostics or []),
+        "selection_counts": _int_count_map(selection_counts),
+        "admission_counts": _int_count_map(admission_counts),
         "created_at": _render_datetime(row.created_at),
         "updated_at": _render_datetime(row.updated_at),
     }
@@ -446,6 +566,8 @@ def _latest_flow_facts(
         candidate_run_ids = [row.candidate_run_id for row in latest_candidates.values()]
         symbols_by_ticker_source_run: dict[str, list[str]] = {ticker_source_run_id: [] for ticker_source_run_id in ticker_source_run_ids}
         diagnostics_by_candidate_run: dict[str, list[dict[str, Any]]] = {candidate_run_id: [] for candidate_run_id in candidate_run_ids}
+        selection_counts_by_candidate_run: dict[str, dict[str, int]] = {candidate_run_id: {} for candidate_run_id in candidate_run_ids}
+        admission_counts_by_candidate_run: dict[str, dict[str, int]] = {candidate_run_id: {} for candidate_run_id in candidate_run_ids}
         if ticker_source_run_ids:
             for ticker_source_run_id, symbol in session.execute(
                 select(TickerSourceObservationModel.ticker_source_run_id, TickerSourceObservationModel.symbol)
@@ -476,6 +598,25 @@ def _latest_flow_facts(
                 rows = diagnostics_by_candidate_run.setdefault(diagnostic.candidate_run_id, [])
                 if len(rows) < SOURCE_SYMBOL_LIMIT:
                     rows.append(_candidate_symbol_diagnostic_payload(diagnostic))
+            candidate_run_ref = func.coalesce(TradeCandidateModel.candidate_run_id, TradeSignalModel.source_id)
+            for candidate_run_id, decision_state, count in session.execute(
+                select(candidate_run_ref, TradeDecisionModel.decision_state, func.count())
+                .join(TradeSignalModel, TradeDecisionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+                .outerjoin(TradeCandidateModel, TradeSignalModel.trade_candidate_id == TradeCandidateModel.trade_candidate_id)
+                .where(candidate_run_ref.in_(candidate_run_ids))
+                .group_by(candidate_run_ref, TradeDecisionModel.decision_state)
+            ):
+                counts = selection_counts_by_candidate_run.setdefault(str(candidate_run_id), {})
+                counts[str(decision_state or "unknown")] = int(count or 0)
+            for candidate_run_id, admission_state, count in session.execute(
+                select(candidate_run_ref, TradeAdmissionModel.admission_state, func.count())
+                .join(TradeSignalModel, TradeAdmissionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+                .outerjoin(TradeCandidateModel, TradeSignalModel.trade_candidate_id == TradeCandidateModel.trade_candidate_id)
+                .where(candidate_run_ref.in_(candidate_run_ids))
+                .group_by(candidate_run_ref, TradeAdmissionModel.admission_state)
+            ):
+                counts = admission_counts_by_candidate_run.setdefault(str(candidate_run_id), {})
+                counts[str(admission_state or "unknown")] = int(count or 0)
 
     return (
         {
@@ -483,7 +624,12 @@ def _latest_flow_facts(
             for ticker_source_id, row in latest_sources.items()
         },
         {
-            strategy_id: _candidate_run_payload(row, diagnostics=diagnostics_by_candidate_run.get(row.candidate_run_id, []))
+            strategy_id: _candidate_run_payload(
+                row,
+                diagnostics=diagnostics_by_candidate_run.get(row.candidate_run_id, []),
+                selection_counts=selection_counts_by_candidate_run.get(row.candidate_run_id, {}),
+                admission_counts=admission_counts_by_candidate_run.get(row.candidate_run_id, {}),
+            )
             for strategy_id, row in latest_candidates.items()
         },
     )
@@ -574,6 +720,12 @@ def _candidate_state(
     candidate_count = coerce_int(candidate_run.get("candidate_count")) or 0
     summary = as_mapping(candidate_run.get("summary"))
     diagnostics = [dict(row) for row in as_list(candidate_run.get("diagnostics")) if isinstance(row, Mapping)]
+    quality_waterfall = _quality_waterfall_state(
+        summary=summary,
+        diagnostics=diagnostics,
+        selection_counts=as_mapping(candidate_run.get("selection_counts")),
+        admission_counts=as_mapping(candidate_run.get("admission_counts")),
+    )
     return {
         "status": status,
         "raw_status": raw_status,
@@ -585,6 +737,10 @@ def _candidate_state(
         "diagnostic_status": summary.get("diagnostic_status"),
         "symbol_status_counts": as_mapping(summary.get("symbol_status_counts")),
         "top_rejection_counts": as_mapping(summary.get("top_rejection_counts")),
+        "quality_profile_id": quality_waterfall.get("profile_id"),
+        "filter_stage_counts": quality_waterfall.get("stage_counts"),
+        "top_quality_blockers": quality_waterfall.get("top_blocker_reasons"),
+        "quality_waterfall": quality_waterfall,
         "diagnostics": diagnostics,
         "latest_run": dict(candidate_run),
         "reason": "candidate_run_stale" if stale else ("no_candidates" if candidate_count == 0 else None),

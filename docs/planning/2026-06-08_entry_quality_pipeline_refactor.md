@@ -2,7 +2,7 @@
 
 Date: 2026-06-08
 
-Status: partially implemented. Beads `spr-34u.1` through `spr-34u.7` are shipped for `momentum_long_calls`; `spr-34u.8` through `spr-34u.10` remain open for ops rendering, cleanup, and final cutover validation.
+Status: partially implemented. Beads `spr-34u.1` through `spr-34u.8` are shipped for `momentum_long_calls`; `spr-34u.9` and `spr-34u.10` remain open for cleanup and final cutover validation.
 
 Related:
 
@@ -315,7 +315,7 @@ This is intentionally a full cleanup path, not a compatibility wrapper.
 5. Done: cut over `momentum_long_calls` entry to `quality_profile: momentum_long_call_v1`.
 6. Done: add target-DTE optionable chain viability early.
 7. Done: add SPY/QQQ relative-strength and market-regime filters.
-8. Remaining: update ops CLI/dashboard to show filter waterfall.
+8. Done: update ops CLI/dashboard to show filter waterfall.
 9. Remaining: remove stale duplicate gate plumbing once the pipeline is canonical.
 10. Remaining: live-validate the cutover after the remaining filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
 

@@ -44,6 +44,59 @@ export function readRecordList(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
+const QUALITY_STAGE_COLUMNS: Array<[string, string]> = [
+  ["source_preflight", "Source"],
+  ["underlying_setup", "Setup"],
+  ["chain_viability", "Chain"],
+  ["contract_fit", "Contract"],
+  ["premium_quality", "Premium"],
+];
+
+function humanizeCompactToken(value: unknown, fallback = "unknown"): string {
+  return readString(value, fallback).replaceAll("_", " ");
+}
+
+function readPositiveCountEntries(value: unknown, limit = 4): Array<[string, number]> {
+  return Object.entries(readRecord(value))
+    .map(([key, rawValue]) => [key, readNumber(rawValue)] as [string, number])
+    .filter(([key, count]) => key.length > 0 && Number.isFinite(count) && count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+}
+
+function formatCountEntries(value: unknown): string {
+  const order = new Map([
+    ["pass", 0],
+    ["watch", 1],
+    ["block", 2],
+  ]);
+  const entries = readPositiveCountEntries(value, 8).sort(
+    ([left], [right]) =>
+      (order.get(left) ?? 99) - (order.get(right) ?? 99) ||
+      left.localeCompare(right),
+  );
+  return entries.length
+    ? entries
+        .map(([name, count]) => `${humanizeCompactToken(name)} ${formatQuantity(count)}`)
+        .join(" / ")
+    : "—";
+}
+
+function waterfallStageCounts(
+  waterfall: Record<string, unknown>,
+  stage: string,
+): Record<string, unknown> {
+  const stageCounts = readRecord(waterfall.stage_counts);
+  const direct = readRecord(stageCounts[stage]);
+  if (Object.keys(direct).length) {
+    return direct;
+  }
+  const stageRow = readRecordList(waterfall.stage_rows).find(
+    (row) => readString(row.stage, "") === stage,
+  );
+  return readRecord(stageRow?.counts);
+}
+
 export function formatDate(value: string | null | undefined): string {
   return formatCalendarDate(value);
 }
@@ -204,6 +257,78 @@ export function RuntimeStatusBadge({
     >
       {resolved.replaceAll("_", " ")}
     </Badge>
+  );
+}
+
+export function EntryQualityWaterfallSummary({
+  value,
+  compact = false,
+}: {
+  value: unknown;
+  compact?: boolean;
+}) {
+  const waterfall = readRecord(value);
+  const profileId = readString(waterfall.profile_id, "");
+  const hasStageCounts = Object.keys(readRecord(waterfall.stage_counts)).length > 0;
+  if (!profileId && !hasStageCounts) {
+    return null;
+  }
+
+  const selection = readRecord(waterfall.selection);
+  const admission = readRecord(waterfall.admission);
+  const topBlockers = readPositiveCountEntries(waterfall.top_blocker_reasons, compact ? 3 : 5);
+  const gridClass = compact
+    ? "grid gap-2 sm:grid-cols-2"
+    : "grid gap-2 md:grid-cols-2 xl:grid-cols-4";
+
+  return (
+    <div className="rounded-lg border border-border/70 px-3 py-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+          Entry Quality
+        </div>
+        {profileId ? <Badge variant="outline">{profileId}</Badge> : null}
+      </div>
+      <div className={gridClass}>
+        {QUALITY_STAGE_COLUMNS.map(([stage, label]) => (
+          <div key={stage} className="min-w-0 rounded-md border border-border/60 px-2.5 py-2">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              {label}
+            </div>
+            <div className="mt-1 break-words text-sm font-medium">
+              {formatCountEntries(waterfallStageCounts(waterfall, stage))}
+            </div>
+          </div>
+        ))}
+        <div className="min-w-0 rounded-md border border-border/60 px-2.5 py-2">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            Selection
+          </div>
+          <div className="mt-1 break-words text-sm font-medium">
+            {formatCountEntries(selection.decision_state_counts)}
+          </div>
+        </div>
+        <div className="min-w-0 rounded-md border border-border/60 px-2.5 py-2">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            Admission
+          </div>
+          <div className="mt-1 break-words text-sm font-medium">
+            {formatCountEntries(admission.admission_state_counts)}
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {topBlockers.length ? (
+          topBlockers.map(([name, count]) => (
+            <Badge key={name} variant="outline">
+              {humanizeCompactToken(name)} {formatQuantity(count)}
+            </Badge>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">No top blockers</span>
+        )}
+      </div>
+    </div>
   );
 }
 
