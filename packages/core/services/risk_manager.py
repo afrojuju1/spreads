@@ -65,6 +65,8 @@ RISK_POLICY_DERIVED_FLAGS = {
     "max_contracts_per_position_configured": False,
 }
 ACCOUNT_CAPACITY_REQUEST_TIMEOUT_SECONDS = 5.0
+ENTRY_CAPACITY_ADMISSION_BOUNDARY = "entry_capacity_precheck"
+DEFERRED_EXECUTION_READINESS_REASON = "deferred_to_execution_submit"
 
 OPTIONAL_FLOAT_POLICY_KEYS = {
     "max_position_notional",
@@ -624,6 +626,86 @@ def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
     }
 
 
+def _deferred_execution_readiness_payload() -> dict[str, Any]:
+    return {
+        "status": "not_evaluated",
+        "reason": DEFERRED_EXECUTION_READINESS_REASON,
+        "message": "Final quote, broker, and order-submit readiness is evaluated by the execution submit path.",
+        "evaluated_by": "execution_submit",
+    }
+
+
+def build_entry_capacity_admission_payload(
+    *,
+    status: str,
+    reason: str | None,
+    message: str | None,
+    admissible_quantity: int | None,
+    required_buying_power: float | None,
+    available_buying_power: float | None,
+    account_available_buying_power: float | None = None,
+    reserved_buying_power: float | None = None,
+    buying_power_basis: str | None = None,
+    buying_power_source_field: str | None = None,
+    broker_buying_power_status: str | None = None,
+    limiting_constraint: str | None = None,
+    strategy_risk_budget: float | None = None,
+    position_size_pct_of_available_balance: float | None = None,
+    position_size_budget: float | None = None,
+    evaluated_at: str | None = None,
+) -> dict[str, Any]:
+    normalized_status = as_text(status) or "unknown"
+    capacity_reason = as_text(reason)
+    capacity_status = "admissible" if normalized_status in {"admissible", "approved", "ok", "pass", "passed"} else normalized_status
+    if capacity_status == "admissible":
+        reason_codes = [capacity_reason or "capacity_admissible"]
+        blockers: list[str] = []
+        top_level_reason = None if capacity_reason in {None, "capacity_admissible"} else capacity_reason
+    else:
+        reason_codes = [capacity_reason] if capacity_reason else []
+        blockers = list(reason_codes)
+        top_level_reason = capacity_reason
+    execution_readiness = _deferred_execution_readiness_payload()
+    capacity_admission = {
+        "status": capacity_status,
+        "reason": capacity_reason or ("capacity_admissible" if capacity_status == "admissible" else None),
+        "message": message,
+        "admissible_quantity": admissible_quantity,
+        "required_buying_power": required_buying_power,
+        "available_buying_power": available_buying_power,
+        "limiting_constraint": limiting_constraint,
+        "reason_codes": reason_codes,
+        "blockers": blockers,
+    }
+    return {
+        "status": "admissible" if capacity_status == "admissible" else capacity_status,
+        "reason": top_level_reason,
+        "message": message,
+        "admission_boundary": ENTRY_CAPACITY_ADMISSION_BOUNDARY,
+        "capacity_admission_kind": ENTRY_CAPACITY_ADMISSION_BOUNDARY,
+        "capacity_admission_status": capacity_status,
+        "execution_readiness_status": execution_readiness["status"],
+        "execution_readiness_reason": execution_readiness["reason"],
+        "capacity_admission": capacity_admission,
+        "execution_readiness": execution_readiness,
+        "reason_codes": reason_codes,
+        "blockers": blockers,
+        "evaluated_at": evaluated_at or utc_now_iso(),
+        "admissible_quantity": admissible_quantity,
+        "required_buying_power": required_buying_power,
+        "available_buying_power": available_buying_power,
+        "account_available_buying_power": account_available_buying_power,
+        "reserved_buying_power": reserved_buying_power,
+        "buying_power_basis": buying_power_basis,
+        "buying_power_source_field": buying_power_source_field,
+        "broker_buying_power_status": broker_buying_power_status,
+        "limiting_constraint": limiting_constraint,
+        "strategy_risk_budget": strategy_risk_budget,
+        "position_size_pct_of_available_balance": position_size_pct_of_available_balance,
+        "position_size_budget": position_size_budget,
+    }
+
+
 def build_execution_admission_snapshot(
     *,
     execution_store: Any,
@@ -649,36 +731,48 @@ def build_execution_admission_snapshot(
     )
     limiting_constraint = as_text(sizing.get("limiting_constraint"))
     admissible_quantity = coerce_int(sizing.get("recommended_quantity"))
-    snapshot = {
-        "status": "unknown",
-        "reason": None,
-        "message": None,
-        "evaluated_at": utc_now_iso(),
-        "admissible_quantity": None,
-        "required_buying_power": required_buying_power,
-        "available_buying_power": available_buying_power,
-        "account_available_buying_power": coerce_float(broker_buying_power.get("available_buying_power")),
-        "reserved_buying_power": coerce_float(broker_buying_power.get("reserved_buying_power")),
-        "buying_power_basis": as_text(buying_power_requirement.get("basis")),
-        "buying_power_source_field": as_text(broker_buying_power.get("source_field")),
-        "broker_buying_power_status": as_text(broker_buying_power.get("status")),
-        "limiting_constraint": limiting_constraint,
-        "strategy_risk_budget": strategy_risk_budget,
-        "position_size_pct_of_available_balance": coerce_float(sizing.get("position_size_pct_of_available_balance")),
-        "position_size_budget": coerce_float(sizing.get("position_size_budget")),
-    }
+
+    def capacity_payload(
+        *,
+        status: str,
+        reason: str | None,
+        message: str | None,
+        quantity: int | None,
+    ) -> dict[str, Any]:
+        return build_entry_capacity_admission_payload(
+            status=status,
+            reason=reason,
+            message=message,
+            admissible_quantity=quantity,
+            required_buying_power=required_buying_power,
+            available_buying_power=available_buying_power,
+            account_available_buying_power=coerce_float(broker_buying_power.get("available_buying_power")),
+            reserved_buying_power=coerce_float(broker_buying_power.get("reserved_buying_power")),
+            buying_power_basis=as_text(buying_power_requirement.get("basis")),
+            buying_power_source_field=as_text(broker_buying_power.get("source_field")),
+            broker_buying_power_status=as_text(broker_buying_power.get("status")),
+            limiting_constraint=limiting_constraint,
+            strategy_risk_budget=strategy_risk_budget,
+            position_size_pct_of_available_balance=coerce_float(sizing.get("position_size_pct_of_available_balance")),
+            position_size_budget=coerce_float(sizing.get("position_size_budget")),
+        )
+
     if str(broker_buying_power.get("status") or "") != "ok":
-        return {
-            **snapshot,
-            "reason": "broker_buying_power_unavailable",
-            "message": as_text(broker_buying_power.get("error_text")) or "Broker buying power is unavailable.",
-        }
+        reason = "broker_buying_power_unavailable"
+        return capacity_payload(
+            status="unknown",
+            reason=reason,
+            message=as_text(broker_buying_power.get("error_text")) or "Broker buying power is unavailable.",
+            quantity=None,
+        )
     if required_buying_power is None:
-        return {
-            **snapshot,
-            "reason": "unsupported_buying_power_estimate",
-            "message": "Buying power estimate is unavailable for this structure.",
-        }
+        reason = "unsupported_buying_power_estimate"
+        return capacity_payload(
+            status="unknown",
+            reason=reason,
+            message="Buying power estimate is unavailable for this structure.",
+            quantity=None,
+        )
 
     resolved_quantity = max(int(admissible_quantity or 0), 0)
     if resolved_quantity <= 0:
@@ -699,25 +793,13 @@ def build_execution_admission_snapshot(
                 f"(requires {required_buying_power:.2f}, "
                 f"available {available_buying_power:.2f})."
             )
-        return {
-            **snapshot,
-            "status": "blocked",
-            "reason": reason,
-            "message": message,
-            "admissible_quantity": 0,
-        }
+        return capacity_payload(status="blocked", reason=reason, message=message, quantity=0)
 
     message = f"Current account can carry up to {resolved_quantity} contract"
     if resolved_quantity != 1:
         message += "s"
     message += " now."
-    return {
-        **snapshot,
-        "status": "admissible",
-        "reason": None,
-        "message": message,
-        "admissible_quantity": resolved_quantity,
-    }
+    return capacity_payload(status="admissible", reason=None, message=message, quantity=resolved_quantity)
 
 
 def _broker_position_side(position: Mapping[str, Any]) -> str | None:

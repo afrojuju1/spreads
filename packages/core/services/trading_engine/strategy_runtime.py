@@ -24,6 +24,7 @@ from core.services.candidate_fields import (
 )
 from core.services.runtime_policy import resolve_runtime_policy_fields
 from core.services.risk_manager import (
+    build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,
     resolve_position_size_policy,
 )
@@ -214,6 +215,13 @@ def _persist_trade_admission(
             "slot_key": slot_key,
             "underlying_symbol": signal.get("underlying_symbol"),
             "candidate_identity": _candidate_identity_from_signal(signal),
+            "admission_boundary": admission_snapshot.get("admission_boundary"),
+            "capacity_admission_kind": admission_snapshot.get("capacity_admission_kind"),
+            "capacity_admission_status": admission_snapshot.get("capacity_admission_status"),
+            "execution_readiness_status": admission_snapshot.get("execution_readiness_status"),
+            "execution_readiness_reason": admission_snapshot.get("execution_readiness_reason"),
+            "capacity_admission": dict(admission_snapshot.get("capacity_admission") or {}),
+            "execution_readiness": dict(admission_snapshot.get("execution_readiness") or {}),
             **_quality_evidence_summary(signal),
         },
     )
@@ -705,24 +713,17 @@ def _selected_execution_admission(
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
         )
     except Exception as exc:
-        return {
-            "status": "unknown",
-            "reason": "execution_admission_unavailable",
-            "message": str(exc),
-            "evaluated_at": _utc_now(),
-            "admissible_quantity": None,
-            "required_buying_power": None,
-            "available_buying_power": None,
-            "account_available_buying_power": None,
-            "reserved_buying_power": None,
-            "buying_power_basis": None,
-            "buying_power_source_field": None,
-            "broker_buying_power_status": None,
-            "limiting_constraint": None,
-            "strategy_risk_budget": position_size_policy["max_risk_per_trade"],
-            "position_size_pct_of_available_balance": position_size_policy["position_size_pct_of_available_balance"],
-            "position_size_budget": None,
-        }
+        return build_entry_capacity_admission_payload(
+            status="unknown",
+            reason="execution_admission_unavailable",
+            message=str(exc),
+            evaluated_at=_utc_now(),
+            admissible_quantity=None,
+            required_buying_power=None,
+            available_buying_power=None,
+            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+        )
 
 
 def _run_trading_strategy_entry(
