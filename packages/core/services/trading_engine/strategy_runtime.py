@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -14,7 +13,6 @@ from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
     issue_pending_execution_intent,
 )
-from core.services.live_selection import select_live_signals
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import candidate_legs, payload_structure_identity
 from core.services.candidate_fields import (
@@ -31,7 +29,7 @@ from core.services.risk_manager import (
 )
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
-from core.services.trading_engine.data import CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet
+from core.services.trading_engine.data import CandidateBuildRequest, ResolvedTickerSet
 from core.services.trading_engine.data_runtime import (
     PostgresDataEngine,
     entry_engine_label,
@@ -39,6 +37,7 @@ from core.services.trading_engine.data_runtime import (
     entry_runtime_with_symbols,
     ticker_source_spec_from_strategy_source,
 )
+from core.services.trading_engine.entry_selection import EntrySelectionEngine, candidate_result_summary
 from core.services.trading_engine.facts import entry_trade_signal_id, persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
@@ -94,54 +93,6 @@ def _ticker_set_summary(ticker_set: ResolvedTickerSet) -> dict[str, Any]:
         "summary": dict(summary),
         "degradation": dict(degradation),
     }
-
-
-def _candidate_result_summary(candidate_result: CandidateBuildResult | None) -> dict[str, Any]:
-    if candidate_result is None:
-        return {
-            "status": "not_run",
-            "candidate_count": 0,
-            "symbol_count": 0,
-        }
-    return {
-        "candidate_run_id": candidate_result.candidate_run_id,
-        "candidate_count": len(candidate_result.candidates),
-        **dict(candidate_result.summary or {}),
-    }
-
-
-def _group_candidate_rows(candidates: tuple[Any, ...]) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        symbol = str(candidate.get("underlying_symbol") or "").upper().strip()
-        if not symbol:
-            continue
-        grouped.setdefault(symbol, []).append(dict(candidate))
-    return grouped
-
-
-def _candidate_result_runtime_filter_reason_counts(candidate_result: CandidateBuildResult) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for diagnostic in candidate_result.diagnostics:
-        if not isinstance(diagnostic, dict):
-            continue
-        rejection_counts = diagnostic.get("rejection_counts")
-        if not isinstance(rejection_counts, dict):
-            continue
-        runtime_filter = rejection_counts.get("runtime_filter")
-        if not isinstance(runtime_filter, dict):
-            continue
-        for reason, count in runtime_filter.items():
-            rendered = str(reason or "").strip()
-            if not rendered:
-                continue
-            try:
-                counts[rendered] = counts.get(rendered, 0) + int(count)
-            except (TypeError, ValueError):
-                continue
-    return dict(sorted(counts.items()))
 
 
 def _candidate_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -575,7 +526,7 @@ def _refresh_entry_runtime_signals(
             "status": "skipped",
             "reason": "ticker_source_blocked",
             "ticker_set": ticker_summary,
-            "candidate_build": _candidate_result_summary(None),
+            "candidate_build": candidate_result_summary(None),
             "strategy_run": {},
             "engine_facts": engine_fact_summary,
         }
@@ -603,51 +554,29 @@ def _refresh_entry_runtime_signals(
         request=candidate_request,
         runtime=runtime_with_symbols,
     )
-    quality_analysis = None
-    quality_summary: dict[str, Any] = {}
-    if runtime_with_symbols.quality_profile_id is not None:
-        from core.services.trading_engine.entry_quality_evidence import build_entry_quality_analysis
-
-        quality_analysis = build_entry_quality_analysis(
-            runtime=runtime_with_symbols,
-            ticker_set=ticker_set,
-            candidate_result=candidate_result,
-        )
-        quality_candidates = quality_analysis.filter_candidates([dict(row) for row in candidate_result.candidates if isinstance(row, dict)])
-        quality_summary = dict(quality_analysis.summary)
-        candidate_result = replace(
-            candidate_result,
-            candidates=quality_candidates,
-            summary={
-                **dict(candidate_result.summary or {}),
-                **quality_summary,
-                "candidate_count": len(quality_candidates),
-                "quality_blocked_candidate_count": len(candidate_result.candidates) - len(quality_candidates),
-            },
-        )
-    symbol_candidates = _group_candidate_rows(candidate_result.candidates)
-    runtime_filter_reason_counts = _candidate_result_runtime_filter_reason_counts(candidate_result)
     previous_promotable, previous_selection_memory = _read_previous_entry_selection(
         signal_store=storage.signals,
         runtime=runtime_with_symbols,
         session_date=market_date,
     )
-    selection = select_live_signals(
+    selection_result = EntrySelectionEngine().select(
+        runtime=runtime_with_symbols,
+        ticker_set=ticker_set,
+        ticker_summary=ticker_summary,
+        candidate_result=candidate_result,
         label=entry_engine_label(runtime_with_symbols),
         cycle_id=run_key,
         generated_at=generated_at,
-        symbol_candidates=symbol_candidates,
         previous_promotable=previous_promotable,
         previous_selection_memory=previous_selection_memory,
         top_promotable=_entry_candidate_limit(runtime_with_symbols),
         top_monitor=ENTRY_MONITOR_LIMIT,
-        profile=runtime_with_symbols.build_settings.build_profile,
-        signal_cycle_context={
-            "ticker_set": ticker_summary,
-            "candidate_build": _candidate_result_summary(candidate_result),
-            "entry_quality": quality_summary,
-        },
     )
+    candidate_result = selection_result.candidate_result
+    quality_analysis = selection_result.quality_analysis
+    symbol_candidates = selection_result.symbol_candidates
+    runtime_filter_reason_counts = dict(selection_result.runtime_filter_reason_counts)
+    selection = dict(selection_result.selection)
     selected_rows = [
         _signal_row_from_selection(
             runtime=runtime_with_symbols,
@@ -680,6 +609,11 @@ def _refresh_entry_runtime_signals(
         result={
             **selection_summary,
             "selected_signal_rows": selected_rows,
+            "entry_selection": {
+                "selected_candidate_count": len(selection_result.selected_candidates),
+                "monitored_candidate_count": len(selection_result.monitored_candidates),
+                "rejected_candidate_count": len(selection_result.rejected_candidates),
+            },
         },
         config_hash=runtime_with_symbols.config_hash,
     )
@@ -741,11 +675,14 @@ def _refresh_entry_runtime_signals(
         "status": "ok",
         "reason": None,
         "ticker_set": ticker_summary,
-        "candidate_build": _candidate_result_summary(candidate_result),
+        "candidate_build": candidate_result_summary(candidate_result),
         "strategy_run": {
             "strategy_run_id": strategy_run.get("strategy_run_id"),
             "signal_count": len(signals),
             "selection_summary": selection_summary,
+            "selected_candidate_count": len(selection_result.selected_candidates),
+            "monitored_candidate_count": len(selection_result.monitored_candidates),
+            "rejected_candidate_count": len(selection_result.rejected_candidates),
         },
         "engine_facts": engine_fact_summary,
         "signals": signals,

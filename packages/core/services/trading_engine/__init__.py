@@ -31,6 +31,7 @@ from .entry_quality_pipeline import (
     evaluate_entry_quality_snapshot,
     evaluate_momentum_long_call_snapshot,
 )
+from .entry_selection import EntrySelectionEngine, EntrySelectionResult
 from .feature_snapshots import (
     FEATURE_SNAPSHOT_BUILDER_REGISTRY,
     FeatureSnapshotBuilder,
@@ -62,6 +63,8 @@ __all__ = [
     "EntryQualityStageName",
     "EntryQualityStatus",
     "EntryQualityWaterfall",
+    "EntrySelectionEngine",
+    "EntrySelectionResult",
     "ExecutionEngine",
     "FEATURE_SNAPSHOT_BUILDER_REGISTRY",
     "FeatureSnapshot",
