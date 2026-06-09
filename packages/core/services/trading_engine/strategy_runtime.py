@@ -26,6 +26,7 @@ from core.services.runtime_policy import resolve_runtime_policy_fields
 from core.services.risk_manager import (
     build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,
+    build_portfolio_admission_snapshot,
     resolve_position_size_policy,
 )
 from core.services.runtime_policy import build_runtime_policy_ref
@@ -71,6 +72,43 @@ def _intent_id(trade_decision_id: str) -> str:
 
 def _slot_key(trading_strategy_id: str, underlying_symbol: str) -> str:
     return f"entry:{trading_strategy_id}:{underlying_symbol}"
+
+
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _portfolio_admission_policy(
+    *,
+    runtime: EntryRuntime,
+    position_size_policy: dict[str, Any],
+) -> dict[str, Any]:
+    is_long_call = runtime.trade_structure == "long_call"
+    default_strategy_cap = 10 if is_long_call else 2
+    default_family_cap = 10 if is_long_call else 2
+    strategy_cap = _positive_int(runtime.strategy.max_open_positions, default=default_strategy_cap)
+    daily_cap = _positive_int(
+        runtime.strategy.max_new_entries_per_day or runtime.strategy.max_daily_actions,
+        default=strategy_cap,
+    )
+    max_risk_per_trade = position_size_policy.get("max_risk_per_trade")
+    max_total_strategy_risk = None
+    if max_risk_per_trade is not None:
+        max_total_strategy_risk = round(float(max_risk_per_trade) * strategy_cap, 2)
+    return {
+        "trading_strategy_id": runtime.trading_strategy_id,
+        "strategy_family": runtime.trade_structure,
+        "max_strategy_open_positions": strategy_cap,
+        "max_family_open_positions": max(default_family_cap, min(strategy_cap, default_family_cap)),
+        "max_symbol_family_open_positions": 1,
+        "max_daily_new_entries": daily_cap,
+        "max_total_strategy_risk": max_total_strategy_risk,
+        "max_correlated_group_open_positions": 6 if is_long_call else 3,
+    }
 
 
 def _entry_candidate_limit(runtime: EntryRuntime) -> int:
@@ -209,6 +247,7 @@ def _persist_trade_admission(
             "admissible_quantity": admission_snapshot.get("admissible_quantity"),
             "required_buying_power": admission_snapshot.get("required_buying_power"),
             "available_buying_power": admission_snapshot.get("available_buying_power"),
+            "portfolio_admission": dict(admission_snapshot.get("portfolio_admission") or {}),
         },
         evidence={
             "trade_signal_id": trade_signal_id,
@@ -220,9 +259,12 @@ def _persist_trade_admission(
             "admission_boundary": admission_snapshot.get("admission_boundary"),
             "capacity_admission_kind": admission_snapshot.get("capacity_admission_kind"),
             "capacity_admission_status": admission_snapshot.get("capacity_admission_status"),
+            "portfolio_admission_status": admission_snapshot.get("portfolio_admission_status"),
+            "portfolio_admission_reason": admission_snapshot.get("portfolio_admission_reason"),
             "execution_readiness_status": admission_snapshot.get("execution_readiness_status"),
             "execution_readiness_reason": admission_snapshot.get("execution_readiness_reason"),
             "capacity_admission": dict(admission_snapshot.get("capacity_admission") or {}),
+            "portfolio_admission": dict(admission_snapshot.get("portfolio_admission") or {}),
             "execution_readiness": dict(admission_snapshot.get("execution_readiness") or {}),
             **_quality_evidence_summary(signal),
         },
@@ -740,8 +782,42 @@ def _selected_execution_admission(
     execution_store: Any,
     runtime: Any,
     signal: dict[str, Any],
+    market_date: str,
 ) -> dict[str, Any]:
     position_size_policy = resolve_position_size_policy(getattr(runtime.build_settings, "risk_defaults", {}))
+    signal_execution_shape = dict(signal.get("execution_shape") or {})
+    signal_order_payload = dict(signal.get("order_payload") or signal_execution_shape.get("order_payload") or {})
+    quantity = _positive_int(
+        signal_order_payload.get("qty") or signal_order_payload.get("quantity") or signal_execution_shape.get("quantity"),
+        default=1,
+    )
+    portfolio_admission = build_portfolio_admission_snapshot(
+        execution_store=execution_store,
+        candidate=signal,
+        trading_strategy_id=runtime.trading_strategy_id,
+        strategy_family=runtime.trade_structure,
+        session_date=market_date,
+        policy=_portfolio_admission_policy(
+            runtime=runtime,
+            position_size_policy=position_size_policy,
+        ),
+        quantity=quantity,
+        limit_price=None,
+    )
+    portfolio_status = str(portfolio_admission.get("status") or "").lower()
+    if portfolio_status not in {"admissible", "approved", "ok", "pass", "passed"}:
+        return build_entry_capacity_admission_payload(
+            status="not_evaluated",
+            reason=None,
+            message=None,
+            evaluated_at=_utc_now(),
+            admissible_quantity=None,
+            required_buying_power=None,
+            available_buying_power=None,
+            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            portfolio_admission=portfolio_admission,
+        )
     try:
         return build_execution_admission_snapshot(
             execution_store=execution_store,
@@ -749,6 +825,7 @@ def _selected_execution_admission(
             limit_price=None,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            portfolio_admission=portfolio_admission,
         )
     except Exception as exc:
         return build_entry_capacity_admission_payload(
@@ -761,6 +838,7 @@ def _selected_execution_admission(
             available_buying_power=None,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            portfolio_admission=portfolio_admission,
         )
 
 
@@ -947,6 +1025,7 @@ def _run_trading_strategy_entry(
             execution_store=execution_store,
             runtime=runtime,
             signal=signal,
+            market_date=resolved_market_date,
         )
         execution_intent_id = _intent_id(str(decision["trade_decision_id"]))
         intent_expires_at = _expires_in(ENTRY_INTENT_TTL_MINUTES)

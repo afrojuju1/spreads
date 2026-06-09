@@ -200,6 +200,8 @@ quality profile -> account-agnostic selection -> portfolio admission -> executio
 
 `quality profile` proves the candidate is structurally and economically worth considering for that family. `selection` chooses the best account-agnostic idea. `portfolio admission` decides whether the account should add this exposure now. `execution admission` validates broker-submission readiness, including leg shape, net debit/credit sign, quote freshness, and adapter support. Broker submission remains behind `execution_intent_dispatch` and `execution_submit`.
 
+Portfolio admission is evaluated after a selected natural entry decision and before pending intent creation. It reads current portfolio positions, open entry attempts, and active entry intents, then persists a `portfolio_admission` sub-payload on the trade admission alongside `capacity_admission` and deferred `execution_readiness`. The policy blocks duplicate symbol/family exposure, strategy and family caps, daily new-entry caps, correlated broad-index ETF crowding, and total strategy max-loss exposure when the strategy exposes a computable risk budget. `TradingOpsState` projects portfolio admission separately under each trading flow and summarizes portfolio block counts/reasons separately from quality blockers and execution-submit guards.
+
 Shadow and paper are distinct activation modes. A shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. A paper strategy may submit only when its execution posture, observed broker environment, approval mode, portfolio admission, execution admission, and risk gates all allow it. Do not use disabled strategy breadth as a hidden auto-allocator.
 
 ## Paper Execution Contract

@@ -1068,6 +1068,60 @@ def _latest_flow_facts(
     )
 
 
+def _portfolio_admission_state(row: TradeAdmissionModel) -> dict[str, Any]:
+    evidence = as_mapping(row.evidence_json)
+    portfolio_admission = as_mapping(evidence.get("portfolio_admission"))
+    status = as_text(evidence.get("portfolio_admission_status")) or as_text(portfolio_admission.get("status")) or "not_evaluated"
+    reason = as_text(evidence.get("portfolio_admission_reason")) or as_text(portfolio_admission.get("reason"))
+    return {
+        "status": status,
+        "reason": reason,
+        "message": as_text(portfolio_admission.get("message")),
+        "latest_admission_decision_id": row.admission_decision_id,
+        "admission_state": row.admission_state,
+        "decided_at": _render_datetime(row.decided_at),
+        "policy": as_mapping(portfolio_admission.get("policy")),
+        "metrics": as_mapping(portfolio_admission.get("metrics")),
+        "blockers": as_list(portfolio_admission.get("blockers")),
+        "reason_codes": as_list(portfolio_admission.get("reason_codes")),
+    }
+
+
+def _latest_portfolio_admissions(
+    *,
+    storage: Any,
+    market_date: str,
+    strategy_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    if not strategy_ids or not storage.engine_facts.schema_ready():
+        return {}
+    start, end = _market_date_window(market_date)
+    latest: dict[str, dict[str, Any]] = {}
+    with storage.engine_facts.session_factory() as session:
+        rows = session.execute(
+            select(TradeSignalModel.trading_strategy_id, TradeAdmissionModel)
+            .join(TradeSignalModel, TradeAdmissionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+            .where(TradeSignalModel.trading_strategy_id.in_(strategy_ids))
+            .where(TradeAdmissionModel.admission_kind == "entry_open")
+            .where(TradeAdmissionModel.decided_at >= start)
+            .where(TradeAdmissionModel.decided_at < end)
+            .order_by(
+                TradeAdmissionModel.decided_at.desc(),
+                TradeAdmissionModel.admission_decision_id.asc(),
+            )
+            .limit(500)
+        ).all()
+    for strategy_id, row in rows:
+        key = str(strategy_id)
+        if key in latest:
+            continue
+        state = _portfolio_admission_state(row)
+        if state.get("status") == "not_evaluated" and not state.get("reason"):
+            continue
+        latest[key] = state
+    return latest
+
+
 def _source_state(
     *,
     ticker_source_run: Mapping[str, Any] | None,
@@ -1414,6 +1468,11 @@ def _build_trading_flows(
         ticker_source_ids={strategy.source.ref for strategy in strategies},
         strategy_ids={strategy.trading_strategy_id for strategy in strategies},
     )
+    latest_portfolio_admissions = _latest_portfolio_admissions(
+        storage=storage,
+        market_date=market_date,
+        strategy_ids={strategy.trading_strategy_id for strategy in strategies},
+    )
     flows: list[dict[str, Any]] = []
     for strategy in strategies:
         latest_source = latest_sources.get(strategy.source.ref)
@@ -1458,6 +1517,14 @@ def _build_trading_flows(
         max_entries = strategy.risk_limits.max_new_entries_per_day
         used_entries = coerce_int(position_summary.get("position_count")) or 0
         remaining_entries = None if max_entries is None else max(max_entries - used_entries - int(intent_summary.get("active_intent_count") or 0), 0)
+        portfolio_admission = latest_portfolio_admissions.get(
+            strategy.trading_strategy_id,
+            {
+                "status": "not_evaluated",
+                "reason": "no_entry_admission_today",
+                "message": "No selected entry has reached portfolio admission today.",
+            },
+        )
         flows.append(
             {
                 "trading_strategy_id": strategy.trading_strategy_id,
@@ -1491,12 +1558,14 @@ def _build_trading_flows(
                 "entry_posture": entry_posture,
                 "intent_state": intent_summary,
                 "position_state": position_summary,
+                "portfolio_admission": portfolio_admission,
                 "capacity": {
                     "open_position_count": position_summary.get("open_position_count"),
                     "max_open_positions": strategy.risk_limits.max_open_positions,
                     "session_entry_count": used_entries,
                     "max_daily_entries": max_entries,
                     "remaining_daily_entries": remaining_entries,
+                    "portfolio_admission": portfolio_admission,
                 },
                 "status": _combine_statuses(
                     str(source_state.get("status") or "unknown"),
@@ -2388,6 +2457,14 @@ def build_trading_ops_state(
         trading_allowed = False
 
     active_intent_count = sum(int(as_mapping(flow.get("intent_state")).get("active_intent_count") or 0) for flow in flows.trading_flows)
+    portfolio_admission_states = [
+        as_mapping(flow.get("portfolio_admission"))
+        for flow in flows.trading_flows
+        if as_mapping(flow.get("portfolio_admission")).get("status") not in {None, "", "not_evaluated"}
+    ]
+    portfolio_block_reasons = Counter(
+        as_text(state.get("reason")) or "unknown" for state in portfolio_admission_states if as_text(state.get("status")) == "blocked"
+    )
     primary_flow = next(
         (flow for flow in flows.trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"),
         flows.trading_flows[0] if flows.trading_flows else {},
@@ -2427,6 +2504,10 @@ def build_trading_ops_state(
         "open_position_count": len(positions.open_positions),
         "open_execution_count": len(execution.open_execution_attempts),
         "active_intent_count": active_intent_count,
+        "portfolio_admission_evaluated_strategy_count": len(portfolio_admission_states),
+        "portfolio_blocked_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "blocked"),
+        "portfolio_unknown_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "unknown"),
+        "portfolio_block_reasons": dict(sorted(portfolio_block_reasons.items())),
         "max_open_positions": primary_capacity.get("max_open_positions"),
         "max_daily_entries": primary_capacity.get("max_daily_entries"),
         "session_entry_count": primary_capacity.get("session_entry_count"),
@@ -2477,6 +2558,17 @@ def build_trading_ops_state(
         "top_positions": positions.top_positions,
         "trading_flows": flows.trading_flows,
         "primary_trading_flow": primary_flow,
+        "portfolio_admission": {
+            "evaluated_strategy_count": len(portfolio_admission_states),
+            "blocked_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "blocked"),
+            "unknown_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "unknown"),
+            "block_reasons": dict(sorted(portfolio_block_reasons.items())),
+            "latest_by_strategy": {
+                str(flow.get("trading_strategy_id")): as_mapping(flow.get("portfolio_admission"))
+                for flow in flows.trading_flows
+                if as_mapping(flow.get("portfolio_admission")).get("status") not in {None, "", "not_evaluated"}
+            },
+        },
         "alert_delivery": alerts.alert_delivery,
         "mark_health": {
             "status": positions.mark_health_status,
