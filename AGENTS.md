@@ -61,8 +61,13 @@
   - `uv run spreads execution-runtimes --json`
 - Do not add frontend or API callers to retired fragmented ops surfaces.
 - The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
-- For target-aware operator reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
-- Canonical live-ops examples:
+- When you are already running inside `/home/ade/Projects/spreads` on `ade-nucbox-k8-plus`, use local CLI and Docker commands directly. Do not use `--env ade-nucbox-k8-plus` passthrough from the same box.
+- Use `--env <target>` only when operating from a different host and intentionally routing through the deploy target. For target-aware remote reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
+- Canonical live-ops examples on the live box:
+  - `uv run spreads ops state --json`
+  - `uv run spreads ops storage --json`
+  - `uv run spreads jobs --json`
+- Canonical remote live-ops examples from another host:
   - `uv run spreads ops state --env ade-nucbox-k8-plus --json`
   - `uv run spreads ops storage --env ade-nucbox-k8-plus --json`
   - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
