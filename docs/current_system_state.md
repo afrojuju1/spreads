@@ -157,9 +157,10 @@ Each strategy owns:
 - execution posture, approval mode, observed broker environment, and runtime
 - `config_hash`
 
-Current default-enabled strategy:
+Current default-enabled strategies:
 
 - `momentum_long_calls`
+- `short_dated_index_call_credit`
 
 Available but disabled-by-default strategy configs:
 
@@ -168,11 +169,12 @@ Available but disabled-by-default strategy configs:
 - `short_dated_earnings_long_strangle`
 - `short_dated_earnings_put_debit`
 - `short_dated_etf_short_put`
-- `short_dated_index_call_credit`
 - `short_dated_index_iron_condor`
 - `short_dated_index_put_credit`
 
 `momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, applies `entry.quality_profile: momentum_long_call_v1`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
+
+`short_dated_index_call_credit` is the first deliberately enabled non-long-call paper proof family. It consumes the static `liquid_index_etfs` source, applies `entry.quality_profile: call_credit_spread_v1`, and remains subject to portfolio admission plus execution-submit structure guards before any Alpaca paper submission.
 
 Disabled strategy configs are kept as authored strategy definitions, but they do not generate default scheduler jobs until intentionally re-enabled.
 
