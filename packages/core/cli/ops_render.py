@@ -602,11 +602,13 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Strategy", max_width=28, overflow="ellipsis")
         table.add_column("Posture", max_width=28, overflow="ellipsis")
         table.add_column("Source", max_width=18, overflow="ellipsis")
+        table.add_column("Evidence", max_width=18, overflow="ellipsis")
         table.add_column("Reason", max_width=22, overflow="ellipsis")
         for row in strategy_breadth_rows:
             source = dict(row.get("source") or {})
             entry = dict(row.get("entry") or {})
             entry_schedule = dict(entry.get("schedule") or {})
+            observation = dict(row.get("latest_observation") or {})
             table.add_row(
                 f"{str(row.get('trading_strategy_id') or row.get('name') or '-')}\n{_render_value(row.get('trade_structure'))}",
                 (
@@ -614,6 +616,11 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
                     f"{_render_value(row.get('execution_mode'))}/{_render_value(row.get('approval_mode'))}"
                 ),
                 f"{_render_value(source.get('ref'))}\n{_render_value(entry_schedule.get('cadence'))} {'on' if entry.get('enabled') else 'off'}",
+                (
+                    f"{_render_value(observation.get('candidate_count'))} cand / "
+                    f"{_render_value(observation.get('signal_count'))} sig\n"
+                    f"{_render_value(observation.get('entry_run_mode') or observation.get('status'))}"
+                ),
                 _render_value(row.get("not_active_reason")),
             )
         console.print(table)

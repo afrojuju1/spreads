@@ -43,11 +43,13 @@ from core.services.trading_engine.facts import entry_trade_signal_id, persist_en
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
 from core.services.trading_strategies import routine_should_run_now
-from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_runtime
+from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_observation_runtime, resolve_entry_runtime
 from core.value_coercion import unique_text_list, utc_now, utc_now_iso as _utc_now
 
 ENTRY_INTENT_TTL_MINUTES = 5
 ENTRY_MONITOR_LIMIT = 12
+NATURAL_ENTRY_PROVENANCE = "natural_strategy"
+OBSERVATION_ENTRY_PROVENANCE = "strategy_observation"
 
 
 def _expires_in(minutes: int) -> str:
@@ -297,7 +299,9 @@ def _record_skipped_strategy_run(
     generated_at: str,
     reason: str,
     ticker_set: ResolvedTickerSet,
+    observation_only: bool = False,
 ) -> None:
+    provenance = OBSERVATION_ENTRY_PROVENANCE if observation_only else NATURAL_ENTRY_PROVENANCE
     signal_store.upsert_strategy_run(
         strategy_run_id=entry_engine_strategy_run_id(run_key, runtime.trading_strategy_id),
         trading_strategy_id=runtime.trading_strategy_id,
@@ -310,6 +314,9 @@ def _record_skipped_strategy_run(
         completed_at=generated_at,
         status="skipped",
         result={
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
             "reason": reason,
             "ticker_set": _ticker_set_summary(ticker_set),
             "candidate_count": 0,
@@ -319,9 +326,9 @@ def _record_skipped_strategy_run(
     )
 
 
-def _runtime_signal_eligibility(runtime: EntryRuntime, row: dict[str, Any]) -> str:
+def _runtime_signal_eligibility(runtime: EntryRuntime, row: dict[str, Any], *, observation_only: bool = False) -> str:
     eligibility = str(row.get("eligibility") or "live").strip().lower() or "live"
-    if runtime.strategy.execution.mode == "shadow" and eligibility == "live":
+    if (observation_only or runtime.strategy.execution.mode == "shadow") and eligibility == "live":
         return "analysis_only"
     return eligibility
 
@@ -390,10 +397,12 @@ def _signal_row_from_selection(
     generated_at: str,
     strategy_run_id: str,
     row: dict[str, Any],
+    observation_only: bool = False,
 ) -> dict[str, Any]:
     candidate = _candidate_payload(row)
     symbol = str(candidate.get("underlying_symbol") or row.get("underlying_symbol") or "").upper()
-    eligibility = _runtime_signal_eligibility(runtime, row)
+    eligibility = _runtime_signal_eligibility(runtime, row, observation_only=observation_only)
+    provenance = OBSERVATION_ENTRY_PROVENANCE if observation_only else NATURAL_ENTRY_PROVENANCE
     policy_fields = resolve_runtime_policy_fields(
         profile=runtime.build_settings.build_profile,
         root_symbol=symbol,
@@ -441,6 +450,9 @@ def _signal_row_from_selection(
             "trigger_policy": dict(runtime.trigger_policy),
             "execution_mode": runtime.strategy.execution.mode,
             "approval_mode": runtime.strategy.execution.approval,
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
             "selection_state": row.get("selection_state"),
             "selection_rank": row.get("selection_rank"),
             "generated_at": generated_at,
@@ -492,13 +504,20 @@ def _refresh_entry_runtime_signals(
     market_date: str,
     run_key: str,
     planner_job_run_id: str | None,
+    observation_only: bool = False,
 ) -> dict[str, Any]:
     generated_at = _utc_now()
+    provenance = OBSERVATION_ENTRY_PROVENANCE if observation_only else NATURAL_ENTRY_PROVENANCE
     context = EngineContext(
         db_target=db_target,
         storage=storage,
         job_run_id=planner_job_run_id,
-        metadata={"config_hash": runtime.config_hash},
+        metadata={
+            "config_hash": runtime.config_hash,
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
+        },
     )
     data_engine = PostgresDataEngine(context)
     source_spec = ticker_source_spec_from_strategy_source(runtime.strategy.source)
@@ -527,10 +546,14 @@ def _refresh_entry_runtime_signals(
             generated_at=generated_at,
             reason="ticker_source_blocked",
             ticker_set=ticker_set,
+            observation_only=observation_only,
         )
         return {
             "status": "skipped",
             "reason": "ticker_source_blocked",
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
             "ticker_set": ticker_summary,
             "candidate_build": candidate_result_summary(None),
             "strategy_run": {},
@@ -589,6 +612,7 @@ def _refresh_entry_runtime_signals(
             generated_at=generated_at,
             strategy_run_id=entry_engine_strategy_run_id(run_key, runtime_with_symbols.trading_strategy_id),
             row=dict(row),
+            observation_only=observation_only,
         )
         for row in list(selection.get("signals") or [])
         if isinstance(row, dict)
@@ -611,6 +635,9 @@ def _refresh_entry_runtime_signals(
         completed_at=generated_at,
         status="completed",
         result={
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
             **selection_summary,
             "selected_signal_rows": selected_rows,
             "entry_selection": {
@@ -678,6 +705,9 @@ def _refresh_entry_runtime_signals(
     return {
         "status": "ok",
         "reason": None,
+        "entry_run_mode": "observation" if observation_only else "natural",
+        "validation_provenance": provenance,
+        "observation_only": observation_only,
         "ticker_set": ticker_summary,
         "candidate_build": candidate_result_summary(candidate_result),
         "strategy_run": {
@@ -730,6 +760,8 @@ def _run_trading_strategy_entry(
     planner_job_run_id: str | None = None,
     run_key: str | None = None,
     storage: Any | None = None,
+    observation_only: bool = False,
+    respect_schedule: bool = True,
 ) -> dict[str, Any]:
     signal_store = storage.signals
     execution_store = storage.execution
@@ -744,23 +776,38 @@ def _run_trading_strategy_entry(
     if engine_facts is None or not engine_facts.schema_ready():
         return {"status": "skipped", "reason": "engine_fact_schema_unavailable"}
 
-    runtime = resolve_entry_runtime(trading_strategy_id=trading_strategy_id)
-    if runtime.strategy.entry is None or not routine_should_run_now(runtime.strategy.entry):
+    runtime = (
+        resolve_entry_observation_runtime(trading_strategy_id=trading_strategy_id)
+        if observation_only
+        else resolve_entry_runtime(trading_strategy_id=trading_strategy_id)
+    )
+    provenance = OBSERVATION_ENTRY_PROVENANCE if observation_only else NATURAL_ENTRY_PROVENANCE
+    if runtime.strategy.entry is None or (respect_schedule and not routine_should_run_now(runtime.strategy.entry)):
         return {
             "status": "skipped",
             "reason": "outside_schedule_window",
             "trading_strategy_id": runtime.trading_strategy_id,
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
         }
 
     resolved_market_date = market_date or _market_date_today()
-    run_key = run_key or f"strategy:{runtime.trading_strategy_id}:entry:{_utc_now()}"
-    scope_key = f"entry:{runtime.trading_strategy_id}:{resolved_market_date}"
+    run_kind = "entry_observation" if observation_only else "entry"
+    run_key = run_key or f"strategy:{runtime.trading_strategy_id}:{run_kind}:{_utc_now()}"
+    scope_key = f"{run_kind}:{runtime.trading_strategy_id}:{resolved_market_date}"
     policy_ref = build_runtime_policy_ref(
         trading_strategy_id=runtime.trading_strategy_id,
         trade_structure=runtime.trade_structure,
         routine="entry",
         market_date=resolved_market_date,
     )
+    policy_ref = {
+        **policy_ref,
+        "entry_run_mode": "observation" if observation_only else "natural",
+        "validation_provenance": provenance,
+        "observation_only": observation_only,
+    }
     candidate_generation = _refresh_entry_runtime_signals(
         db_target=db_target,
         storage=storage,
@@ -768,6 +815,7 @@ def _run_trading_strategy_entry(
         market_date=resolved_market_date,
         run_key=run_key,
         planner_job_run_id=planner_job_run_id,
+        observation_only=observation_only,
     )
     if str(candidate_generation.get("status") or "") == "skipped":
         return {
@@ -776,6 +824,9 @@ def _run_trading_strategy_entry(
             "trading_strategy_id": runtime.trading_strategy_id,
             "market_date": resolved_market_date,
             "run_key": run_key,
+            "entry_run_mode": "observation" if observation_only else "natural",
+            "validation_provenance": provenance,
+            "observation_only": observation_only,
             "candidate_generation": candidate_generation,
         }
     signals = [dict(row) for row in list(candidate_generation.get("signals") or []) if isinstance(row, dict)]
@@ -846,6 +897,10 @@ def _run_trading_strategy_entry(
                 trade_decision_state = "selected_blocked"
                 reason_codes = ["active_execution_intent_exists"]
                 evidence["slot_key"] = slot_key
+        if observation_only and trade_decision_state == "selected":
+            trade_decision_state = "no_entry"
+            reason_codes = ["observation_only_signal_not_entry_eligible"]
+            evidence["observation_only"] = True
         trade_decision_id = _trade_decision_id(run_key, trade_signal_id)
         decision = engine_facts.upsert_trade_decision(
             trade_decision_id=trade_decision_id,
@@ -870,6 +925,8 @@ def _run_trading_strategy_entry(
             decided_at=_utc_now(),
         )
         decisions.append(decision)
+        if observation_only:
+            continue
         if trade_decision_state == "selected_blocked":
             continue
         if trade_decision_state != "selected":
@@ -985,6 +1042,9 @@ def _run_trading_strategy_entry(
         "trading_strategy_id": runtime.trading_strategy_id,
         "market_date": resolved_market_date,
         "run_key": run_key,
+        "entry_run_mode": "observation" if observation_only else "natural",
+        "validation_provenance": provenance,
+        "observation_only": observation_only,
         "signal_count": len(signals),
         "decision_count": len(decisions),
         "admission_count": len(admissions),
@@ -1068,4 +1128,25 @@ def run_trading_strategy_entry(
     return dict(result.summary)
 
 
-__all__ = ["PostgresStrategyEngine", "run_trading_strategy_entry"]
+@with_storage()
+def run_trading_strategy_entry_observation(
+    *,
+    db_target: str,
+    trading_strategy_id: str,
+    market_date: str | None = None,
+    respect_schedule: bool = True,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    return _run_trading_strategy_entry(
+        db_target=db_target,
+        trading_strategy_id=trading_strategy_id,
+        market_date=market_date,
+        planner_job_run_id=None,
+        run_key=None,
+        storage=storage,
+        observation_only=True,
+        respect_schedule=respect_schedule,
+    )
+
+
+__all__ = ["PostgresStrategyEngine", "run_trading_strategy_entry", "run_trading_strategy_entry_observation"]

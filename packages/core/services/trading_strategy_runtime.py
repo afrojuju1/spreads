@@ -13,6 +13,7 @@ from core.services.trading_strategies import (
     TradingStrategyConfig,
     load_active_trading_strategies,
     resolve_active_trading_strategy,
+    resolve_trading_strategy,
 )
 from core.services.trading_strategy_models import (
     StrategyBuildConfig,
@@ -216,6 +217,20 @@ def resolve_entry_runtime(
     return build_entry_runtime(strategy)
 
 
+def resolve_entry_observation_runtime(
+    *,
+    trading_strategy_id: str,
+    config_root: str | Path | None = None,
+) -> EntryRuntime:
+    strategy = resolve_trading_strategy(
+        trading_strategy_id,
+        config_root=config_root,
+    )
+    if strategy.entry is None or not strategy.entry.enabled:
+        raise ValueError(f"Trading strategy {trading_strategy_id} has no authored entry routine")
+    return build_entry_runtime(strategy)
+
+
 def resolve_management_runtime(
     *,
     trading_strategy_id: str,
@@ -294,6 +309,7 @@ __all__ = [
     "build_management_runtime",
     "build_strategy_build_settings",
     "find_management_runtime_for_position",
+    "resolve_entry_observation_runtime",
     "resolve_entry_runtime",
     "resolve_entry_runtimes",
     "resolve_management_runtime",

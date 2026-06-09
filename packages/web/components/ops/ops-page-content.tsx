@@ -258,26 +258,31 @@ export function OpsPageContent() {
             />
           </div>
           <div className="mt-4 overflow-x-auto rounded-lg border border-border/70">
-            <div className="min-w-[760px]">
-              <div className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_1fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="min-w-[900px]">
+              <div className="grid grid-cols-[1.2fr_0.8fr_1fr_0.7fr_0.8fr_1fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                 <span>Strategy</span>
                 <span>Structure</span>
                 <span>Posture</span>
                 <span>Execution</span>
+                <span>Evidence</span>
                 <span>Reason</span>
               </div>
               <div className="divide-y divide-border/60">
                 {strategyBreadthRows.slice(0, 12).map((row) => {
                   const isActive = row.active === true;
+                  const latestObservation = readRecord(row.latest_observation);
                   return (
                     <div
                       key={readString(row.trading_strategy_id, "strategy")}
-                      className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_1fr] gap-3 px-3 py-2 text-sm"
+                      className="grid grid-cols-[1.2fr_0.8fr_1fr_0.7fr_0.8fr_1fr] gap-3 px-3 py-2 text-sm"
                     >
                       <span className="min-w-0 truncate font-medium">{readString(row.trading_strategy_id, "-")}</span>
                       <span className="min-w-0 truncate">{humanizeToken(row.trade_structure, "-")}</span>
                       <span className="min-w-0 truncate">{humanizeToken(row.ops_posture, "-")}</span>
                       <span className="min-w-0 truncate">{humanizeToken(row.execution_mode, "-")}</span>
+                      <span className="min-w-0 truncate">
+                        {formatOptionalCompact(latestObservation.candidate_count)} / {formatOptionalCompact(latestObservation.signal_count)}
+                      </span>
                       <span className="min-w-0 truncate">{humanizeToken(row.not_active_reason, isActive ? "active" : "-")}</span>
                     </div>
                   );

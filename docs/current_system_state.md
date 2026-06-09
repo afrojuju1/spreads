@@ -320,6 +320,8 @@ The dashboard should show strategy-owned runtime state, not recreate old runtime
 
 Entry planning treats non-live signal eligibility, including `analysis_only` emitted by shadow-mode strategy runs, as observation evidence rather than selected-entry eligibility. Those rows may be persisted for regime comparison, but they must not create selected entry decisions or execution intents.
 
+Disabled strategy breadth can be run explicitly through `spreads ops observe-strategy <trading_strategy_id>`. Observation runs resolve authored strategy config without enabling scheduler jobs, run the normal ticker-source, candidate-build, entry-quality, signal, and decision persistence spine, force `analysis_only`/`observation_only` provenance, and stop before admission or execution-intent creation. `TradingOpsState.details.strategy_breadth[].latest_observation` exposes the latest observation evidence for each authored strategy.
+
 `TradingOpsState.details.broker_exposure` classifies the latest broker account snapshot positions by ownership against canonical open Spreads position legs. Broker option legs should be labeled as `spreads_managed`, `spreads_synthetic_validation`, or `external_manual` instead of being hidden behind raw broker account positions.
 
 ## Rollout Notes
