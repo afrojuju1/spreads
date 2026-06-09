@@ -238,6 +238,51 @@ def _execution_admission_payload_from_broker_rejection(
     )
 
 
+def _execution_admission_payload_from_submission_guard(
+    *,
+    attempt: Mapping[str, Any],
+    guard: Mapping[str, Any],
+) -> dict[str, Any]:
+    request = attempt.get("request") if isinstance(attempt.get("request"), Mapping) else {}
+    quantity = max(coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    reason = as_text(guard.get("reason")) or "submission_guard_blocked"
+    message = as_text(guard.get("message")) or "Execution submission was blocked by a pre-submit guard."
+    evidence = guard.get("evidence") if isinstance(guard.get("evidence"), Mapping) else {}
+    source_object_id = as_text(request.get("execution_intent_id")) or as_text(attempt.get("execution_attempt_id"))
+    return normalize_lifecycle_admission(
+        {
+            "status": "blocked",
+            "reason": reason,
+            "message": message,
+            "evaluated_at": utc_now_iso(),
+            "admissible_quantity": 0,
+            "requested_quantity": None if quantity <= 0 else int(quantity),
+        },
+        admission_kind="submit_structure_guard",
+        source_object_type="execution_intent" if as_text(request.get("execution_intent_id")) is not None else "execution_attempt",
+        source_object_id=source_object_id,
+        session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
+        requested_quantity=None if quantity <= 0 else int(quantity),
+        requested_notional=_execution_notional(
+            quantity=None if quantity <= 0 else int(quantity),
+            limit_price=coerce_float(attempt.get("limit_price")),
+        ),
+        policy_snapshot=request.get("risk_policy") if isinstance(request.get("risk_policy"), Mapping) else {},
+        capability_snapshot={"submission_guard": dict(guard)},
+        metrics={
+            "requested_quantity": None if quantity <= 0 else int(quantity),
+            "requested_limit_price": coerce_float(attempt.get("limit_price")),
+            **({} if not isinstance(evidence, Mapping) else dict(evidence)),
+        },
+        evidence={
+            "submission_guard": dict(guard),
+            "order": dict(request.get("order")) if isinstance(request.get("order"), Mapping) else {},
+        },
+        reason_codes=[str(value) for value in guard.get("reason_codes") or [reason] if str(value).strip()],
+        blockers=[str(value) for value in guard.get("blockers") or [reason] if str(value).strip()],
+    )
+
+
 def _execution_notional(*, quantity: int | None, limit_price: float | None, multiplier: float = 100.0) -> float | None:
     if quantity is None or quantity <= 0 or limit_price is None or limit_price <= 0:
         return None

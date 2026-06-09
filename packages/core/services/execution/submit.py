@@ -41,9 +41,10 @@ from .shared import (
 from .admission import (
     _execution_admission_payload_from_account_capacity,
     _execution_admission_payload_from_broker_rejection,
+    _execution_admission_payload_from_submission_guard,
     _validate_submit_account_capacity,
 )
-from .order_requests import _normalize_submit_order_request, _validate_live_deployment_quality
+from .order_requests import _normalize_submit_order_request, _validate_live_deployment_quality, _validate_option_structure_submission
 
 
 @with_storage()
@@ -99,6 +100,56 @@ def run_execution_submit(
 
     requested_at = as_text(payload.get("requested_at")) or utc_now_iso()
     client_order_id = as_text(payload.get("client_order_id"))
+    order_request = _normalize_submit_order_request(
+        payload=payload,
+        order_request=order_request,
+    )
+    structure_guard = _validate_option_structure_submission(
+        payload=payload,
+        order_request=order_request,
+        now=datetime.now(UTC),
+    )
+    if not structure_guard["ok"]:
+        message = str(structure_guard["message"])
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            completed_at=utc_now_iso(),
+            error_text=message,
+            position_id=as_text(payload.get("position_id")),
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        admission = _execution_admission_payload_from_submission_guard(
+            attempt={
+                **payload,
+                "request": {
+                    **request,
+                    "order": order_request,
+                },
+            },
+            guard=structure_guard,
+        )
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=f"Execution failed before submission: {message}",
+        )
+        _sync_linked_execution_intent(
+            execution_store=execution_store,
+            attempt=failed_attempt,
+            state="failed",
+            event_type="failed",
+            message=f"Execution failed before submission: {message}",
+            payload_updates={"execution_admission": admission},
+        )
+        return {
+            "status": "blocked",
+            "reason": str(structure_guard["reason"]),
+            "execution_attempt_id": execution_attempt_id,
+            "message": message,
+            "attempt": failed_attempt,
+            "execution_admission": admission,
+            "submission_guard": structure_guard,
+        }
 
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
         request_execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), Mapping) else {}
@@ -215,11 +266,6 @@ def run_execution_submit(
                 "message": str(account_capacity["message"]),
                 "attempt": failed_attempt,
             }
-    order_request = _normalize_submit_order_request(
-        payload=payload,
-        order_request=order_request,
-    )
-
     submitted_order: dict[str, Any] | None = None
     try:
         submission = adapter.submit_order(order_request)
