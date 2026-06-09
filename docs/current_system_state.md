@@ -154,7 +154,7 @@ Each strategy owns:
 - entry quality profile and quality overrides when configured
 - runtime controls
 - risk and limit policy references
-- execution mode, approval mode, environment, and runtime
+- execution posture, approval mode, observed broker environment, and runtime
 - `config_hash`
 
 Current default-enabled strategy:
@@ -178,9 +178,62 @@ Disabled strategy configs are kept as authored strategy definitions, but they do
 
 The long-vol strategy configs are disabled and shadow-mode by default as operator policy. The Spreads execution path itself supports their two-long-leg `mleg` debit order shape when a strategy is intentionally enabled for paper/live; long-vol must not be blocked by vertical-only width or return-on-risk validation.
 
+## Paper Execution Contract
+
+Paper mode is part of the normal execution lifecycle, not a separate engine. Keep three axes separate in code, docs, and operator state:
+
+- Spreads execution posture: authored strategy intent from `execution.mode`.
+- Broker environment: observed Alpaca account/API target from broker/account state.
+- Validation provenance: why a lifecycle row exists.
+
+Execution posture values:
+
+- `shadow`: build candidates, signals, decisions, and analysis-only evidence without automatic broker submission.
+- `paper`: submit only through the canonical lifecycle against an Alpaca paper broker environment when approval and risk gates allow it.
+- `live`: submit through the same lifecycle with live-trading guards. On an Alpaca paper broker environment this is only broker-paper rehearsal evidence, not live-money proof.
+
+Broker environment is an observed fact, never a strategy config knob. The canonical normalized values for paper/lifecycle snapshots are:
+
+- `alpaca_paper`
+- `alpaca_live`
+
+Use `alpaca_custom` or `unknown` only when the Alpaca base URL is nonstandard or environment resolution fails. Existing account snapshots may still expose raw `paper`, `live`, or `custom`; new lifecycle and ops projections should normalize those into `broker_environment`.
+
+Validation provenance values:
+
+- `natural_strategy`: emitted by the scheduled strategy entry/manage flow from real ticker-source, candidate, signal, decision, admission, intent, attempt, order, fill, and position facts.
+- `synthetic_validation`: emitted by an operator-run smoke harness for paper lifecycle mechanics. It must be visibly labeled and cannot satisfy natural selected-trade validation beads.
+- `operator_direct`: emitted by deliberate operator actions such as direct order helpers, refresh, cancel, or other manually requested lifecycle work.
+
+The expected environment/provenance snapshot shape is:
+
+- `execution_posture`
+- `approval_mode`
+- `execution_runtime`
+- `broker`
+- `broker_environment`
+- `broker_environment_source`
+- `environment_compatible`
+- `environment_mismatch_reason`
+- `validation_provenance`
+- `strategy_run_id`
+- `trade_decision_id`
+- `execution_intent_id`
+- `execution_attempt_id`
+- `observed_at`
+
+Mismatch behavior:
+
+- `paper` posture with `alpaca_live` must block automatic broker submission and raise operator attention.
+- `live` posture with `alpaca_live` must still pass the existing live-trading deployment guard before broker submission.
+- `live` posture with `alpaca_paper` may be useful rehearsal, but operator state must not present it as real-money proof.
+- Missing or unknown broker environment should block automatic paper/live submission until the environment is resolved.
+
+`runtime.live_enabled` is legacy/non-authoritative. It may remain in config payloads while older config shape is cleaned up, but new execution decisions must use `execution.mode`, observed `broker_environment`, approval mode, risk/admission gates, and the existing live-trading guard. Do not introduce replacement control flags such as `real_money_enabled` or `broker_submission_enabled`.
+
 ## Engine Entry State
 
-Strategy entry follows the Nautilus-shaped spine:
+Strategy entry follows the current Spreads-owned lifecycle spine:
 
 `DataEngine -> engine facts/read models -> StrategyEngine -> RiskEngine -> ExecutionEngine -> PortfolioEngine -> Ops projections`.
 
