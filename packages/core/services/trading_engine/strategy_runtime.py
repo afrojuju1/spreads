@@ -345,11 +345,23 @@ def _signal_blockers(candidate: dict[str, Any], *, eligibility: str | None = Non
 
 
 def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
+    order_payload = dict(candidate.get("order_payload") or {})
+    legs = candidate_legs(candidate)
     return {
         "underlying_symbol": candidate.get("underlying_symbol"),
+        "trade_structure": candidate.get("trade_structure") or candidate.get("strategy_family") or candidate.get("strategy"),
+        "strategy_family": candidate.get("strategy_family") or candidate.get("strategy") or candidate.get("trade_structure"),
+        "profile": candidate.get("profile"),
+        "expiration_date": candidate.get("expiration_date"),
         "structure_identity": _candidate_identity(candidate),
-        "legs": candidate_legs(candidate),
-        "order_payload": dict(candidate.get("order_payload") or {}),
+        "legs": legs,
+        "order_payload": order_payload,
+        "order_class": order_payload.get("order_class") or ("mleg" if len(legs) > 1 else "single"),
+        "quantity": candidate.get("quantity") or order_payload.get("qty"),
+        "limit_price": order_payload.get("limit_price")
+        or candidate.get("limit_price")
+        or candidate.get("midpoint_credit")
+        or candidate.get("midpoint_value"),
     }
 
 
@@ -956,6 +968,17 @@ def _run_trading_strategy_entry(
             selected_decision = decision
             selected_signal = signal
             continue
+        signal_execution_shape = dict(signal.get("execution_shape") or {})
+        signal_order_payload = dict(signal.get("order_payload") or signal_execution_shape.get("order_payload") or {})
+        signal_legs = list(signal.get("legs") or signal_execution_shape.get("legs") or [])
+        signal_economics = dict(signal.get("economics") or {})
+        intent_limit_price = (
+            signal_order_payload.get("limit_price")
+            or signal_economics.get("midpoint_credit")
+            or signal_economics.get("midpoint_value")
+            or signal.get("limit_price")
+        )
+        intent_quantity = selected_admission.get("admissible_quantity") or signal_execution_shape.get("quantity") or signal_order_payload.get("qty")
         selected_intent = issue_pending_execution_intent(
             execution_store,
             execution_intent_id=execution_intent_id,
@@ -977,10 +1000,18 @@ def _run_trading_strategy_entry(
                 "trade_decision_id": decision["trade_decision_id"],
                 "admission_decision_id": selected_admission["admission_decision_id"],
                 "underlying_symbol": signal.get("underlying_symbol"),
+                "trade_structure": runtime.trade_structure,
+                "strategy_family": runtime.trade_structure,
                 "candidate_identity": _candidate_identity_from_signal(signal),
+                "legs": signal_legs,
+                "execution_shape": signal_execution_shape,
+                "order_payload": signal_order_payload,
+                "quantity": intent_quantity,
+                "limit_price": intent_limit_price,
                 "execution_mode": runtime.strategy.execution.mode,
                 "approval_mode": runtime.strategy.execution.approval,
                 "execution_runtime": runtime.strategy.execution.runtime,
+                "validation_provenance": NATURAL_ENTRY_PROVENANCE,
                 "execution_admission": selected_admission,
                 "exit_policy": build_exit_policy_from_recipe_refs(tuple(runtime.strategy.management_recipe_refs)),
             },
@@ -990,6 +1021,8 @@ def _run_trading_strategy_entry(
                 "admission_decision_id": selected_admission["admission_decision_id"],
                 "slot_key": slot_key,
                 "execution_runtime": runtime.strategy.execution.runtime,
+                "leg_count": len(signal_legs),
+                "order_class": signal_order_payload.get("order_class") or ("mleg" if len(signal_legs) > 1 else "single"),
             },
         )
         selected_decision = decision

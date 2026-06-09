@@ -16,11 +16,15 @@ from core.services.alpaca import (
     resolve_trading_environment,
 )
 from core.services.execution.admission import ExecutionAdmissionError
-from core.services.execution.direct_orders import submit_equity_order, submit_option_order
+from core.services.execution.direct_orders import (
+    submit_equity_order,
+    submit_option_order,
+    submit_option_structure_order,
+)
 from core.services.execution.position_close import submit_position_close_by_id
 from core.observability.logging import log_event
-from core.services.option_structures import normalize_strategy_family, order_payload_legs
-from core.value_coercion import as_text, coerce_bool, utc_now_iso
+from core.services.option_structures import common_expiration_date, normalize_legs, normalize_strategy_family, order_payload_legs
+from core.value_coercion import as_text, coerce_bool, coerce_float, coerce_int, utc_now_iso
 from core.storage.read_models import TradeDecisionSignalRead
 from core.storage.serializers import parse_datetime
 
@@ -148,6 +152,24 @@ def _trade_decision_is_active_for_intent(
     return True, None
 
 
+def _first_positive_float(*values: Any) -> float | None:
+    for value in values:
+        parsed = coerce_float(value)
+        if parsed is None or parsed == 0:
+            continue
+        return abs(parsed)
+    return None
+
+
+def _first_positive_int(*values: Any) -> int | None:
+    for value in values:
+        parsed = coerce_int(value)
+        if parsed is None or parsed <= 0:
+            continue
+        return parsed
+    return None
+
+
 def _trade_decision_option_payload(
     *,
     engine_facts: Any,
@@ -170,34 +192,87 @@ def _trade_decision_option_payload(
 
     signal = decision_signal.signal
     execution_shape = decision_signal.execution_shape
-    order_payload = decision_signal.order_payload
-    legs = order_payload_legs(order_payload) or decision_signal.execution_shape_legs or decision_signal.signal_legs
-    if len(legs) != 1:
-        raise ValueError("Trade-decision dispatch currently requires a single-leg option execution shape.")
+    order_payload = decision_signal.order_payload or (dict(signal.get("order_payload")) if isinstance(signal.get("order_payload"), dict) else {})
+    expiration_hint = (
+        as_text(execution_shape.get("expiration_date")) or as_text(signal.get("expiration_date")) or as_text(order_payload.get("expiration_date"))
+    )
+    legs = (
+        order_payload_legs(order_payload, expiration_date=expiration_hint)
+        or normalize_legs(execution_shape.get("legs"), expiration_date=expiration_hint)
+        or normalize_legs(decision_signal.execution_shape_legs, expiration_date=expiration_hint)
+        or normalize_legs(decision_signal.signal_legs, expiration_date=expiration_hint)
+    )
+    if not legs:
+        raise ValueError("Trade-decision option shape is missing canonical legs.")
+    expiration_date = common_expiration_date(legs) or expiration_hint
+    if expiration_date is not None:
+        legs = normalize_legs(legs, expiration_date=expiration_date)
+    admission = payload.get("execution_admission") if isinstance(payload.get("execution_admission"), dict) else {}
+    economics = decision_signal.economics
+    quantity = (
+        _first_positive_int(
+            payload.get("quantity"),
+            decision_signal.selected_quantity,
+            admission.get("admissible_quantity"),
+            order_payload.get("qty"),
+        )
+        or 1
+    )
+    limit_price = _first_positive_float(
+        payload.get("limit_price"),
+        order_payload.get("limit_price"),
+        economics.get("midpoint_credit"),
+        economics.get("midpoint_value"),
+        economics.get("net_credit"),
+        economics.get("net_debit"),
+        economics.get("credit"),
+        economics.get("debit"),
+        signal.get("limit_price"),
+        signal.get("midpoint_credit"),
+        signal.get("midpoint_value"),
+    )
+    if limit_price is None:
+        raise ValueError("Trade-decision option shape is missing a limit price.")
+
+    trade_structure = (
+        decision_signal.trade_structure
+        or as_text(payload.get("trade_structure"))
+        or as_text(execution_shape.get("trade_structure"))
+        or as_text(execution_shape.get("strategy_family"))
+        or "long_call"
+    )
+    strategy_family = normalize_strategy_family(trade_structure)
     leg = dict(legs[0])
     symbol = as_text(order_payload.get("symbol")) or as_text(leg.get("symbol"))
     side = as_text(order_payload.get("side")) or as_text(leg.get("side"))
-    if symbol is None or side is None:
+    legacy_single_leg = len(legs) == 1 and strategy_family in {"long_call", "long_put"}
+    if legacy_single_leg and (symbol is None or side is None):
         raise ValueError("Trade-decision option shape is missing symbol or side.")
-    admission = payload.get("execution_admission") if isinstance(payload.get("execution_admission"), dict) else {}
-    quantity = (
-        as_text(payload.get("quantity"))
-        or as_text(decision_signal.selected_quantity)
-        or as_text(admission.get("admissible_quantity"))
-        or as_text(order_payload.get("qty"))
-        or "1"
+    candidate_payload = dict(signal.get("candidate")) if isinstance(signal.get("candidate"), dict) else {}
+    candidate_payload.update(
+        {
+            "underlying_symbol": (
+                as_text(signal.get("underlying_symbol"))
+                or as_text(execution_shape.get("underlying_symbol"))
+                or as_text(candidate_payload.get("underlying_symbol"))
+            ),
+            "strategy": strategy_family,
+            "strategy_family": strategy_family,
+            "trade_structure": trade_structure,
+            "profile": as_text(signal.get("profile")) or as_text(execution_shape.get("profile")) or as_text(candidate_payload.get("profile")),
+            "expiration_date": expiration_date,
+            "legs": legs,
+            "order_payload": dict(order_payload),
+            "structure_identity": (
+                as_text(execution_shape.get("structure_identity"))
+                or as_text(signal.get("candidate_identity"))
+                or as_text(signal.get("structure_identity"))
+                or as_text(candidate_payload.get("structure_identity"))
+            ),
+        }
     )
-    limit_price = payload.get("limit_price")
-    if limit_price in (None, ""):
-        limit_price = order_payload.get("limit_price")
-    economics = decision_signal.economics
-    if limit_price in (None, ""):
-        limit_price = economics.get("midpoint_credit") or economics.get("midpoint_value")
-    if limit_price in (None, ""):
-        raise ValueError("Trade-decision option shape is missing a limit price.")
-
-    trade_structure = decision_signal.trade_structure or "long_call"
-    strategy_family = normalize_strategy_family(trade_structure)
+    for key, value in economics.items():
+        candidate_payload.setdefault(key, value)
     option_selection = {
         "source": "trade_decision",
         "trade_decision_id": trade_decision_id,
@@ -211,21 +286,30 @@ def _trade_decision_option_payload(
     }
     return {
         "asset_class": "option",
+        "execution_kind": "legacy_single_leg" if legacy_single_leg else "option_structure",
         "symbol": symbol,
         "side": side,
-        "quantity": int(float(quantity)),
-        "limit_price": float(limit_price),
+        "quantity": quantity,
+        "limit_price": limit_price,
         "time_in_force": as_text(order_payload.get("time_in_force")) or "day",
         "label": as_text(signal.get("trading_strategy_id")) or str(intent["trading_strategy_id"]),
         "market_date": as_text(signal.get("session_date")),
         "underlying_symbol": as_text(signal.get("underlying_symbol")) or as_text(execution_shape.get("underlying_symbol")),
         "root_symbol": as_text(signal.get("root_symbol")) or as_text(signal.get("underlying_symbol")),
         "strategy_family": strategy_family,
-        "expiration_date": as_text(leg.get("expiration_date")),
+        "trade_structure": trade_structure,
+        "profile": as_text(signal.get("profile")) or as_text(execution_shape.get("profile")) or as_text(candidate_payload.get("profile")),
+        "expiration_date": expiration_date,
         "option_type": as_text(leg.get("option_type")),
         "strike": leg.get("strike"),
         "trade_intent": "open",
         "underlying_price": economics.get("underlying_price"),
+        "legs": legs,
+        "order_payload": dict(order_payload),
+        "economics": economics,
+        "candidate": candidate_payload,
+        "order_class": as_text(order_payload.get("order_class")) or ("mleg" if len(legs) > 1 else "single"),
+        "leg_count": len(legs),
         "option_selection": option_selection,
         "source": {
             "kind": "trade_decision",
@@ -433,45 +517,65 @@ def submit_execution_intent(
                 intent=source_intent,
             )
             source_metadata = option_payload.get("source") if isinstance(option_payload.get("source"), dict) else {}
-            result = submit_option_order(
-                db_target=db_target,
-                symbol=str(option_payload["symbol"]),
-                side=str(option_payload["side"]),
-                quantity=int(option_payload.get("quantity") or 1),
-                limit_price=float(option_payload["limit_price"]),
-                time_in_force=str(option_payload.get("time_in_force") or "day"),
-                label=str(option_payload.get("label") or source_intent["trading_strategy_id"]),
-                market_date=as_text(option_payload.get("market_date")),
-                underlying_symbol=as_text(option_payload.get("underlying_symbol")) or as_text(option_payload.get("root_symbol")),
-                strategy_family=as_text(option_payload.get("strategy_family")) or "long_call",
-                expiration_date=as_text(option_payload.get("expiration_date")),
-                option_type=as_text(option_payload.get("option_type")),
-                strike=(None if option_payload.get("strike") in (None, "") else float(option_payload["strike"])),
-                execution_runtime=payload.get("execution_runtime"),
-                request_metadata={
-                    "execution_intent_id": execution_intent_id,
-                    "trading_strategy_id": source_intent.get("trading_strategy_id"),
-                    "trade_structure": policy_ref.get("trade_structure"),
-                    "routine": policy_ref.get("routine"),
-                    "config_hash": source_intent.get("config_hash"),
-                    "approval_mode": payload.get("approval_mode"),
-                    "execution_mode": payload.get("execution_mode"),
-                    "validation_provenance": as_text(payload.get("validation_provenance")) or "natural_strategy",
-                    "trade_intent": option_payload.get("trade_intent") or "open",
-                    "execution_policy": execution_policy,
-                    "exit_policy": exit_policy,
-                    "execution_admission": payload.get("execution_admission"),
-                    "source": dict(source_metadata),
-                    "option_selection": (
-                        dict(option_payload["option_selection"]) if isinstance(option_payload.get("option_selection"), dict) else None
-                    ),
-                    "underlying_price": option_payload.get("underlying_price"),
-                    **_repricing_metadata(payload),
-                    **engine_ref_metadata,
-                },
-                queue_submission=True,
-                storage=storage,
-            )
+            option_request_metadata = {
+                "execution_intent_id": execution_intent_id,
+                "trading_strategy_id": source_intent.get("trading_strategy_id"),
+                "trade_structure": option_payload.get("trade_structure") or policy_ref.get("trade_structure"),
+                "routine": policy_ref.get("routine"),
+                "config_hash": source_intent.get("config_hash"),
+                "approval_mode": payload.get("approval_mode"),
+                "execution_mode": payload.get("execution_mode"),
+                "validation_provenance": as_text(payload.get("validation_provenance")) or "natural_strategy",
+                "trade_intent": option_payload.get("trade_intent") or "open",
+                "execution_policy": execution_policy,
+                "exit_policy": exit_policy,
+                "execution_admission": payload.get("execution_admission"),
+                "source": dict(source_metadata),
+                "option_selection": (dict(option_payload["option_selection"]) if isinstance(option_payload.get("option_selection"), dict) else None),
+                "underlying_price": option_payload.get("underlying_price"),
+                "profile": as_text(option_payload.get("profile")),
+                **_repricing_metadata(payload),
+                **engine_ref_metadata,
+            }
+            if option_payload.get("execution_kind") == "legacy_single_leg":
+                result = submit_option_order(
+                    db_target=db_target,
+                    symbol=str(option_payload["symbol"]),
+                    side=str(option_payload["side"]),
+                    quantity=int(option_payload.get("quantity") or 1),
+                    limit_price=float(option_payload["limit_price"]),
+                    time_in_force=str(option_payload.get("time_in_force") or "day"),
+                    label=str(option_payload.get("label") or source_intent["trading_strategy_id"]),
+                    market_date=as_text(option_payload.get("market_date")),
+                    underlying_symbol=as_text(option_payload.get("underlying_symbol")) or as_text(option_payload.get("root_symbol")),
+                    strategy_family=as_text(option_payload.get("strategy_family")) or "long_call",
+                    expiration_date=as_text(option_payload.get("expiration_date")),
+                    option_type=as_text(option_payload.get("option_type")),
+                    strike=(None if option_payload.get("strike") in (None, "") else float(option_payload["strike"])),
+                    execution_runtime=payload.get("execution_runtime"),
+                    request_metadata=option_request_metadata,
+                    queue_submission=True,
+                    storage=storage,
+                )
+            else:
+                result = submit_option_structure_order(
+                    db_target=db_target,
+                    legs=list(option_payload.get("legs") or []),
+                    quantity=int(option_payload.get("quantity") or 1),
+                    limit_price=float(option_payload["limit_price"]),
+                    order_payload=(dict(option_payload["order_payload"]) if isinstance(option_payload.get("order_payload"), dict) else None),
+                    label=str(option_payload.get("label") or source_intent["trading_strategy_id"]),
+                    market_date=as_text(option_payload.get("market_date")),
+                    underlying_symbol=as_text(option_payload.get("underlying_symbol")) or as_text(option_payload.get("root_symbol")),
+                    strategy_family=as_text(option_payload.get("strategy_family")) or "long_call",
+                    expiration_date=as_text(option_payload.get("expiration_date")),
+                    execution_runtime=payload.get("execution_runtime"),
+                    request_metadata=option_request_metadata,
+                    economics=dict(option_payload["economics"]) if isinstance(option_payload.get("economics"), dict) else None,
+                    candidate=dict(option_payload["candidate"]) if isinstance(option_payload.get("candidate"), dict) else None,
+                    queue_submission=True,
+                    storage=storage,
+                )
         elif source_intent.get("strategy_position_id"):
             close_request_metadata = {
                 "execution_intent_id": execution_intent_id,
