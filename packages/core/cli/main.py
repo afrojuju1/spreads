@@ -9,6 +9,7 @@ from core.cli.command_harness import run_passthrough
 from core.cli.company_valuation import company_valuation_app
 from core.cli.config import config_app
 from core.cli.deploy import deploy_app
+from core.cli.execution import execution_app
 from core.cli.lifecycle import lifecycle_app
 from core.cli.ops import (
     jobs_app,
@@ -44,6 +45,7 @@ TARGETABLE_ROOT_COMMANDS = {
     "ops",
     "positions",
     "execution-runtimes",
+    "execution",
     "jobs",
     "lifecycle",
     "market-intel",
@@ -241,6 +243,7 @@ def storage_command(
 
 app.command("positions", help="List positions or inspect one position.")(positions_command)
 app.command("execution-runtimes", help="Show execution runtime capabilities.")(execution_runtimes_command)
+app.add_typer(execution_app, name="execution")
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(company_valuation_app, name="company-valuation")
 app.add_typer(config_app, name="config")
