@@ -112,12 +112,6 @@ def resolve_attempt_trade_intent(attempt: Mapping[str, Any]) -> str:
     return resolve_trade_intent(attempt.get("trade_intent"))
 
 
-def resolve_attempt_session_position_id(attempt: Mapping[str, Any]) -> str | None:
-    request = attempt.get("request")
-    request_value = request.get("session_position_id") if isinstance(request, Mapping) else None
-    return as_text(attempt.get("session_position_id")) or as_text(request_value)
-
-
 def resolve_attempt_position_id(attempt: Mapping[str, Any]) -> str | None:
     request = attempt.get("request")
     request_value = request.get("position_id") if isinstance(request, Mapping) else None
@@ -750,12 +744,6 @@ def _sync_close_position(
     attempt: Mapping[str, Any],
 ) -> dict[str, Any]:
     position_id = resolve_attempt_position_id(attempt) or as_text(attempt.get("position_id"))
-    if position_id is None:
-        legacy_session_position_id = resolve_attempt_session_position_id(attempt)
-        if legacy_session_position_id is not None:
-            fallback = execution_store.get_position(legacy_session_position_id)
-            if fallback is not None:
-                position_id = str(fallback["position_id"])
     if position_id is None:
         raise ValueError("Close execution attempt is missing a canonical position_id")
     position = execution_store.get_position(position_id)
