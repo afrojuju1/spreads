@@ -5,7 +5,17 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Protocol
 
-from core.services.option_structures import normalize_strategy_family
+from core.services.option_structures import (
+    candidate_legs as option_candidate_legs,
+    common_expiration_date,
+    net_premium_kind,
+    normalize_strategy_family,
+    structure_barrier_strike,
+    structure_strike_path,
+    structure_symbol_path,
+    structure_width,
+    unique_leg_symbols,
+)
 from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, unique_text_list
 
 from .data import CandidateBuildResult, ResolvedTickerSet
@@ -80,6 +90,17 @@ _CANDIDATE_PREMIUM_FIELDS = (
     "score",
     "confidence",
 )
+
+_GENERIC_STRUCTURE_PROFILE_IDS = {
+    "call_credit_spread": "call_credit_spread_v1",
+    "put_credit_spread": "put_credit_spread_v1",
+    "call_debit_spread": "call_debit_spread_v1",
+    "put_debit_spread": "put_debit_spread_v1",
+    "iron_condor": "iron_condor_v1",
+    "short_put": "short_put_v1",
+    "long_straddle": "long_straddle_v1",
+    "long_strangle": "long_strangle_v1",
+}
 
 
 class FeatureSnapshotBuilder(Protocol):
@@ -172,6 +193,95 @@ def _subset(row: Mapping[str, Any], fields: Sequence[str]) -> dict[str, Any]:
     return {field: row.get(field) for field in fields if row.get(field) not in (None, "", [], {})}
 
 
+def _role_counts(legs: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for leg in legs:
+        role = as_text(leg.get("role")) or "unknown"
+        counts[role] = counts.get(role, 0) + 1
+    return counts
+
+
+def _side_counts(legs: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for leg in legs:
+        side = as_text(leg.get("side")) or "unknown"
+        counts[side] = counts.get(side, 0) + 1
+    return counts
+
+
+def _coalesced_float(row: Mapping[str, Any], *fields: str) -> float | None:
+    for field in fields:
+        value = coerce_float(row.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _structure_missing_reasons(
+    *,
+    candidate_payload: Mapping[str, Any],
+    legs: Sequence[Mapping[str, Any]],
+    trade_structure: str | None,
+    premium_kind: str | None,
+) -> list[str]:
+    reasons: list[str] = []
+    if not legs:
+        reasons.append("canonical_legs_missing")
+    if any(as_text(leg.get("role")) is None for leg in legs):
+        reasons.append("leg_role_missing")
+    if any(as_text(leg.get("side")) is None for leg in legs):
+        reasons.append("leg_side_missing")
+    if any(as_text(leg.get("position_intent")) is None for leg in legs):
+        reasons.append("leg_position_intent_missing")
+    if trade_structure is None:
+        reasons.append("trade_structure_missing")
+    if premium_kind is None:
+        reasons.append("premium_kind_unknown")
+    if _coalesced_float(candidate_payload, "limit_price", "midpoint_credit", "midpoint_value", "net_credit", "net_debit", "credit", "debit") is None:
+        reasons.append("structure_limit_price_missing")
+    if _coalesced_float(candidate_payload, "max_loss", "max_risk") is None:
+        reasons.append("max_risk_missing")
+    return reasons
+
+
+def _structure_snapshot(
+    *,
+    candidate_payload: Mapping[str, Any],
+    trade_structure: str | None,
+) -> dict[str, Any]:
+    normalized_structure = None if trade_structure is None else normalize_strategy_family(trade_structure)
+    legs = option_candidate_legs(candidate_payload)
+    premium_kind = None if normalized_structure is None else net_premium_kind(normalized_structure)
+    expiration = common_expiration_date(list(legs))
+    unique_expirations = sorted(
+        {expiration_value for expiration_value in (as_text(leg.get("expiration_date")) for leg in legs) if expiration_value is not None}
+    )
+    return {
+        "trade_structure": normalized_structure,
+        "premium_kind": premium_kind,
+        "legs": [dict(leg) for leg in legs],
+        "leg_count": len(legs),
+        "leg_symbols": unique_leg_symbols(list(legs)),
+        "role_counts": _role_counts(legs),
+        "side_counts": _side_counts(legs),
+        "expiration_date": expiration,
+        "expiration_dates": unique_expirations,
+        "same_expiration": bool(expiration) if legs else False,
+        "width": structure_width(list(legs), strategy=normalized_structure),
+        "barrier_strike": structure_barrier_strike(list(legs), strategy=normalized_structure),
+        "symbol_path": structure_symbol_path(list(legs)),
+        "strike_path": structure_strike_path(list(legs)),
+        "structure_identity": candidate_payload.get("structure_identity") or candidate_payload.get("candidate_identity"),
+        "order_class": as_mapping(candidate_payload.get("order_payload")).get("order_class"),
+        "missing_reasons": _structure_missing_reasons(
+            candidate_payload=candidate_payload,
+            legs=legs,
+            trade_structure=normalized_structure,
+            premium_kind=premium_kind,
+        ),
+    }
+
+
 def _source_snapshot(
     *,
     ticker_set: ResolvedTickerSet,
@@ -217,15 +327,28 @@ def _underlying_snapshot(diagnostic: Mapping[str, Any], candidate: Mapping[str, 
     }
 
 
-def _chain_snapshot(diagnostic: Mapping[str, Any], candidate: Mapping[str, Any] | None) -> dict[str, Any]:
+def _chain_snapshot(
+    diagnostic: Mapping[str, Any],
+    candidate: Mapping[str, Any] | None,
+    *,
+    trade_structure: str | None,
+) -> dict[str, Any]:
     market_data = as_mapping(diagnostic.get("market_data"))
     candidate_payload = _candidate_payload(candidate) if candidate is not None else {}
+    structure = _structure_snapshot(
+        candidate_payload=candidate_payload,
+        trade_structure=trade_structure or as_text(candidate_payload.get("strategy") or candidate_payload.get("strategy_family")),
+    )
     chain = {
         "expirations": list(market_data.get("expirations") or []),
         "filters": as_mapping(market_data.get("filters")),
         "rejection_counts": as_mapping(diagnostic.get("rejection_counts")),
         "examples": as_mapping(diagnostic.get("examples")),
         "candidate_contract": _subset(candidate_payload, _CANDIDATE_CONTRACT_FIELDS),
+        "structure": structure,
+        "legs": list(structure["legs"]),
+        "leg_count": structure["leg_count"],
+        "missing_structure_reasons": list(structure["missing_reasons"]),
     }
     for field in _CHAIN_COUNT_FIELDS:
         chain[field] = coerce_int(market_data.get(field) or diagnostic.get(field))
@@ -235,8 +358,17 @@ def _chain_snapshot(diagnostic: Mapping[str, Any], candidate: Mapping[str, Any] 
     return chain
 
 
-def _premium_snapshot(diagnostic: Mapping[str, Any], candidate: Mapping[str, Any] | None) -> dict[str, Any]:
+def _premium_snapshot(
+    diagnostic: Mapping[str, Any],
+    candidate: Mapping[str, Any] | None,
+    *,
+    trade_structure: str | None,
+) -> dict[str, Any]:
     candidate_payload = _candidate_payload(candidate) if candidate is not None else {}
+    structure = _structure_snapshot(
+        candidate_payload=candidate_payload,
+        trade_structure=trade_structure or as_text(candidate_payload.get("strategy") or candidate_payload.get("strategy_family")),
+    )
     return {
         "ranking_gate": as_mapping(diagnostic.get("ranking_gate")),
         "ranking_policy_status": candidate_payload.get("ranking_policy_status"),
@@ -245,6 +377,8 @@ def _premium_snapshot(diagnostic: Mapping[str, Any], candidate: Mapping[str, Any
         "scoring_blockers": unique_text_list(candidate_payload.get("scoring_blockers")),
         "execution_blockers": unique_text_list(candidate_payload.get("execution_blockers")),
         "candidate_economics": _subset(candidate_payload, _CANDIDATE_PREMIUM_FIELDS),
+        "structure": structure,
+        "missing_structure_reasons": list(structure["missing_reasons"]),
     }
 
 
@@ -254,8 +388,13 @@ def _metadata_snapshot(
     diagnostic: Mapping[str, Any],
     candidate: Mapping[str, Any] | None,
     candidate_count_for_symbol: int,
+    trade_structure: str | None,
 ) -> dict[str, Any]:
     candidate_payload = _candidate_payload(candidate) if candidate is not None else {}
+    structure = _structure_snapshot(
+        candidate_payload=candidate_payload,
+        trade_structure=trade_structure or as_text(candidate_payload.get("strategy") or candidate_payload.get("strategy_family")),
+    )
     return {
         "candidate_run_id": candidate_result.candidate_run_id,
         "candidate_result_summary": dict(candidate_result.summary or {}),
@@ -264,6 +403,8 @@ def _metadata_snapshot(
         "candidate_attached": candidate is not None,
         "candidate_count_for_symbol": candidate_count_for_symbol,
         "candidate_identity": candidate_payload.get("candidate_identity") or candidate_payload.get("structure_identity"),
+        "structure": structure,
+        "missing_structure_reasons": list(structure["missing_reasons"]),
     }
 
 
@@ -274,6 +415,7 @@ def _snapshot_from_parts(
     diagnostic: Mapping[str, Any],
     candidate: Mapping[str, Any] | None,
     candidate_count_for_symbol: int,
+    trade_structure: str | None = None,
 ) -> FeatureSnapshot | None:
     candidate_payload = _candidate_payload(candidate) if candidate is not None else {}
     symbol = _symbol_from_row(diagnostic) or _symbol_from_row(candidate_payload)
@@ -289,24 +431,26 @@ def _snapshot_from_parts(
         observed_at=observed_at,
         source=_source_snapshot(ticker_set=ticker_set, candidate_result=candidate_result),
         underlying=_underlying_snapshot(diagnostic, candidate),
-        chain=_chain_snapshot(diagnostic, candidate),
-        premium=_premium_snapshot(diagnostic, candidate),
+        chain=_chain_snapshot(diagnostic, candidate, trade_structure=trade_structure),
+        premium=_premium_snapshot(diagnostic, candidate, trade_structure=trade_structure),
         candidate=None if candidate is None else dict(candidate_payload),
         metadata=_metadata_snapshot(
             candidate_result=candidate_result,
             diagnostic=diagnostic,
             candidate=candidate,
             candidate_count_for_symbol=candidate_count_for_symbol,
+            trade_structure=trade_structure,
         ),
     )
 
 
-def build_momentum_long_call_feature_snapshots(
+def build_generic_structure_feature_snapshots(
     *,
     ticker_set: ResolvedTickerSet,
     candidate_result: CandidateBuildResult,
+    trade_structure: str | None = None,
 ) -> tuple[FeatureSnapshot, ...]:
-    """Build filter-ready facts from existing momentum_long_calls candidate diagnostics."""
+    """Build filter-ready facts from canonical option-structure candidate diagnostics."""
 
     diagnostics_by_symbol: dict[str, dict[str, Any]] = {}
     for diagnostic in candidate_result.diagnostics:
@@ -340,6 +484,7 @@ def build_momentum_long_call_feature_snapshots(
                     diagnostic=diagnostic,
                     candidate=candidate,
                     candidate_count_for_symbol=len(candidates),
+                    trade_structure=trade_structure,
                 )
                 if snapshot is not None:
                     snapshots.append(snapshot)
@@ -350,10 +495,42 @@ def build_momentum_long_call_feature_snapshots(
             diagnostic=diagnostic,
             candidate=None,
             candidate_count_for_symbol=0,
+            trade_structure=trade_structure,
         )
         if snapshot is not None:
             snapshots.append(snapshot)
     return tuple(snapshots)
+
+
+def build_momentum_long_call_feature_snapshots(
+    *,
+    ticker_set: ResolvedTickerSet,
+    candidate_result: CandidateBuildResult,
+) -> tuple[FeatureSnapshot, ...]:
+    """Build filter-ready facts from existing momentum_long_calls candidate diagnostics."""
+
+    return build_generic_structure_feature_snapshots(
+        ticker_set=ticker_set,
+        candidate_result=candidate_result,
+        trade_structure="long_call",
+    )
+
+
+def generic_structure_feature_snapshot_builder(trade_structure: str) -> FeatureSnapshotBuilder:
+    normalized_structure = normalize_strategy_family(trade_structure)
+
+    def _build(
+        *,
+        ticker_set: ResolvedTickerSet,
+        candidate_result: CandidateBuildResult,
+    ) -> tuple[FeatureSnapshot, ...]:
+        return build_generic_structure_feature_snapshots(
+            ticker_set=ticker_set,
+            candidate_result=candidate_result,
+            trade_structure=normalized_structure,
+        )
+
+    return _build
 
 
 register_feature_snapshot_builder(
@@ -362,13 +539,22 @@ register_feature_snapshot_builder(
     builder=build_momentum_long_call_feature_snapshots,
 )
 
+for _trade_structure, _profile_id in _GENERIC_STRUCTURE_PROFILE_IDS.items():
+    register_feature_snapshot_builder(
+        trade_structure=_trade_structure,
+        quality_profile_id=_profile_id,
+        builder=generic_structure_feature_snapshot_builder(_trade_structure),
+    )
+
 
 __all__ = [
     "FEATURE_SNAPSHOT_BUILDER_REGISTRY",
     "FeatureSnapshotBuilder",
     "FeatureSnapshotBuilderKey",
     "build_feature_snapshots_for_strategy",
+    "build_generic_structure_feature_snapshots",
     "build_momentum_long_call_feature_snapshots",
+    "generic_structure_feature_snapshot_builder",
     "register_feature_snapshot_builder",
     "resolve_feature_snapshot_builder",
 ]
