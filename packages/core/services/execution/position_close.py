@@ -57,6 +57,8 @@ def submit_position_close_by_id(
 ) -> dict[str, Any]:
     execution_store = storage.execution
     job_store = storage.jobs
+    metadata = dict(request_metadata or {})
+    validation_provenance = as_text(metadata.get("validation_provenance")) or "operator_direct"
     if not execution_store.portfolio_schema_ready():
         raise ValueError(f"Unknown position_id: {position_id}")
     stored_position = execution_store.get_position(position_id)
@@ -126,7 +128,7 @@ def submit_position_close_by_id(
             else None
         )
         close_source_type, close_source_id = _admission_source_from_metadata(
-            request_metadata or {},
+            metadata,
             fallback_type="position",
             fallback_id=position_id,
         )
@@ -142,11 +144,7 @@ def submit_position_close_by_id(
             ),
             reason="close_validation_passed",
             message="Close order passed position and order validation.",
-            policy_snapshot=(
-                request_metadata.get("risk_policy")
-                if isinstance(request_metadata, Mapping) and isinstance(request_metadata.get("risk_policy"), Mapping)
-                else {}
-            ),
+            policy_snapshot=(metadata.get("risk_policy") if isinstance(metadata.get("risk_policy"), Mapping) else {}),
             evidence={
                 "position_id": position_id,
                 "trade_intent": trade_intent,
@@ -155,7 +153,7 @@ def submit_position_close_by_id(
             decided_at=requested_at,
         )
         attempt_refs = _attempt_ref_kwargs(
-            request_metadata or {},
+            metadata,
             fallback_type="position",
             fallback_id=position_id,
         )
@@ -192,9 +190,10 @@ def submit_position_close_by_id(
             broker=BROKER_NAME,
             client_order_id=client_order_id,
             request={
-                **({} if request_metadata is None else request_metadata),
+                **metadata,
                 **{key: value for key, value in attempt_refs.items() if value is not None},
                 "trade_intent": trade_intent,
+                "validation_provenance": validation_provenance,
                 "position_id": position_id,
                 "execution_admission": execution_admission,
                 "order": order_request,

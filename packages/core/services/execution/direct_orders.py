@@ -36,7 +36,9 @@ from .alpaca_adapter import create_alpaca_order_adapter
 from .attempts import (
     _get_attempt_payload,
     _publish_execution_attempt_event,
+    _queue_execution_attempt,
     _require_execution_schema,
+    _submission_message,
     _sync_attempt_state,
     _sync_equity_attempt_state,
 )
@@ -109,6 +111,7 @@ def submit_equity_order(
         position_intent = "sell_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "sell_to_close"
     leg_role = "short" if position_intent in {"sell_to_open", "buy_to_close"} else "long"
     position_id = as_text(metadata.get("position_id"))
+    validation_provenance = as_text(metadata.get("validation_provenance")) or "operator_direct"
     requested_at = utc_now_iso()
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
     resolved_label = as_text(label) or "manual_equity"
@@ -213,6 +216,7 @@ def submit_equity_order(
             request={
                 **{key: value for key, value in attempt_refs.items() if value is not None},
                 "trade_intent": resolved_trade_intent,
+                "validation_provenance": validation_provenance,
                 "execution_runtime": normalized_runtime,
                 "execution_policy": equity_execution_policy,
                 "asset_class": "equity",
@@ -316,6 +320,7 @@ def submit_option_order(
     strike: float | None = None,
     execution_runtime: str | None = None,
     request_metadata: dict[str, Any] | None = None,
+    queue_submission: bool = False,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
@@ -361,6 +366,7 @@ def submit_option_order(
 
     resolved_expiration = as_text(expiration_date)
     position_id = as_text(metadata.get("position_id"))
+    validation_provenance = as_text(metadata.get("validation_provenance")) or "operator_direct"
     requested_at = utc_now_iso()
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
     resolved_label = as_text(label) or "manual_option"
@@ -527,6 +533,7 @@ def submit_option_order(
             request={
                 **{key: value for key, value in attempt_refs.items() if value is not None},
                 "trade_intent": resolved_trade_intent,
+                "validation_provenance": validation_provenance,
                 "execution_runtime": normalized_runtime,
                 "execution_policy": option_execution_policy,
                 "asset_class": "option",
@@ -576,6 +583,19 @@ def submit_option_order(
             **attempt_refs,
         )
         attempt_created = True
+        if queue_submission:
+            payload = _queue_execution_attempt(
+                job_store=storage.jobs,
+                execution_store=execution_store,
+                attempt=attempt,
+            )
+            message = _submission_message(payload, queued=True)
+            return {
+                "action": "submit",
+                "changed": True,
+                "message": message,
+                "attempt": payload,
+            }
         adapter = create_alpaca_order_adapter()
         submission = adapter.submit_order(order_request)
         submitted_order = submission.submitted_order
@@ -621,17 +641,19 @@ def submit_option_order(
         raise
     except Exception as exc:
         if submitted_order is None and attempt_created:
-            execution_store.update_attempt(
-                execution_attempt_id=attempt_id,
-                status="failed",
-                client_order_id=client_order_id,
-                completed_at=requested_at,
-                error_text=str(exc),
-                position_id=position_id,
-            )
-            failed_attempt = _get_attempt_payload(execution_store, attempt_id)
-            _publish_execution_attempt_event(
-                failed_attempt,
-                message=f"Option execution failed before submission: {exc}",
-            )
+            current_attempt = execution_store.get_attempt(attempt_id)
+            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
+                execution_store.update_attempt(
+                    execution_attempt_id=attempt_id,
+                    status="failed",
+                    client_order_id=client_order_id,
+                    completed_at=requested_at,
+                    error_text=str(exc),
+                    position_id=position_id,
+                )
+                failed_attempt = _get_attempt_payload(execution_store, attempt_id)
+                _publish_execution_attempt_event(
+                    failed_attempt,
+                    message=f"Option execution failed before submission: {exc}",
+                )
         raise
