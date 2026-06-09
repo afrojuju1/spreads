@@ -30,27 +30,10 @@ TERMINAL_STATUSES = TERMINAL_ATTEMPT_STATUSES
 DEFAULT_ENTRY_PRICING_MODE = "adaptive_credit"
 DEFAULT_MIN_CREDIT_RETENTION_PCT = 0.95
 DEFAULT_MAX_CREDIT_CONCESSION = 0.02
-ATTEMPT_CONTEXT_BUCKET_MIRROR = {
-    "open_promotable": "promotable",
-    "open_monitor": "monitor",
-    "position_close": "position_close",
-}
 
 
 def _normalize_attempt_context(value: Any) -> str | None:
-    normalized = as_text(value)
-    if normalized == "promotable":
-        return "open_promotable"
-    if normalized == "monitor":
-        return "open_monitor"
-    return normalized
-
-
-def _deprecated_bucket(value: Any) -> str | None:
-    normalized = as_text(value)
-    if normalized is None:
-        return None
-    return ATTEMPT_CONTEXT_BUCKET_MIRROR.get(normalized, normalized)
+    return as_text(value)
 
 
 def _execution_attempt_id() -> str:

@@ -75,6 +75,7 @@ def _operator_attempt_summary(attempt: dict[str, Any]) -> dict[str, Any]:
         "trading_strategy_id": attempt.get("trading_strategy_id") or as_mapping(attempt.get("request")).get("trading_strategy_id"),
         "underlying_symbol": attempt.get("underlying_symbol"),
         "trade_intent": attempt.get("trade_intent"),
+        "attempt_context": attempt.get("attempt_context"),
         "status": attempt.get("status"),
         "lifecycle_state": lifecycle.get("lifecycle_state") or attempt.get("lifecycle_state"),
         "lifecycle_phase": lifecycle.get("phase") or attempt.get("lifecycle_phase"),

@@ -66,6 +66,7 @@ def _render_attempt_result(payload: dict[str, Any], *, json_output: bool, no_col
     overview.add_row("Strategy", _render_value(summary.get("trading_strategy_id")))
     overview.add_row("Underlying", _render_value(summary.get("underlying_symbol")))
     overview.add_row("Intent", _render_value(summary.get("trade_intent")))
+    overview.add_row("Context", _render_value(summary.get("attempt_context")))
     overview.add_row("Broker Order", _render_value(summary.get("broker_order_id")))
     overview.add_row("Client Order", _render_value(summary.get("client_order_id")))
     overview.add_row("Rows", f"orders {_render_value(summary.get('order_count'))} | fills {_render_value(summary.get('fill_count'))}")

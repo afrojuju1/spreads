@@ -29,7 +29,6 @@ from core.value_coercion import (
 from .shared import (
     BROKER_NAME,
     EXECUTION_SCHEMA_MESSAGE,
-    _deprecated_bucket,
     _execution_submit_job_run_id,
     _is_terminal_status,
     _normalize_attempt_context,
@@ -103,16 +102,15 @@ def _attempt_payload_with_lifecycle(
     *,
     now: datetime,
 ) -> dict[str, Any]:
-    attempt_context = _normalize_attempt_context(attempt_payload.get("attempt_context", attempt_payload.get("bucket")))
+    attempt_context = _normalize_attempt_context(attempt_payload.get("attempt_context"))
     lifecycle = project_execution_attempt_lifecycle(
         attempt_payload,
         now=now,
     )
     execution_attempt_id = str(attempt_payload["execution_attempt_id"])
-    return {
+    payload = {
         **attempt_payload,
         "attempt_context": attempt_context,
-        "bucket": _deprecated_bucket(attempt_context),
         "order_intent_id": execution_attempt_id,
         "order_intent_key": _order_intent_key(execution_attempt_id),
         "execution_attempt_lifecycle": lifecycle,
@@ -122,6 +120,8 @@ def _attempt_payload_with_lifecycle(
         "next_action": lifecycle.get("next_action"),
         "stale": bool(lifecycle.get("stale")),
     }
+    payload.pop("bucket", None)
+    return payload
 
 
 @with_storage()
