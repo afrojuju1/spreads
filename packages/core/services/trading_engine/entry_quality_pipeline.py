@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from core.services.option_structures import normalize_strategy_family
+from core.services.option_structures import net_premium_kind, normalize_strategy_family
 from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, unique_text_list
 
 from .entry_quality import (
@@ -53,6 +53,73 @@ _THRESHOLD_ALIASES = {
     "max_leg_spread_pct_mid": "max_relative_spread",
 }
 
+_STRUCTURE_RULES: dict[str, dict[str, Any]] = {
+    "call_credit_spread": {
+        "leg_count": 2,
+        "role_counts": {"short": 1, "long": 1},
+        "side_counts": {"sell": 1, "buy": 1},
+        "option_type_counts": {"call": 2},
+        "min_width": 0.0001,
+    },
+    "put_credit_spread": {
+        "leg_count": 2,
+        "role_counts": {"short": 1, "long": 1},
+        "side_counts": {"sell": 1, "buy": 1},
+        "option_type_counts": {"put": 2},
+        "min_width": 0.0001,
+    },
+    "call_debit_spread": {
+        "leg_count": 2,
+        "role_counts": {"short": 1, "long": 1},
+        "side_counts": {"sell": 1, "buy": 1},
+        "option_type_counts": {"call": 2},
+        "min_width": 0.0001,
+    },
+    "put_debit_spread": {
+        "leg_count": 2,
+        "role_counts": {"short": 1, "long": 1},
+        "side_counts": {"sell": 1, "buy": 1},
+        "option_type_counts": {"put": 2},
+        "min_width": 0.0001,
+    },
+    "iron_condor": {
+        "leg_count": 4,
+        "role_counts": {"short": 2, "long": 2},
+        "side_counts": {"sell": 2, "buy": 2},
+        "option_type_counts": {"call": 2, "put": 2},
+        "min_width": 0.0001,
+    },
+    "short_put": {
+        "leg_count": 1,
+        "role_counts": {"short": 1},
+        "side_counts": {"sell": 1},
+        "option_type_counts": {"put": 1},
+    },
+    "long_straddle": {
+        "leg_count": 2,
+        "role_counts": {"long": 2},
+        "side_counts": {"buy": 2},
+        "option_type_counts": {"call": 1, "put": 1},
+        "strike_relationship": "same",
+    },
+    "long_strangle": {
+        "leg_count": 2,
+        "role_counts": {"long": 2},
+        "side_counts": {"buy": 2},
+        "option_type_counts": {"call": 1, "put": 1},
+        "strike_relationship": "different",
+    },
+}
+
+_CRITICAL_STRUCTURE_MISSING_REASONS = {
+    "canonical_legs_missing",
+    "leg_role_missing",
+    "leg_side_missing",
+    "leg_position_intent_missing",
+    "trade_structure_missing",
+    "premium_kind_unknown",
+}
+
 
 def _candidate(snapshot: FeatureSnapshot, candidate: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if candidate is not None:
@@ -72,6 +139,114 @@ def _candidate_economics(snapshot: FeatureSnapshot) -> dict[str, Any]:
 
 def _chain_filters(snapshot: FeatureSnapshot) -> dict[str, Any]:
     return as_mapping(as_mapping(snapshot.chain).get("filters"))
+
+
+def _structure(snapshot: FeatureSnapshot) -> dict[str, Any]:
+    chain_structure = as_mapping(as_mapping(snapshot.chain).get("structure"))
+    if chain_structure:
+        return chain_structure
+    premium_structure = as_mapping(as_mapping(snapshot.premium).get("structure"))
+    if premium_structure:
+        return premium_structure
+    return as_mapping(snapshot.metadata.get("structure"))
+
+
+def _structure_rules(context: EntryQualityContext) -> dict[str, Any]:
+    return dict(_STRUCTURE_RULES.get(normalize_strategy_family(context.trade_structure), {}))
+
+
+def _structure_missing_reasons(snapshot: FeatureSnapshot) -> tuple[str, ...]:
+    reasons: list[str] = []
+    reasons.extend(unique_text_list(as_mapping(snapshot.chain).get("missing_structure_reasons")))
+    reasons.extend(unique_text_list(as_mapping(snapshot.premium).get("missing_structure_reasons")))
+    reasons.extend(unique_text_list(snapshot.metadata.get("missing_structure_reasons")))
+    reasons.extend(unique_text_list(_structure(snapshot).get("missing_reasons")))
+    return tuple(dict.fromkeys(reasons))
+
+
+def _structure_legs(snapshot: FeatureSnapshot) -> tuple[dict[str, Any], ...]:
+    structure = _structure(snapshot)
+    legs = structure.get("legs")
+    if not isinstance(legs, Sequence) or isinstance(legs, (str, bytes)):
+        legs = as_mapping(snapshot.chain).get("legs")
+    if not isinstance(legs, Sequence) or isinstance(legs, (str, bytes)):
+        return ()
+    return tuple(dict(leg) for leg in legs if isinstance(leg, Mapping))
+
+
+def _structure_count_map(value: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for key, count in as_mapping(value).items():
+        rendered = as_text(key)
+        if rendered is None:
+            continue
+        counts[rendered] = coerce_int(count) or 0
+    return counts
+
+
+def _leg_option_type_counts(legs: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for leg in legs:
+        option_type = as_text(leg.get("option_type"))
+        if option_type is None:
+            symbol = as_text(leg.get("symbol"))
+            if symbol is not None:
+                marker = symbol.upper().rsplit("C", 1)
+                if len(marker) == 2 and marker[1].isdigit():
+                    option_type = "call"
+                else:
+                    marker = symbol.upper().rsplit("P", 1)
+                    if len(marker) == 2 and marker[1].isdigit():
+                        option_type = "put"
+        normalized = str(option_type or "unknown").strip().lower()
+        counts[normalized] = counts.get(normalized, 0) + 1
+    return counts
+
+
+def _leg_strikes(legs: Sequence[Mapping[str, Any]]) -> tuple[float, ...]:
+    strikes: list[float] = []
+    for leg in legs:
+        strike = coerce_float(leg.get("strike") or leg.get("strike_price"))
+        if strike is None:
+            continue
+        strikes.append(round(strike, 4))
+    return tuple(strike for strike in dict.fromkeys(strikes))
+
+
+def _count_mismatches(
+    *,
+    actual: Mapping[str, int],
+    expected: Mapping[str, int],
+    reason_prefix: str,
+) -> tuple[str, ...]:
+    mismatches: list[str] = []
+    for key, expected_count in expected.items():
+        if actual.get(key, 0) != expected_count:
+            mismatches.append(f"{reason_prefix}_{key}_mismatch")
+    extra = sorted(key for key, count in actual.items() if count and key not in expected and key != "unknown")
+    if extra:
+        mismatches.append(f"{reason_prefix}_unexpected")
+    return tuple(mismatches)
+
+
+def _structure_limit_price(candidate: Mapping[str, Any], economics: Mapping[str, Any]) -> float | None:
+    for field in ("limit_price", "midpoint_credit", "midpoint_value", "net_credit", "net_debit", "credit", "debit"):
+        value = coerce_float(candidate.get(field))
+        if value is None:
+            value = coerce_float(economics.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _structure_max_risk(candidate: Mapping[str, Any], economics: Mapping[str, Any]) -> float | None:
+    for field in ("max_loss", "max_risk"):
+        value = coerce_float(candidate.get(field))
+        if value is None:
+            value = coerce_float(economics.get(field))
+        if value is not None:
+            return value
+    return None
 
 
 def _threshold_key(key: Any) -> str:
@@ -742,6 +917,278 @@ def _strategy_family_matches(context: EntryQualityContext, snapshot: FeatureSnap
     )
 
 
+def _structure_family_matches(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    candidate = _candidate(snapshot)
+    structure = _structure(snapshot)
+    expected = normalize_strategy_family(context.trade_structure)
+    candidate_strategy = as_text(candidate.get("strategy") or candidate.get("strategy_family"))
+    structure_family = as_text(structure.get("trade_structure"))
+    candidate_family = normalize_strategy_family(candidate_strategy) if candidate_strategy is not None else None
+    snapshot_family = normalize_strategy_family(structure_family) if structure_family is not None else None
+    metrics = {
+        "trade_structure": expected,
+        "candidate_strategy": candidate_strategy,
+        "structure_trade_structure": structure_family,
+    }
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            message="No candidate was attached for structure-family evaluation.",
+        )
+    blockers: list[str] = []
+    if candidate_family is not None and candidate_family != expected:
+        blockers.append("candidate_strategy_family_mismatch")
+    if snapshot_family is not None and snapshot_family != expected:
+        blockers.append("structure_family_mismatch")
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            message="Candidate structure family did not match the entry routine.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("structure_family_matched",),
+        metrics=metrics,
+        message="Candidate structure family matched the entry routine.",
+    )
+
+
+def _canonical_structure_available(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    candidate = _candidate(snapshot)
+    structure = _structure(snapshot)
+    rules = _structure_rules(context)
+    leg_count = coerce_int(structure.get("leg_count") or as_mapping(snapshot.chain).get("leg_count")) or 0
+    expected_leg_count = coerce_int(rules.get("leg_count"))
+    missing_reasons = _structure_missing_reasons(snapshot)
+    critical_missing = tuple(reason for reason in missing_reasons if reason in _CRITICAL_STRUCTURE_MISSING_REASONS)
+    metrics = {
+        "trade_structure": normalize_strategy_family(context.trade_structure),
+        "structure_trade_structure": structure.get("trade_structure"),
+        "leg_count": leg_count,
+        "expected_leg_count": expected_leg_count,
+        "role_counts": _structure_count_map(structure.get("role_counts")),
+        "side_counts": _structure_count_map(structure.get("side_counts")),
+        "premium_kind": structure.get("premium_kind"),
+        "order_class": structure.get("order_class"),
+        "missing_structure_reasons": list(missing_reasons),
+    }
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            message="No candidate was attached for canonical-structure evaluation.",
+        )
+    blockers = list(critical_missing)
+    if expected_leg_count is not None and leg_count != expected_leg_count:
+        blockers.append("structure_leg_count_mismatch")
+    blockers = list(dict.fromkeys(blockers))
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            message="Candidate did not expose a complete canonical option structure.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("canonical_structure_available",),
+        metrics=metrics,
+        message="Candidate exposed a complete canonical option structure.",
+    )
+
+
+def _structure_leg_mix_matches(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    candidate = _candidate(snapshot)
+    structure = _structure(snapshot)
+    rules = _structure_rules(context)
+    legs = _structure_legs(snapshot)
+    role_counts = _structure_count_map(structure.get("role_counts"))
+    side_counts = _structure_count_map(structure.get("side_counts"))
+    option_type_counts = _leg_option_type_counts(legs)
+    strikes = _leg_strikes(legs)
+    strike_relationship = as_text(rules.get("strike_relationship"))
+    metrics = {
+        "leg_count": len(legs),
+        "expected_leg_count": rules.get("leg_count"),
+        "role_counts": role_counts,
+        "expected_role_counts": dict(as_mapping(rules.get("role_counts"))),
+        "side_counts": side_counts,
+        "expected_side_counts": dict(as_mapping(rules.get("side_counts"))),
+        "option_type_counts": option_type_counts,
+        "expected_option_type_counts": dict(as_mapping(rules.get("option_type_counts"))),
+        "strike_count": len(strikes),
+        "strike_relationship": strike_relationship,
+    }
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            message="No candidate was attached for leg-mix evaluation.",
+        )
+    if not legs:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("canonical_legs_missing",),
+            metrics=metrics,
+            message="Candidate did not expose canonical legs for leg-mix evaluation.",
+        )
+    blockers: list[str] = []
+    expected_roles = {str(key): int(value) for key, value in as_mapping(rules.get("role_counts")).items()}
+    expected_sides = {str(key): int(value) for key, value in as_mapping(rules.get("side_counts")).items()}
+    expected_option_types = {str(key): int(value) for key, value in as_mapping(rules.get("option_type_counts")).items()}
+    blockers.extend(_count_mismatches(actual=role_counts, expected=expected_roles, reason_prefix="structure_role_count"))
+    blockers.extend(_count_mismatches(actual=side_counts, expected=expected_sides, reason_prefix="structure_side_count"))
+    blockers.extend(_count_mismatches(actual=option_type_counts, expected=expected_option_types, reason_prefix="structure_option_type_count"))
+    if strike_relationship == "same" and len(strikes) != 1:
+        blockers.append("structure_strikes_not_equal")
+    elif strike_relationship == "different" and len(strikes) < 2:
+        blockers.append("structure_strikes_not_distinct")
+    blockers = list(dict.fromkeys(blockers))
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            message="Candidate leg mix did not match the strategy family.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("structure_leg_mix_matched",),
+        metrics=metrics,
+        message="Candidate leg mix matched the strategy family.",
+    )
+
+
+def _structure_expiration_consistent(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    del context
+    candidate = _candidate(snapshot)
+    structure = _structure(snapshot)
+    leg_count = coerce_int(structure.get("leg_count") or as_mapping(snapshot.chain).get("leg_count")) or 0
+    expiration_date = as_text(structure.get("expiration_date"))
+    expiration_dates = tuple(unique_text_list(structure.get("expiration_dates")))
+    same_expiration = bool(structure.get("same_expiration"))
+    metrics = {
+        "leg_count": leg_count,
+        "expiration_date": expiration_date,
+        "expiration_dates": list(expiration_dates),
+        "same_expiration": same_expiration,
+    }
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            message="No candidate was attached for expiration evaluation.",
+        )
+    if leg_count <= 0:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("canonical_legs_missing",),
+            metrics=metrics,
+            message="Candidate did not expose canonical legs for expiration evaluation.",
+        )
+    if expiration_date is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("structure_expiration_missing",),
+            metrics=metrics,
+            message="Candidate structure did not expose a common expiration.",
+        )
+    if leg_count > 1 and not same_expiration:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("structure_expiration_mismatch",),
+            metrics=metrics,
+            message="Candidate structure legs did not share one expiration.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("structure_expiration_consistent",),
+        metrics=metrics,
+        message="Candidate structure expiration was consistent.",
+    )
+
+
+def _structure_width_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    candidate = _candidate(snapshot)
+    structure = _structure(snapshot)
+    rules = _structure_rules(context)
+    threshold_defaults = {"min_width": rules.get("min_width")}
+    thresholds = _resolved_thresholds(context, filter_ref, threshold_defaults)
+    minimum_width = coerce_float(thresholds.get("min_width"))
+    width = coerce_float(structure.get("width"))
+    metrics = {
+        "width": width,
+        "trade_structure": normalize_strategy_family(context.trade_structure),
+    }
+    resolved_thresholds = {"min_width": minimum_width}
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="No candidate was attached for width evaluation.",
+        )
+    if minimum_width is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.PASS if width is not None else FilterResultStatus.WATCH,
+            reason_codes=("structure_width_available",) if width is not None else ("structure_width_not_required",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Structure width was not required by this profile.",
+        )
+    if width is None:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("structure_width_missing",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Candidate structure width was required but missing.",
+        )
+    if width < minimum_width:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=("structure_width_below_min",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Candidate structure width was below the profile minimum.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("structure_width_ok",),
+        metrics=metrics,
+        thresholds=resolved_thresholds,
+        message="Candidate structure width was usable.",
+    )
+
+
 def _dte_in_range(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
     candidate = _candidate(snapshot)
     contract = _candidate_contract(snapshot)
@@ -1020,6 +1467,57 @@ def _relative_spread_ok(context: EntryQualityContext, snapshot: FeatureSnapshot,
     )
 
 
+def _structure_economics_available(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+    candidate = _candidate(snapshot)
+    economics = _candidate_economics(snapshot)
+    structure = _structure(snapshot)
+    expected_premium_kind = net_premium_kind(context.trade_structure)
+    premium_kind = as_text(structure.get("premium_kind"))
+    limit_price = _structure_limit_price(candidate, economics)
+    max_risk = _structure_max_risk(candidate, economics)
+    max_profit = coerce_float(candidate.get("max_profit") if "max_profit" in candidate else economics.get("max_profit"))
+    missing_reasons = _structure_missing_reasons(snapshot)
+    metrics = {
+        "premium_kind": premium_kind,
+        "expected_premium_kind": expected_premium_kind,
+        "limit_price": limit_price,
+        "max_risk": max_risk,
+        "max_profit": max_profit,
+        "missing_structure_reasons": list(missing_reasons),
+    }
+    if not candidate:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("candidate_missing",),
+            metrics=metrics,
+            message="No candidate was attached for structure economics evaluation.",
+        )
+    blockers: list[str] = []
+    if expected_premium_kind is not None and premium_kind != expected_premium_kind:
+        blockers.append("structure_premium_kind_mismatch")
+    if limit_price is None:
+        blockers.append("structure_limit_price_missing")
+    if max_risk is None:
+        blockers.append("max_risk_missing")
+    blockers = list(dict.fromkeys(blockers))
+    if blockers:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=blockers,
+            metrics=metrics,
+            message="Candidate did not expose complete structure economics.",
+        )
+    return _result(
+        filter_ref=filter_ref,
+        status=FilterResultStatus.PASS,
+        reason_codes=("structure_economics_available",),
+        metrics=metrics,
+        message="Candidate exposed complete structure economics.",
+    )
+
+
 def _return_on_risk_ok(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
     candidate = _candidate(snapshot)
     economics = _candidate_economics(snapshot)
@@ -1231,11 +1729,17 @@ _FILTERS = {
     "greeks_available": _greeks_available,
     "target_dte_chain_usable": _target_dte_chain_usable,
     "strategy_family_matches": _strategy_family_matches,
+    "structure_family_matches": _structure_family_matches,
+    "canonical_structure_available": _canonical_structure_available,
+    "structure_leg_mix_matches": _structure_leg_mix_matches,
+    "structure_expiration_consistent": _structure_expiration_consistent,
+    "structure_width_ok": _structure_width_ok,
     "dte_in_range": _dte_in_range,
     "delta_in_range": _delta_in_range,
     "entry_recipe_passed": _entry_recipe_passed,
     "open_interest_ok": _open_interest_ok,
     "relative_spread_ok": _relative_spread_ok,
+    "structure_economics_available": _structure_economics_available,
     "return_on_risk_ok": _return_on_risk_ok,
     "ranking_policy_passed": _ranking_policy_passed,
     "selection_score_ok": _selection_score_ok,

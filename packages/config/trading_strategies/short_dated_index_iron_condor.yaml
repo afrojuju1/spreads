@@ -30,6 +30,7 @@ build:
       entry_slippage_dollars: 0.10
       model_implied_volatility: 0.08
 entry:
+  quality_profile: iron_condor_v1
   schedule:
     cadence_minutes: 5
     market_hours_only: true

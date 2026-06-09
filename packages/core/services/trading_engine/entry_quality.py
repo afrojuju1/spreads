@@ -333,6 +333,16 @@ def _stage(stage: EntryQualityStageName, filter_ids: Sequence[str]) -> EntryQual
 
 
 MOMENTUM_LONG_CALL_PROFILE_ID = "momentum_long_call_v1"
+OPTION_STRUCTURE_PROFILE_IDS = {
+    "call_credit_spread": "call_credit_spread_v1",
+    "put_credit_spread": "put_credit_spread_v1",
+    "call_debit_spread": "call_debit_spread_v1",
+    "put_debit_spread": "put_debit_spread_v1",
+    "iron_condor": "iron_condor_v1",
+    "short_put": "short_put_v1",
+    "long_straddle": "long_straddle_v1",
+    "long_strangle": "long_strangle_v1",
+}
 
 MOMENTUM_LONG_CALL_V1 = EntryQualityProfile(
     profile_id=MOMENTUM_LONG_CALL_PROFILE_ID,
@@ -425,8 +435,125 @@ MOMENTUM_LONG_CALL_V1 = EntryQualityProfile(
     ),
 )
 
+_COMMON_STRUCTURE_CONTRACT_FILTERS = (
+    "strategy_family_matches",
+    "structure_family_matches",
+    "canonical_structure_available",
+    "structure_leg_mix_matches",
+    "structure_expiration_consistent",
+    "dte_in_range",
+    "delta_in_range",
+    "entry_recipe_passed",
+)
+
+_WIDTH_STRUCTURE_CONTRACT_FILTERS = (
+    "strategy_family_matches",
+    "structure_family_matches",
+    "canonical_structure_available",
+    "structure_leg_mix_matches",
+    "structure_expiration_consistent",
+    "structure_width_ok",
+    "dte_in_range",
+    "delta_in_range",
+    "entry_recipe_passed",
+)
+
+
+def _option_structure_profile(
+    *,
+    trade_structure: str,
+    description: str,
+    require_width: bool = False,
+) -> EntryQualityProfile:
+    return EntryQualityProfile(
+        profile_id=OPTION_STRUCTURE_PROFILE_IDS[trade_structure],
+        trade_structure=trade_structure,
+        description=description,
+        stages=(
+            _stage(
+                EntryQualityStageName.SOURCE_PREFLIGHT,
+                ("source_is_fresh",),
+            ),
+            _stage(
+                EntryQualityStageName.UNDERLYING_SETUP,
+                ("setup_context_usable",),
+            ),
+            _stage(
+                EntryQualityStageName.CHAIN_VIABILITY,
+                (
+                    "chain_data_available",
+                    "option_snapshots_available",
+                    "greeks_available",
+                ),
+            ),
+            _stage(
+                EntryQualityStageName.CONTRACT_FIT,
+                _WIDTH_STRUCTURE_CONTRACT_FILTERS if require_width else _COMMON_STRUCTURE_CONTRACT_FILTERS,
+            ),
+            _stage(
+                EntryQualityStageName.PREMIUM_QUALITY,
+                (
+                    "open_interest_ok",
+                    "relative_spread_ok",
+                    "structure_economics_available",
+                    "return_on_risk_ok",
+                    "ranking_policy_passed",
+                ),
+            ),
+            _stage(
+                EntryQualityStageName.SELECTION,
+                (
+                    "selection_score_ok",
+                    "selection_live_ready",
+                ),
+            ),
+        ),
+    )
+
+
+OPTION_STRUCTURE_PROFILES = (
+    _option_structure_profile(
+        trade_structure="call_credit_spread",
+        description="Call credit spread entry quality profile.",
+        require_width=True,
+    ),
+    _option_structure_profile(
+        trade_structure="put_credit_spread",
+        description="Put credit spread entry quality profile.",
+        require_width=True,
+    ),
+    _option_structure_profile(
+        trade_structure="call_debit_spread",
+        description="Call debit spread entry quality profile.",
+        require_width=True,
+    ),
+    _option_structure_profile(
+        trade_structure="put_debit_spread",
+        description="Put debit spread entry quality profile.",
+        require_width=True,
+    ),
+    _option_structure_profile(
+        trade_structure="iron_condor",
+        description="Iron condor entry quality profile.",
+        require_width=True,
+    ),
+    _option_structure_profile(
+        trade_structure="short_put",
+        description="Short put entry quality profile.",
+    ),
+    _option_structure_profile(
+        trade_structure="long_straddle",
+        description="Long straddle entry quality profile.",
+    ),
+    _option_structure_profile(
+        trade_structure="long_strangle",
+        description="Long strangle entry quality profile.",
+    ),
+)
+
 ENTRY_QUALITY_PROFILE_REGISTRY: dict[str, EntryQualityProfile] = {
     MOMENTUM_LONG_CALL_V1.profile_id: MOMENTUM_LONG_CALL_V1,
+    **{profile.profile_id: profile for profile in OPTION_STRUCTURE_PROFILES},
 }
 
 
@@ -459,6 +586,8 @@ __all__ = [
     "FilterResultStatus",
     "MOMENTUM_LONG_CALL_PROFILE_ID",
     "MOMENTUM_LONG_CALL_V1",
+    "OPTION_STRUCTURE_PROFILE_IDS",
+    "OPTION_STRUCTURE_PROFILES",
     "list_entry_quality_profiles",
     "resolve_entry_quality_profile",
 ]

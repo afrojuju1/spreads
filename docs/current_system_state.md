@@ -283,7 +283,19 @@ Current entry-quality snapshot builders:
 - `momentum_long_call_v1` for `momentum_long_calls`
 - a generic option-structure snapshot builder registered for planned vertical, condor, short-put, and long-vol quality profiles. It reads canonical `legs[]`, order payloads, economics, liquidity, DTE, greeks, expected-move, ranking evidence, and missing-structure reason codes from candidate payloads. This enables observation/profile work for non-long-call families without creating admission, intents, attempts, or broker submissions.
 
-Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. `momentum_long_call_v1` includes target-DTE chain viability plus SPY/QQQ relative-strength and market-regime filters. `TradingOpsState` projects the latest entry-quality waterfall from persisted engine facts so the CLI and dashboard show stage counts, top blocker reasons, selection counts, and admission counts from the same read model. The displaced replay/runtime filter helpers have been removed, and the `spr-34u` cutover was live-validated during the 2026-06-09 market session. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
+Implemented quality profiles:
+
+- `momentum_long_call_v1`
+- `call_credit_spread_v1`
+- `put_credit_spread_v1`
+- `call_debit_spread_v1`
+- `put_debit_spread_v1`
+- `iron_condor_v1`
+- `short_put_v1`
+- `long_straddle_v1`
+- `long_strangle_v1`
+
+Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. `momentum_long_call_v1` includes target-DTE chain viability plus SPY/QQQ relative-strength and market-regime filters. The non-long-call family profiles consume the generic structure snapshot and require canonical `legs[]`, family/leg-mix match, common expiration, spread/condor width where applicable, liquidity, premium/economics, return-on-risk, ranking-policy, and selection-readiness evidence. Long-vol profiles keep their two-long-leg debit shape and are not forced through vertical-only width validation. `TradingOpsState` projects the latest entry-quality waterfall from persisted engine facts so the CLI and dashboard show stage counts, top blocker reasons, selection counts, and admission counts from the same read model. The displaced replay/runtime filter helpers have been removed, and the `spr-34u` cutover was live-validated during the 2026-06-09 market session. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
 
 Active entry facts are persisted through:
 

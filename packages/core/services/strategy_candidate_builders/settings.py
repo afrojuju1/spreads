@@ -280,6 +280,16 @@ def _aggregate_ranking_builder_params(
     return payload
 
 
+def _ranking_builder_params_from_parameters(parameters: CandidateBuildParameters) -> dict[str, float]:
+    payload: dict[str, float] = {}
+    for key in RANKING_POLICY_ARG_KEYS:
+        value = getattr(parameters, key)
+        if value is None:
+            continue
+        payload[key] = float(value)
+    return payload
+
+
 def _config_backed_ranking_builder_params(
     *,
     profile_name: str,
@@ -347,11 +357,13 @@ def apply_candidate_profile_defaults(
     resolved_config_root = (
         _normalized_strategy_config_root(effective_config_root) if effective_config_root not in (None, "") else parameters.config_root
     )
-    _ranking_source, ranking_builder_params = resolve_ranking_builder_params(
-        profile_name=parameters.build_profile,
-        strategy_family=normalized_strategy,
-        config_root=resolved_config_root,
-    )
+    ranking_builder_params = _ranking_builder_params_from_parameters(parameters)
+    if not ranking_builder_params:
+        _ranking_source, ranking_builder_params = resolve_ranking_builder_params(
+            profile_name=parameters.build_profile,
+            strategy_family=normalized_strategy,
+            config_root=resolved_config_root,
+        )
     strategy_profile_override = resolve_strategy_profile_override(
         profile_name=parameters.build_profile,
         strategy=normalized_strategy,
