@@ -2,7 +2,7 @@
 
 Date: 2026-06-08
 
-Status: partially implemented. Beads `spr-34u.1` through `spr-34u.9` are shipped for `momentum_long_calls`; `spr-34u.10` remains open for final cutover validation.
+Status: implemented and live-validated for `momentum_long_calls`. Beads `spr-34u.1` through `spr-34u.10` are shipped; first selected-order lifecycle validation remains separate under `spr-tlf`.
 
 Related:
 
@@ -317,7 +317,7 @@ This is intentionally a full cleanup path, not a compatibility wrapper.
 7. Done: add SPY/QQQ relative-strength and market-regime filters.
 8. Done: update ops CLI/dashboard to show filter waterfall.
 9. Done: remove stale duplicate gate plumbing once the pipeline is canonical.
-10. Remaining: live-validate the cutover after the filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
+10. Done: live-validate the cutover after the filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
 
 ## First Profile
 

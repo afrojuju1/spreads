@@ -201,7 +201,7 @@ Current live entry-quality profile:
 
 - `momentum_long_call_v1` for `momentum_long_calls`
 
-Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. `momentum_long_call_v1` includes target-DTE chain viability plus SPY/QQQ relative-strength and market-regime filters. `TradingOpsState` projects the latest entry-quality waterfall from persisted engine facts so the CLI and dashboard show stage counts, top blocker reasons, selection counts, and admission counts from the same read model. The displaced replay/runtime filter helpers have been removed; final quality-pipeline cutover validation remains tracked under the `spr-34u` beads. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
+Implemented quality stages include source preflight, underlying setup, chain viability, contract fit, premium quality, and selection. `momentum_long_call_v1` includes target-DTE chain viability plus SPY/QQQ relative-strength and market-regime filters. `TradingOpsState` projects the latest entry-quality waterfall from persisted engine facts so the CLI and dashboard show stage counts, top blocker reasons, selection counts, and admission counts from the same read model. The displaced replay/runtime filter helpers have been removed, and the `spr-34u` cutover was live-validated during the 2026-06-09 market session. First selected-order lifecycle validation remains a separate live-validation task that should wait for an actual selected decision.
 
 Active entry facts are persisted through:
 
