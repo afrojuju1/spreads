@@ -36,7 +36,7 @@ from core.services.company_valuation.unresolved import (
 )
 from core.services.execution.submit import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
-from core.services.exit_manager import run_position_exit_manager
+from core.services.exit_manager import run_trading_strategy_manage
 from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source
 from core.services.trading_engine.strategy_runtime import run_trading_strategy_entry
 from core.services.tradingagents_scan import run_tradingagents_scan
@@ -216,7 +216,7 @@ async def run_trading_strategy_manage_job(
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_position_exit_manager(
+        return run_trading_strategy_manage(
             db_target=database_url,
             storage=ctx["storage"],
             trading_strategy_id=str(payload["trading_strategy_id"]),

@@ -291,7 +291,7 @@ Execution modules have explicit owners: `direct_orders.py` owns equity/option at
 
 Operators inspect and reconcile individual attempts through `spreads execution inspect <execution_attempt_id>`, `spreads execution refresh <execution_attempt_id>`, and `spreads execution cancel <execution_attempt_id>`. These commands are thin adapters over `services/execution/sync.py`, support deploy targeting with `--env`, render attempt status plus order/fill counts and linked intent state, and refuse terminal cancels with `changed=false`.
 
-`services/session_positions.py` owns position attribution. `PostgresPortfolioEngine` owns close decisions and `services/trading_engine/close_policy.py` owns reusable profit/stop/force-close policy math. `services/trading_engine/risk_runtime.py` owns close admission checks for position status, reconciliation freshness, broker symbols, and order validity. `services/exit_manager.py` is the manage-job adapter: it refreshes marks, applies broker/active-close guards plus close admission, and creates close intents for selected closes. Close actions go through intents and attempts; they should not bypass the execution lifecycle.
+`services/session_positions.py` owns position attribution. `PostgresPortfolioEngine` owns close decisions and `services/trading_engine/close_policy.py` owns reusable profit/stop/force-close policy math. `services/trading_engine/risk_runtime.py` owns close admission checks for position status, reconciliation freshness, broker symbols, and order validity. `services/exit_manager.py` exposes `run_trading_strategy_manage`, the manage-job adapter: it refreshes marks, applies broker/active-close guards plus close admission, and creates close intents for selected closes. Close actions go through intents and attempts; they should not bypass the execution lifecycle.
 
 ## Hot-Path Abstraction Audit
 
@@ -301,7 +301,7 @@ Current audit result for the live trading hot path:
 - Keep `execution_submit` as the broker-submit isolation job. It gives each claimed intent a durable attempt/job lifecycle and lets ops distinguish dispatch, broker submission, and unknown-submit outcomes.
 - Keep candidate-build policy helpers under DataEngine ownership. `services/strategy_candidate_builders/` is the only active candidate-construction package; it must not become an alternate orchestration path, product surface, CLI flow, or persistence owner.
 - Keep `EntrySelectionEngine` as the canonical account-agnostic strategy-selection service. Do not put account capacity, broker submit readiness, or alert delivery back into selection.
-- Merge management scheduling into `trading_strategy_manage` only. The standalone `position_exit_manager` job type is retired as an active worker surface; `services/exit_manager.py` remains the Strategy/Portfolio manage adapter.
+- Merge management scheduling into `trading_strategy_manage` only. There is no standalone position-exit job type; `services/exit_manager.py` exposes the Strategy/Portfolio manage adapter used by `trading_strategy_manage`.
 - Do not add a message bus, second database, actor framework, or compatibility wrapper around removed runtime surfaces.
 
 ## Operator Read Models

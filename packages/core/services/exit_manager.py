@@ -259,7 +259,7 @@ def _replace_with_blocked_projection(
 
 
 @with_storage()
-def run_position_exit_manager(
+def run_trading_strategy_manage(
     *,
     db_target: str,
     trading_strategy_id: str | None = None,
