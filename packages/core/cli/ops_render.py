@@ -416,6 +416,11 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     broker_sync = dict(details.get("broker_sync") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
     execution_health = dict(details.get("execution_health") or {})
+    execution_contract = dict(details.get("execution_contract") or {})
+    primary_execution_contract = dict(execution_contract.get("primary_strategy_contract") or {})
+    latest_lifecycle_evidence = dict(execution_contract.get("latest_lifecycle_evidence") or {})
+    natural_evidence = dict(latest_lifecycle_evidence.get("natural_strategy") or {})
+    synthetic_evidence = dict(latest_lifecycle_evidence.get("synthetic_validation") or {})
     mark_health = dict(details.get("mark_health") or {})
     engine = dict(details.get("engine") or {})
     engine_summary = dict(engine.get("summary") or {})
@@ -432,8 +437,28 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             f"..{_render_value(summary.get('market_close_at'))}"
         ),
     )
-    overview.add_row("Environment", _render_value(summary.get("environment")))
+    overview.add_row("Broker Env", _render_value(summary.get("broker_environment") or summary.get("environment")))
     overview.add_row("Control", _render_value(summary.get("control_mode")))
+    overview.add_row(
+        "Execution Mode",
+        (
+            f"{_render_value(summary.get('execution_posture') or primary_execution_contract.get('execution_posture'))} | "
+            f"{_render_value(summary.get('approval_mode') or primary_execution_contract.get('approval_mode'))} | "
+            f"{_render_value(summary.get('execution_runtime') or primary_execution_contract.get('execution_runtime'))}"
+        ),
+    )
+    overview.add_row(
+        "Mode Contract",
+        (
+            f"{_render_value(summary.get('execution_contract_status') or execution_contract.get('status'))} | "
+            f"compatible {_render_value(summary.get('environment_compatible'))} | "
+            f"{_render_value(summary.get('environment_mismatch_reason'))}"
+        ),
+    )
+    overview.add_row(
+        "Lifecycle Proof",
+        (f"natural {_render_value(natural_evidence.get('observed_at'))} | " f"synthetic {_render_value(synthetic_evidence.get('observed_at'))}"),
+    )
     overview.add_row(
         "Scheduler",
         f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
@@ -529,6 +554,29 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         title="Engine Spine",
         value=engine_summary,
     )
+
+    strategy_contracts = list(execution_contract.get("strategy_contracts") or [])
+    if strategy_contracts:
+        table = Table(title="Execution Contract", header_style="bold")
+        table.add_column("Strategy")
+        table.add_column("Posture")
+        table.add_column("Approval")
+        table.add_column("Runtime")
+        table.add_column("Broker Env")
+        table.add_column("Compatible")
+        table.add_column("Mismatch", max_width=32, overflow="ellipsis", no_wrap=True)
+        for row in strategy_contracts:
+            contract = dict(row or {})
+            table.add_row(
+                str(contract.get("trading_strategy_id") or "-"),
+                _render_value(contract.get("execution_posture")),
+                _render_value(contract.get("approval_mode")),
+                _render_value(contract.get("execution_runtime")),
+                _render_value(contract.get("broker_environment")),
+                _render_value(contract.get("environment_compatible")),
+                _render_value(contract.get("environment_mismatch_reason")),
+            )
+        console.print(table)
 
     flow_rows = list(details.get("trading_flows") or [])
     if flow_rows:

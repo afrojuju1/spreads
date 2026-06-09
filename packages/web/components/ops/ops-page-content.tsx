@@ -54,6 +54,8 @@ export function OpsPageContent() {
   const storageSummary = readRecord(storageState?.summary);
   const storageDetails = readRecord(storageState?.details);
   const storageTables = readRecordList(storageDetails.tables);
+  const executionContract = readRecord(tradingDetails.execution_contract);
+  const primaryExecutionContract = readRecord(executionContract.primary_strategy_contract);
   const workers = readRecordList(tradingDetails.workers);
   const workerLanes = readRecordList(tradingDetails.worker_lanes);
   const tradingFlows = readRecordList(tradingDetails.trading_flows);
@@ -121,7 +123,15 @@ export function OpsPageContent() {
         <div className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm text-muted-foreground">Loading live ops state.</div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <MetricTile
+          label="Execution Mode"
+          value={humanizeToken(firstPresent(tradingSummary.execution_posture, primaryExecutionContract.execution_posture), loading ? "loading" : "unknown")}
+          note={`${humanizeToken(firstPresent(tradingSummary.broker_environment, executionContract.broker_environment), loading ? "loading" : "unknown")} · ${humanizeToken(
+            firstPresent(tradingSummary.execution_contract_status, executionContract.status),
+            loading ? "loading" : "unknown",
+          )}`}
+        />
         <MetricTile
           label="Engine"
           value={humanizeToken(firstPresent(tradingSummary.engine_status, engine.status), loading ? "loading" : "idle")}

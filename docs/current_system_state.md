@@ -224,6 +224,8 @@ The expected environment/provenance snapshot shape is:
 - `execution_attempt_id`
 - `observed_at`
 
+`TradingOpsState` is the canonical operator surface for this contract. Its summary exposes the primary active strategy posture, approval mode, runtime, normalized `broker_environment`, mode/environment compatibility, mismatch reason, and latest natural/synthetic lifecycle timestamps. Its details expose `execution_contract.strategy_contracts`, `execution_contract.primary_strategy_contract`, and `execution_contract.latest_lifecycle_evidence`. CLI, API, Today, and Ops dashboard views consume that read model directly; do not add a separate paper-mode dashboard or frontend-only environment inference.
+
 Mismatch behavior:
 
 - `paper` posture with `alpaca_live` must block automatic broker submission and raise operator attention.

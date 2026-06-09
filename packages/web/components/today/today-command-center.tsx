@@ -92,6 +92,8 @@ export function TodayCommandCenter() {
   const details = readRecord(state?.details);
   const engine = readRecord(details.engine);
   const engineSummary = readRecord(engine.summary);
+  const executionContract = readRecord(details.execution_contract);
+  const primaryExecutionContract = readRecord(executionContract.primary_strategy_contract);
   const primaryFlow = readRecord(details.primary_trading_flow);
   const sourceState = readRecord(primaryFlow.source_state);
   const candidateState = readRecord(primaryFlow.candidate_state);
@@ -114,7 +116,9 @@ export function TodayCommandCenter() {
   const marketDate = readString(summary.market_date, "");
   const marketSessionStatus = summary.market_session_status;
   const tradingAllowed = summary.trading_allowed;
-  const environment = summary.environment;
+  const environment = firstPresent(summary.broker_environment, executionContract.broker_environment, summary.environment);
+  const executionPosture = firstPresent(summary.execution_posture, primaryExecutionContract.execution_posture);
+  const executionContractStatus = firstPresent(summary.execution_contract_status, executionContract.status);
   const controlMode = summary.control_mode;
   const generatedAt = state?.generated_at;
   const openPositions = formatNumberMetric(firstPresent(summary.open_position_count, capacity.open_position_count), pendingLabel);
@@ -180,7 +184,7 @@ export function TodayCommandCenter() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           label="Trading Gate"
           value={
@@ -191,6 +195,11 @@ export function TodayCommandCenter() {
               : pendingLabel
           }
           note={`${humanizeToken(controlMode, pendingLabel)} control · ${humanizeToken(marketSessionStatus, pendingLabel)}`}
+        />
+        <MetricTile
+          label="Execution Mode"
+          value={humanizeToken(executionPosture, pendingLabel)}
+          note={`${humanizeToken(environment, pendingLabel)} · ${humanizeToken(executionContractStatus, pendingLabel)}`}
         />
         <MetricTile
           label="Entry Engine"
@@ -225,6 +234,11 @@ export function TodayCommandCenter() {
               label="Broker Sync"
               value={summary.broker_sync_status ?? (loading ? "loading" : "idle")}
               note={`${formatAge(summary.broker_sync_age_seconds)} old`}
+            />
+            <StatusLine
+              label="Mode Contract"
+              value={executionContractStatus ?? (loading ? "loading" : "unknown")}
+              note={`${humanizeToken(executionPosture, pendingLabel)} · ${humanizeToken(environment, pendingLabel)}`}
             />
             <StatusLine
               label="Execution"
