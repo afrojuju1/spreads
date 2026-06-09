@@ -65,8 +65,8 @@ The existing commands use Postgres automatically:
 
 ```bash
 uv run spreads config validate --json
-uv run spreads status --json
-uv run spreads storage --json
+uv run spreads ops state --json
+uv run spreads ops storage --json
 uv run spreads jobs --json
 ```
 

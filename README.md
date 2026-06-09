@@ -82,7 +82,7 @@ Main local surfaces:
 Check live trading state:
 
 ```bash
-uv run spreads trading --env ade-nucbox-k8-plus
+uv run spreads ops state --env ade-nucbox-k8-plus
 ```
 
 Check job health:

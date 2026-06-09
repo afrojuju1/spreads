@@ -107,8 +107,8 @@ Use the ops CLI first:
 
 ```bash
 docker compose ps
-uv run spreads status
-uv run spreads storage
+uv run spreads ops state
+uv run spreads ops storage
 uv run spreads jobs
 uv run spreads jobs lanes
 uv run spreads positions --date <YYYY-MM-DD> --json

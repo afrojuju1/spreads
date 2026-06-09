@@ -21,9 +21,8 @@ Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the
 
 Current shipped operator surfaces:
 
-- `spreads status` is the canonical first live trading operator surface
-- `spreads trading` is the canonical strategy/source/candidate/decision surface
-- `spreads storage` is the canonical storage and retention surface
+- `spreads ops state` is the canonical live trading, strategy, source, candidate, and decision surface
+- `spreads ops storage` is the canonical storage and retention surface
 - `spreads jobs` and `spreads jobs lanes` are the canonical scheduler/worker surfaces
 - `spreads positions` is the shipped position drilldown
 - do not tell operators to use removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands
@@ -56,8 +55,8 @@ Start with the shipped ops CLI, then fall back to logs or code:
 
 ```bash
 docker compose ps
-uv run spreads status
-uv run spreads storage
+uv run spreads ops state
+uv run spreads ops storage
 uv run spreads jobs
 uv run spreads jobs lanes
 uv run spreads positions --date <YYYY-MM-DD> --json
@@ -111,8 +110,8 @@ Run:
 
 ```bash
 docker compose ps
-uv run spreads status
-uv run spreads storage
+uv run spreads ops state
+uv run spreads ops storage
 docker compose logs --tail=100 scheduler worker-runtime worker-data market-recorder api
 ```
 
@@ -129,7 +128,7 @@ If backend code changed recently, stale workers are a first-class suspect.
 Use:
 
 ```bash
-uv run spreads status
+uv run spreads ops state
 uv run spreads jobs --limit 25 --json
 uv run spreads positions --date YYYY-MM-DD --json
 ```
@@ -155,7 +154,7 @@ Treat these as hard signals:
 Use:
 
 ```bash
-uv run spreads status
+uv run spreads ops state
 uv run spreads positions --date YYYY-MM-DD --json
 uv run spreads jobs --job-type execution_intent_dispatch --limit 10 --json
 ```
@@ -173,7 +172,7 @@ Do not present modeled session results as realized account performance.
 There is no shipped `audit`, `automations`, or `backtest` CLI in the current app. If live ops state is not enough, inspect current persisted engine facts, positions, job runs, and logs through shipped surfaces first:
 
 ```bash
-uv run spreads status --json
+uv run spreads ops state --json
 uv run spreads jobs --json
 uv run spreads positions --date YYYY-MM-DD --json
 docker compose logs --since 30m scheduler worker-runtime worker-data market-recorder
@@ -284,8 +283,8 @@ If the task turns into a code change, finish with:
 uv run ruff check <touched-python-files>
 uv run python -m py_compile <touched-python-files>
 docker compose ps
-uv run spreads status
-uv run spreads storage
+uv run spreads ops state
+uv run spreads ops storage
 uv run spreads jobs
 ```
 

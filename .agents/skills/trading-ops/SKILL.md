@@ -23,14 +23,14 @@ Use this skill from `/home/ade/Projects/spreads`.
 Run the canonical trading state first:
 
 ```bash
-uv run spreads status --env ade-nucbox-k8-plus
+uv run spreads ops state --env ade-nucbox-k8-plus
 ```
 
 Use JSON when exact fields matter:
 
 ```bash
-uv run spreads trading --env ade-nucbox-k8-plus --json
-uv run spreads storage --env ade-nucbox-k8-plus --json
+uv run spreads ops state --env ade-nucbox-k8-plus --json
+uv run spreads ops storage --env ade-nucbox-k8-plus --json
 uv run spreads jobs --env ade-nucbox-k8-plus --json
 uv run spreads jobs --env ade-nucbox-k8-plus --status failed --limit 10 --json
 ```
@@ -68,8 +68,8 @@ uv run spreads jobs --env ade-nucbox-k8-plus --job-type execution_intent_dispatc
 After deploying runtime, scheduler, worker, candidate-builder, ticker-source, or execution changes, validate the first live window from the NUC target:
 
 ```bash
-uv run spreads status --env ade-nucbox-k8-plus
-uv run spreads trading --env ade-nucbox-k8-plus --json
+uv run spreads ops state --env ade-nucbox-k8-plus
+uv run spreads ops state --env ade-nucbox-k8-plus --json
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type ticker_source --limit 5 --json
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry --limit 5 --json
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type execution_intent_dispatch --limit 5 --json
@@ -113,7 +113,7 @@ docker compose restart scheduler worker-runtime worker-data
 3. Verify the deployed state and recent job runs:
 
 ```bash
-uv run spreads status --env ade-nucbox-k8-plus
+uv run spreads ops state --env ade-nucbox-k8-plus
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type ticker_source --limit 5 --json
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry --limit 5 --json
 ```

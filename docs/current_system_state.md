@@ -4,13 +4,13 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-08
+Last updated: 2026-06-09
 
 ## Top-Level Boundaries
 
 | Boundary | Current owner | Notes |
 |---|---|---|
-| Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Top-level CLI commands such as `spreads status`, `spreads trading`, `spreads storage`, `spreads jobs`, and `spreads logs` are the operator-friendly entrypoints over canonical services. |
+| Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Canonical CLI visibility lives under `spreads ops state` and `spreads ops storage`; root commands such as `spreads jobs`, `spreads logs`, `spreads positions`, and `spreads execution-runtimes` remain operator entrypoints over their canonical services. |
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
