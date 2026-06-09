@@ -430,6 +430,8 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     broker_exposure = dict(details.get("broker_exposure") or {})
+    strategy_breadth = dict(details.get("strategy_breadth") or {})
+    strategy_breadth_summary = dict(strategy_breadth.get("summary") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
     execution_health = dict(details.get("execution_health") or {})
     execution_contract = dict(details.get("execution_contract") or {})
@@ -440,6 +442,11 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     mark_health = dict(details.get("mark_health") or {})
     engine = dict(details.get("engine") or {})
     engine_summary = dict(engine.get("summary") or {})
+
+    def _breadth_summary_value(key: str) -> Any:
+        if key in summary:
+            return summary.get(key)
+        return strategy_breadth_summary.get(key)
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -476,6 +483,15 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         (f"natural {_render_value(natural_evidence.get('observed_at'))} | " f"synthetic {_render_value(synthetic_evidence.get('observed_at'))}"),
     )
     overview.add_row("Entry Posture", _truncate(summary.get("primary_entry_message"), length=96))
+    overview.add_row(
+        "Strategy Breadth",
+        (
+            f"active {_render_value(_breadth_summary_value('active_strategy_count'))} | "
+            f"available {_render_value(_breadth_summary_value('available_strategy_count'))} | "
+            f"shadow {_render_value(_breadth_summary_value('available_shadow_strategy_count'))} | "
+            f"paper {_render_value(_breadth_summary_value('available_paper_strategy_count'))}"
+        ),
+    )
     overview.add_row(
         "Scheduler",
         f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
@@ -579,6 +595,28 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         title="Engine Spine",
         value=engine_summary,
     )
+
+    strategy_breadth_rows = list(strategy_breadth.get("strategies") or [])
+    if strategy_breadth_rows:
+        table = Table(title="Strategy Breadth", header_style="bold")
+        table.add_column("Strategy", max_width=28, overflow="ellipsis")
+        table.add_column("Posture", max_width=28, overflow="ellipsis")
+        table.add_column("Source", max_width=18, overflow="ellipsis")
+        table.add_column("Reason", max_width=22, overflow="ellipsis")
+        for row in strategy_breadth_rows:
+            source = dict(row.get("source") or {})
+            entry = dict(row.get("entry") or {})
+            entry_schedule = dict(entry.get("schedule") or {})
+            table.add_row(
+                f"{str(row.get('trading_strategy_id') or row.get('name') or '-')}\n{_render_value(row.get('trade_structure'))}",
+                (
+                    f"{_render_value(row.get('ops_posture'))}\n"
+                    f"{_render_value(row.get('execution_mode'))}/{_render_value(row.get('approval_mode'))}"
+                ),
+                f"{_render_value(source.get('ref'))}\n{_render_value(entry_schedule.get('cadence'))} {'on' if entry.get('enabled') else 'off'}",
+                _render_value(row.get("not_active_reason")),
+            )
+        console.print(table)
 
     strategy_contracts = list(execution_contract.get("strategy_contracts") or [])
     if strategy_contracts:

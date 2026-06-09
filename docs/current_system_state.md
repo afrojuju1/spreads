@@ -176,6 +176,8 @@ Available but disabled-by-default strategy configs:
 
 Disabled strategy configs are kept as authored strategy definitions, but they do not generate default scheduler jobs until intentionally re-enabled.
 
+`TradingOpsState.details.strategy_breadth` projects every authored strategy config, including disabled paper/shadow families, as operator-visible breadth. That projection is observation-only for inactive strategies: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create scheduler jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface only.
+
 The long-vol strategy configs are disabled and shadow-mode by default as operator policy. The Spreads execution path itself supports their two-long-leg `mleg` debit order shape when a strategy is intentionally enabled for paper/live; long-vol must not be blocked by vertical-only width or return-on-risk validation.
 
 ## Paper Execution Contract
@@ -313,6 +315,10 @@ Operator views should read service-owned state through:
 The dashboard should show strategy-owned runtime state, not recreate old runtime pages or infer business logic in the frontend.
 
 `TradingOpsState` exposes healthy no-entry rationale through each trading flow's `entry_posture` and the primary summary fields `primary_entry_state`, `primary_entry_message`, and `primary_entry_blocker_groups`. A flat strategy can therefore be explicitly healthy when source and candidate runs are fresh but account-agnostic quality filters, such as broad market regime or target-DTE chain viability, blocked all candidates.
+
+`TradingOpsState.details.strategy_breadth` is the canonical operator inventory for authored strategy breadth. Disabled paper/shadow strategies can appear there as `paper_observation_candidate` or `shadow_observation_candidate`, but their breadth contracts force effective automatic submission off unless the strategy is actually active through the scheduler-owned lifecycle spine.
+
+Entry planning treats non-live signal eligibility, including `analysis_only` emitted by shadow-mode strategy runs, as observation evidence rather than selected-entry eligibility. Those rows may be persisted for regime comparison, but they must not create selected entry decisions or execution intents.
 
 `TradingOpsState.details.broker_exposure` classifies the latest broker account snapshot positions by ownership against canonical open Spreads position legs. Broker option legs should be labeled as `spreads_managed`, `spreads_synthetic_validation`, or `external_manual` instead of being hidden behind raw broker account positions.
 

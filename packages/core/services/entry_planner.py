@@ -23,6 +23,11 @@ def score_signal(row: dict[str, Any]) -> float:
     return 0.0
 
 
+def _signal_is_live_eligible(signal: dict[str, Any]) -> bool:
+    eligibility = str(signal.get("eligibility") or signal.get("eligibility_state") or "live").strip().lower()
+    return eligibility in {"", "live"}
+
+
 def plan_entry_selection(
     *,
     signals: list[dict[str, Any]],
@@ -34,7 +39,10 @@ def plan_entry_selection(
 ) -> dict[str, Any]:
     eligible_states = _normalized_selection_states(eligible_selection_states)
     eligible_signals = [
-        signal for signal in signals if eligible_states is None or str(signal.get("selection_state") or "").strip().lower() in eligible_states
+        signal
+        for signal in signals
+        if (eligible_states is None or str(signal.get("selection_state") or "").strip().lower() in eligible_states)
+        and _signal_is_live_eligible(signal)
     ]
     selected: dict[str, Any] | None = None
     if controls_allowed and eligible_signals and score_signal(eligible_signals[0]) >= min_score:
@@ -49,6 +57,9 @@ def plan_entry_selection(
         elif eligible_states is not None and str(signal.get("selection_state") or "").strip().lower() not in eligible_states:
             state = "rejected"
             reason_codes = ["selection_state_not_entry_eligible"]
+        elif not _signal_is_live_eligible(signal):
+            state = "rejected"
+            reason_codes = ["signal_not_live_eligible"]
         elif selected is None and score_signal(signal) < min_score:
             state = "rejected"
             reason_codes = ["score_below_min_signal_score"]

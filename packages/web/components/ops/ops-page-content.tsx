@@ -74,6 +74,9 @@ export function OpsPageContent() {
   const workers = readRecordList(tradingDetails.workers);
   const workerLanes = readRecordList(tradingDetails.worker_lanes);
   const tradingFlows = readRecordList(tradingDetails.trading_flows);
+  const strategyBreadth = readRecord(tradingDetails.strategy_breadth);
+  const strategyBreadthSummary = readRecord(strategyBreadth.summary);
+  const strategyBreadthRows = readRecordList(strategyBreadth.strategies);
   const tradingFlowsWithQuality = tradingFlows.filter((flow) => {
     const waterfall = readRecord(readRecord(flow.candidate_state).quality_waterfall);
     return readString(waterfall.profile_id, "") !== "" || Object.keys(readRecord(waterfall.stage_counts)).length > 0;
@@ -89,6 +92,11 @@ export function OpsPageContent() {
   const scheduler = readRecord(tradingDetails.scheduler);
   const marketSessionStatus = tradingSummary.market_session_status;
   const schedulerStatus = firstPresent(tradingSummary.scheduler_status, scheduler.status);
+  const authoredStrategyCount = firstPresent(tradingSummary.strategy_count, strategyBreadthSummary.strategy_count);
+  const activeStrategyCount = firstPresent(tradingSummary.active_strategy_count, strategyBreadthSummary.active_strategy_count);
+  const availableStrategyCount = firstPresent(tradingSummary.available_strategy_count, strategyBreadthSummary.available_strategy_count);
+  const availableShadowStrategyCount = firstPresent(tradingSummary.available_shadow_strategy_count, strategyBreadthSummary.available_shadow_strategy_count);
+  const availablePaperStrategyCount = firstPresent(tradingSummary.available_paper_strategy_count, strategyBreadthSummary.available_paper_strategy_count);
   const futureCoverage = `${readNumber(storageSummary.future_partition_days)}/${readNumber(storageSummary.required_future_partition_days)} days`;
   const tradingLogsUrl = useGrafanaTradingLogsUrl();
 
@@ -228,6 +236,57 @@ export function OpsPageContent() {
           </div>
         </div>
       </section>
+
+      {strategyBreadthRows.length ? (
+        <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Strategy Breadth</div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <MetricTile
+              label="Authored"
+              value={formatOptionalCompact(authoredStrategyCount)}
+              note={`${formatOptionalCompact(activeStrategyCount)} active`}
+            />
+            <MetricTile
+              label="Available"
+              value={formatOptionalCompact(availableStrategyCount)}
+              note={`${formatOptionalCompact(availableShadowStrategyCount)} shadow · ${formatOptionalCompact(availablePaperStrategyCount)} paper`}
+            />
+            <MetricTile
+              label="Execution"
+              value={humanizeToken(firstPresent(tradingSummary.execution_posture, primaryExecutionContract.execution_posture), loading ? "loading" : "unknown")}
+              note={humanizeToken(firstPresent(tradingSummary.execution_contract_status, executionContract.status), loading ? "loading" : "unknown")}
+            />
+          </div>
+          <div className="mt-4 overflow-x-auto rounded-lg border border-border/70">
+            <div className="min-w-[760px]">
+              <div className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_1fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                <span>Strategy</span>
+                <span>Structure</span>
+                <span>Posture</span>
+                <span>Execution</span>
+                <span>Reason</span>
+              </div>
+              <div className="divide-y divide-border/60">
+                {strategyBreadthRows.slice(0, 12).map((row) => {
+                  const isActive = row.active === true;
+                  return (
+                    <div
+                      key={readString(row.trading_strategy_id, "strategy")}
+                      className="grid grid-cols-[1.2fr_0.8fr_1fr_0.8fr_1fr] gap-3 px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 truncate font-medium">{readString(row.trading_strategy_id, "-")}</span>
+                      <span className="min-w-0 truncate">{humanizeToken(row.trade_structure, "-")}</span>
+                      <span className="min-w-0 truncate">{humanizeToken(row.ops_posture, "-")}</span>
+                      <span className="min-w-0 truncate">{humanizeToken(row.execution_mode, "-")}</span>
+                      <span className="min-w-0 truncate">{humanizeToken(row.not_active_reason, isActive ? "active" : "-")}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {tradingFlowsWithQuality.length ? (
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
