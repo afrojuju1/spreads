@@ -45,6 +45,7 @@ TARGETABLE_ROOT_COMMANDS = {
     "positions",
     "execution-runtimes",
     "jobs",
+    "lifecycle",
     "market-intel",
     "retention",
 }

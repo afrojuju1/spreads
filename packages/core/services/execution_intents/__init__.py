@@ -20,7 +20,7 @@ from core.services.execution.direct_orders import submit_equity_order, submit_op
 from core.services.execution.position_close import submit_position_close_by_id
 from core.observability.logging import log_event
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
-from core.value_coercion import as_text, utc_now_iso
+from core.value_coercion import as_text, coerce_bool, utc_now_iso
 from core.storage.read_models import TradeDecisionSignalRead
 from core.storage.serializers import parse_datetime
 
@@ -535,6 +535,9 @@ def submit_execution_intent(
             )
         elif (option_payload := _option_intent_payload(source_intent)) is not None:
             source_metadata = option_payload.get("source") if isinstance(option_payload.get("source"), dict) else {}
+            option_execution_policy = (
+                dict(option_payload["execution_policy"]) if isinstance(option_payload.get("execution_policy"), dict) else execution_policy
+            )
             result = submit_option_order(
                 db_target=db_target,
                 symbol=str(option_payload["symbol"]),
@@ -561,7 +564,8 @@ def submit_execution_intent(
                     "approval_mode": as_text(option_payload.get("approval_mode")),
                     "execution_mode": as_text(option_payload.get("execution_mode")),
                     "validation_provenance": as_text(option_payload.get("validation_provenance")),
-                    "execution_policy": execution_policy,
+                    "profile": as_text(option_payload.get("profile")),
+                    "execution_policy": option_execution_policy,
                     "exit_policy": (dict(option_payload["exit_policy"]) if isinstance(option_payload.get("exit_policy"), dict) else None),
                     "risk_policy": (dict(option_payload["risk_policy"]) if isinstance(option_payload.get("risk_policy"), dict) else None),
                     "source": dict(source_metadata),
@@ -573,6 +577,7 @@ def submit_execution_intent(
                     ),
                     **engine_ref_metadata,
                 },
+                queue_submission=bool(coerce_bool(option_payload.get("queue_submission"), default=False)),
                 storage=storage,
             )
         else:
