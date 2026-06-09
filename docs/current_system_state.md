@@ -312,6 +312,10 @@ Operator views should read service-owned state through:
 
 The dashboard should show strategy-owned runtime state, not recreate old runtime pages or infer business logic in the frontend.
 
+`TradingOpsState` exposes healthy no-entry rationale through each trading flow's `entry_posture` and the primary summary fields `primary_entry_state`, `primary_entry_message`, and `primary_entry_blocker_groups`. A flat strategy can therefore be explicitly healthy when source and candidate runs are fresh but account-agnostic quality filters, such as broad market regime or target-DTE chain viability, blocked all candidates.
+
+`TradingOpsState.details.broker_exposure` classifies the latest broker account snapshot positions by ownership against canonical open Spreads position legs. Broker option legs should be labeled as `spreads_managed`, `spreads_synthetic_validation`, or `external_manual` instead of being hidden behind raw broker account positions.
+
 ## Rollout Notes
 
 - After schema changes, run `uv run alembic upgrade head`.

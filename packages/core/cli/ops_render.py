@@ -125,6 +125,21 @@ def _render_count_map(
     return _truncate(rendered, length=item_length)
 
 
+def _render_group_labels(value: Any, *, limit: int = 3, item_length: int = 72) -> str:
+    if not isinstance(value, list) or not value:
+        return "-"
+    labels: list[str] = []
+    for row in value:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("label") or row.get("group") or "").strip()
+        if label:
+            labels.append(f"{label} {_render_value(row.get('count'))}")
+        if len(labels) >= limit:
+            break
+    return _truncate(", ".join(labels) or "-", length=item_length)
+
+
 def _render_stage_count_map(value: Any, *, item_length: int = 30) -> str:
     if not isinstance(value, dict) or not value:
         return "-"
@@ -414,6 +429,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     pnl = dict(account_snapshot.get("pnl") or {})
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
+    broker_exposure = dict(details.get("broker_exposure") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
     execution_health = dict(details.get("execution_health") or {})
     execution_contract = dict(details.get("execution_contract") or {})
@@ -459,6 +475,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         "Lifecycle Proof",
         (f"natural {_render_value(natural_evidence.get('observed_at'))} | " f"synthetic {_render_value(synthetic_evidence.get('observed_at'))}"),
     )
+    overview.add_row("Entry Posture", _truncate(summary.get("primary_entry_message"), length=96))
     overview.add_row(
         "Scheduler",
         f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
@@ -491,6 +508,14 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             f"{_render_value(summary.get('open_position_count'))}/"
             f"{_render_value(summary.get('max_open_positions'))} open | "
             f"closed {_render_value(summary.get('closed_position_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Broker Exposure",
+        (
+            f"options {_render_value(summary.get('broker_option_position_count'))} | "
+            f"managed {_render_value(summary.get('spreads_managed_broker_option_position_count'))} | "
+            f"external {_render_value(summary.get('external_manual_broker_option_position_count'))}"
         ),
     )
     overview.add_row(
@@ -580,6 +605,23 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
 
     flow_rows = list(details.get("trading_flows") or [])
     if flow_rows:
+        posture_rows = [row for row in flow_rows if isinstance(row.get("entry_posture"), dict)]
+        if posture_rows:
+            table = Table(title="Entry Posture", header_style="bold")
+            table.add_column("Strategy")
+            table.add_column("State")
+            table.add_column("Message", max_width=72, overflow="ellipsis")
+            table.add_column("Top Groups", max_width=52, overflow="ellipsis", no_wrap=True)
+            for row in posture_rows:
+                entry_posture = dict(row.get("entry_posture") or {})
+                table.add_row(
+                    str(row.get("trading_strategy_id") or row.get("name") or "-"),
+                    _render_value(entry_posture.get("state")),
+                    _render_value(entry_posture.get("message")),
+                    _render_group_labels(entry_posture.get("blocker_groups"), limit=3, item_length=72),
+                )
+            console.print(table)
+
         table = Table(title="Trading Flows", header_style="bold")
         table.add_column("Strategy")
         table.add_column("Status")
@@ -622,6 +664,28 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
         _render_quality_waterfall_summary(console, flow_rows)
+
+    broker_positions = list(broker_exposure.get("positions") or [])
+    if broker_positions:
+        table = Table(title="Broker Exposure Ownership", header_style="bold")
+        table.add_column("Symbol")
+        table.add_column("Asset")
+        table.add_column("Side")
+        table.add_column("Qty", justify="right")
+        table.add_column("Market Value", justify="right")
+        table.add_column("Ownership")
+        table.add_column("Spreads Position")
+        for row in broker_positions:
+            table.add_row(
+                str(row.get("symbol") or "-"),
+                str(row.get("asset_class") or "-"),
+                str(row.get("side") or "-"),
+                _render_value(row.get("qty")),
+                _render_money(row.get("market_value")),
+                str(row.get("ownership") or "-"),
+                str(row.get("spreads_position_id") or "-"),
+            )
+        console.print(table)
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:

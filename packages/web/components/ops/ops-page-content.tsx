@@ -36,6 +36,18 @@ function formatOptionalCompact(value: unknown): string {
   return value === undefined || value === null ? "-" : formatCompactNumber(readNumber(value));
 }
 
+function groupLabels(value: unknown, limit = 3): string {
+  const labels = readRecordList(value)
+    .map((row) => {
+      const label = humanizeToken(row.label ?? row.group, "");
+      const count = readNumber(row.count, Number.NaN);
+      return label && Number.isFinite(count) ? `${label} ${formatCompactNumber(count)}` : label;
+    })
+    .filter((value) => value.length > 0)
+    .slice(0, limit);
+  return labels.length ? labels.join(" · ") : "-";
+}
+
 export function OpsPageContent() {
   const tradingOpsQuery = useQuery({
     queryKey: ["trading-ops-state", "ops-page"],
@@ -56,6 +68,9 @@ export function OpsPageContent() {
   const storageTables = readRecordList(storageDetails.tables);
   const executionContract = readRecord(tradingDetails.execution_contract);
   const primaryExecutionContract = readRecord(executionContract.primary_strategy_contract);
+  const primaryFlow = readRecord(tradingDetails.primary_trading_flow);
+  const entryPosture = readRecord(primaryFlow.entry_posture);
+  const brokerExposure = readRecord(tradingDetails.broker_exposure);
   const workers = readRecordList(tradingDetails.workers);
   const workerLanes = readRecordList(tradingDetails.worker_lanes);
   const tradingFlows = readRecordList(tradingDetails.trading_flows);
@@ -123,7 +138,7 @@ export function OpsPageContent() {
         <div className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm text-muted-foreground">Loading live ops state.</div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
           label="Execution Mode"
           value={humanizeToken(firstPresent(tradingSummary.execution_posture, primaryExecutionContract.execution_posture), loading ? "loading" : "unknown")}
@@ -136,6 +151,18 @@ export function OpsPageContent() {
           label="Engine"
           value={humanizeToken(firstPresent(tradingSummary.engine_status, engine.status), loading ? "loading" : "idle")}
           note={`${formatCompactNumber(readNumber(engineSummary.signal_count))} signals · ${formatCompactNumber(readNumber(engineSummary.selected_count))} selected`}
+        />
+        <MetricTile
+          label="Entry Posture"
+          value={humanizeToken(firstPresent(tradingSummary.primary_entry_state, entryPosture.state), loading ? "loading" : "unknown")}
+          note={readString(firstPresent(tradingSummary.primary_entry_message, entryPosture.message), "-")}
+        />
+        <MetricTile
+          label="Broker Exposure"
+          value={`${formatOptionalCompact(tradingSummary.broker_option_position_count)} option legs`}
+          note={`${formatOptionalCompact(tradingSummary.external_manual_broker_option_position_count)} external · ${formatOptionalCompact(
+            tradingSummary.spreads_managed_broker_option_position_count,
+          )} managed`}
         />
         <MetricTile
           label="Workers"
@@ -208,16 +235,43 @@ export function OpsPageContent() {
           <div className="grid gap-3">
             {tradingFlowsWithQuality.map((flow) => {
               const candidateState = readRecord(flow.candidate_state);
+              const flowEntryPosture = readRecord(flow.entry_posture);
               return (
                 <div key={readString(flow.trading_strategy_id, "flow")} className="min-w-0">
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-medium">{readString(flow.trading_strategy_id, "strategy")}</span>
                     <RuntimeStatusBadge value={flow.status} />
+                    <Badge variant="outline">{humanizeToken(flowEntryPosture.state, "entry")}</Badge>
+                  </div>
+                  <div className="mb-3 rounded-lg border border-border/70 px-3 py-2 text-sm">
+                    <div className="font-medium">{readString(flowEntryPosture.message, "-")}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{groupLabels(flowEntryPosture.blocker_groups)}</div>
                   </div>
                   <EntryQualityWaterfallSummary value={candidateState.quality_waterfall} />
                 </div>
               );
             })}
+          </div>
+        </section>
+      ) : null}
+
+      {readRecordList(brokerExposure.positions).length ? (
+        <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Broker Exposure Ownership</div>
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {readRecordList(brokerExposure.positions)
+              .slice(0, 8)
+              .map((row) => (
+                <div key={readString(row.symbol)} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate font-medium">{readString(row.symbol)}</span>
+                    <Badge variant="outline">{humanizeToken(row.ownership)}</Badge>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                    {humanizeToken(row.asset_class)} · {humanizeToken(row.side)} · {readString(row.spreads_position_id, "external")}
+                  </div>
+                </div>
+              ))}
           </div>
         </section>
       ) : null}

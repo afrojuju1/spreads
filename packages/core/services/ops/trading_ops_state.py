@@ -25,6 +25,7 @@ from core.services.execution_lifecycle import (
     resolve_execution_attempt_source_job,
     resolve_execution_submit_job_run_id,
 )
+from core.services.option_structures import position_legs, unique_leg_symbols
 from core.services.trading_engine.portfolio_runtime import describe_position_exit_state
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
@@ -73,6 +74,39 @@ ENTRY_QUALITY_STAGE_ORDER = (
 )
 LIFECYCLE_PROVENANCES = ("natural_strategy", "synthetic_validation", "operator_direct")
 LATEST_LIFECYCLE_PROVENANCES = ("natural_strategy", "synthetic_validation")
+BROKER_OPTION_ASSET_CLASSES = {"option", "us_option"}
+NO_ENTRY_REASON_GROUPS = (
+    (
+        "market_regime",
+        "broad market regime",
+        ("market_regime_",),
+        (),
+    ),
+    (
+        "target_dte_chain",
+        "target DTE chain viability",
+        ("target_dte_",),
+        (),
+    ),
+    (
+        "option_liquidity",
+        "option liquidity",
+        ("open_interest_", "relative_spread_", "bid_ask_", "quote_size_"),
+        (),
+    ),
+    (
+        "market_data_completeness",
+        "market data completeness",
+        ("no_",),
+        ("no_delta", "no_snapshot", "no_expected_move"),
+    ),
+    (
+        "contract_fit",
+        "contract fit",
+        ("delta_", "dte_", "itm_call_"),
+        ("delta_outside_range", "itm_call_skipped"),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -240,6 +274,106 @@ def _top_positions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
     ranked.sort(key=lambda row: float(row.get("exposure") or 0.0), reverse=True)
     return ranked[:TOP_POSITION_LIMIT]
+
+
+def _is_option_broker_position(position: Mapping[str, Any]) -> bool:
+    return str(position.get("asset_class") or "").strip().lower() in BROKER_OPTION_ASSET_CLASSES
+
+
+def _broker_position_symbol(position: Mapping[str, Any]) -> str | None:
+    return as_text(position.get("symbol"))
+
+
+def _managed_leg_index(open_positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for position in open_positions:
+        owner_kind = "spreads_managed"
+        if str(position.get("source_object_type") or "") == "synthetic_validation":
+            owner_kind = "spreads_synthetic_validation"
+        for symbol in unique_leg_symbols(position_legs(position)):
+            index.setdefault(
+                symbol,
+                {
+                    "owner_kind": owner_kind,
+                    "position_id": position.get("position_id"),
+                    "trading_strategy_id": position.get("trading_strategy_id"),
+                    "source_object_type": position.get("source_object_type"),
+                    "root_symbol": position.get("root_symbol") or position.get("underlying_symbol"),
+                    "strategy_family": position.get("strategy_family") or position.get("strategy"),
+                },
+            )
+    return index
+
+
+def _broker_exposure_state(
+    *,
+    account_snapshot: Mapping[str, Any],
+    open_positions: list[dict[str, Any]],
+    broker_sync: Mapping[str, Any],
+) -> dict[str, Any]:
+    broker_positions = [dict(row) for row in as_list(account_snapshot.get("positions")) if isinstance(row, Mapping)]
+    managed_by_symbol = _managed_leg_index(open_positions)
+    classified: list[dict[str, Any]] = []
+    owner_counts: Counter[str] = Counter()
+    option_owner_counts: Counter[str] = Counter()
+    total_market_value = 0.0
+    option_market_value = 0.0
+
+    for position in broker_positions:
+        symbol = _broker_position_symbol(position)
+        managed = managed_by_symbol.get(symbol or "")
+        owner_kind = "external_manual" if managed is None else str(managed.get("owner_kind") or "spreads_managed")
+        is_option = _is_option_broker_position(position)
+        owner_counts[owner_kind] += 1
+        if is_option:
+            option_owner_counts[owner_kind] += 1
+        market_value = coerce_float(position.get("market_value")) or 0.0
+        total_market_value += market_value
+        if is_option:
+            option_market_value += market_value
+        classified.append(
+            {
+                "symbol": symbol,
+                "asset_class": position.get("asset_class"),
+                "side": position.get("side"),
+                "qty": position.get("qty"),
+                "market_value": position.get("market_value"),
+                "cost_basis": position.get("cost_basis"),
+                "unrealized_pl": position.get("unrealized_pl"),
+                "unrealized_intraday_pl": position.get("unrealized_intraday_pl"),
+                "ownership": owner_kind,
+                "spreads_position_id": None if managed is None else managed.get("position_id"),
+                "trading_strategy_id": None if managed is None else managed.get("trading_strategy_id"),
+                "source_object_type": None if managed is None else managed.get("source_object_type"),
+                "root_symbol": None if managed is None else managed.get("root_symbol"),
+                "strategy_family": None if managed is None else managed.get("strategy_family"),
+            }
+        )
+
+    external_option_count = option_owner_counts.get("external_manual", 0)
+    managed_option_count = sum(count for owner, count in option_owner_counts.items() if owner != "external_manual")
+    status = "clear"
+    if external_option_count and managed_option_count:
+        status = "mixed"
+    elif external_option_count:
+        status = "external_present"
+    elif managed_option_count:
+        status = "managed"
+
+    broker_sync_summary = as_mapping(broker_sync.get("summary"))
+    return {
+        "status": status,
+        "broker_position_count": len(broker_positions),
+        "broker_option_position_count": sum(1 for row in broker_positions if _is_option_broker_position(row)),
+        "spreads_managed_option_position_count": managed_option_count,
+        "external_manual_option_position_count": external_option_count,
+        "owner_counts": dict(sorted(owner_counts.items())),
+        "option_owner_counts": dict(sorted(option_owner_counts.items())),
+        "total_market_value": round(total_market_value, 2),
+        "option_market_value": round(option_market_value, 2),
+        "broker_sync_orphan_position_count": coerce_int(broker_sync_summary.get("orphan_broker_position_count")) or 0,
+        "positions": classified[:25],
+    }
 
 
 def _load_execution_attempt_job_context(
@@ -1040,6 +1174,145 @@ def _candidate_state(
     }
 
 
+def _join_labels(labels: list[str]) -> str:
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _reason_matches_group(reason: str, prefixes: tuple[str, ...], exact: tuple[str, ...]) -> bool:
+    return reason in exact or any(reason.startswith(prefix) for prefix in prefixes)
+
+
+def _entry_blocker_groups(candidate_state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    counts: Counter[str] = Counter()
+    for source_key in ("top_quality_blockers", "top_rejection_counts"):
+        for reason, raw_count in as_mapping(candidate_state.get(source_key)).items():
+            reason_text = str(reason or "").strip()
+            count = coerce_int(raw_count) or 0
+            if reason_text and count > 0:
+                counts[reason_text] += count
+
+    groups: list[dict[str, Any]] = []
+    matched_reasons: set[str] = set()
+    for group_id, label, prefixes, exact in NO_ENTRY_REASON_GROUPS:
+        reasons = {reason: count for reason, count in counts.items() if _reason_matches_group(reason, prefixes, exact)}
+        if not reasons:
+            continue
+        matched_reasons.update(reasons)
+        groups.append(
+            {
+                "group": group_id,
+                "label": label,
+                "count": sum(reasons.values()),
+                "reason_codes": dict(sorted(reasons.items(), key=lambda item: (-item[1], item[0]))),
+            }
+        )
+
+    other_reasons = {reason: count for reason, count in counts.items() if reason not in matched_reasons}
+    if other_reasons:
+        groups.append(
+            {
+                "group": "other",
+                "label": "other policy filters",
+                "count": sum(other_reasons.values()),
+                "reason_codes": dict(sorted(other_reasons.items(), key=lambda item: (-item[1], item[0]))),
+            }
+        )
+
+    groups.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("group") or "")))
+    return groups
+
+
+def _entry_posture_state(
+    *,
+    source_state: Mapping[str, Any],
+    candidate_state: Mapping[str, Any],
+    market_open: bool,
+    entry_due: bool,
+) -> dict[str, Any]:
+    source_status = str(source_state.get("status") or "unknown")
+    candidate_status = str(candidate_state.get("status") or "unknown")
+    source_symbol_count = coerce_int(source_state.get("symbol_count")) or 0
+    candidate_count = coerce_int(candidate_state.get("candidate_count")) or 0
+    blocker_groups = _entry_blocker_groups(candidate_state)
+
+    if candidate_status in {"degraded", "blocked", "halted"}:
+        return {
+            "status": candidate_status,
+            "state": "entry_evidence_needs_attention",
+            "message": "Entry evidence is stale, missing, or degraded.",
+            "healthy_flat": False,
+            "entry_due": entry_due,
+            "primary_blocker_group": None,
+            "blocker_groups": blocker_groups,
+            "reason": candidate_state.get("reason"),
+        }
+    if source_status in {"degraded", "blocked", "halted"}:
+        return {
+            "status": source_status,
+            "state": "source_needs_attention",
+            "message": "Ticker source evidence is stale, missing, or degraded.",
+            "healthy_flat": False,
+            "entry_due": entry_due,
+            "primary_blocker_group": None,
+            "blocker_groups": blocker_groups,
+            "reason": source_state.get("reason"),
+        }
+    if not market_open:
+        return {
+            "status": "idle",
+            "state": "market_closed",
+            "message": "Market is closed; entry evaluation is idle.",
+            "healthy_flat": False,
+            "entry_due": entry_due,
+            "primary_blocker_group": None,
+            "blocker_groups": blocker_groups,
+            "reason": "market_closed",
+        }
+    if candidate_count > 0:
+        return {
+            "status": "healthy",
+            "state": "candidates_available",
+            "message": f"{candidate_count} entry candidate(s) are available for selection and admission.",
+            "healthy_flat": False,
+            "entry_due": entry_due,
+            "primary_blocker_group": None,
+            "blocker_groups": blocker_groups,
+            "reason": None,
+        }
+    if source_symbol_count == 0:
+        return {
+            "status": "healthy",
+            "state": "flat_no_source_symbols",
+            "message": "No entries: the latest source run retained no symbols.",
+            "healthy_flat": True,
+            "entry_due": entry_due,
+            "primary_blocker_group": None,
+            "blocker_groups": blocker_groups,
+            "reason": candidate_state.get("reason") or source_state.get("reason"),
+        }
+
+    labels = [str(group.get("label")) for group in blocker_groups[:3] if group.get("label")]
+    message = "No entries: latest run produced no candidates."
+    if labels:
+        message = f"No entries: {_join_labels(labels)} blocked the latest run."
+    return {
+        "status": "healthy",
+        "state": "flat_by_policy",
+        "message": message,
+        "healthy_flat": True,
+        "entry_due": entry_due,
+        "primary_blocker_group": None if not blocker_groups else blocker_groups[0].get("group"),
+        "blocker_groups": blocker_groups[:8],
+        "reason": candidate_state.get("reason") or "no_candidates",
+    }
+
+
 def _flow_position_summary(
     *,
     execution_store: Any,
@@ -1155,6 +1428,12 @@ def _build_trading_flows(
             market_open=market_open and entry_due,
             now=now,
         )
+        entry_posture = _entry_posture_state(
+            source_state=source_state,
+            candidate_state=candidate_state,
+            market_open=market_open,
+            entry_due=entry_due,
+        )
         intent_summary = _flow_intent_summary(
             execution_store=storage.execution,
             trading_strategy_id=strategy.trading_strategy_id,
@@ -1203,6 +1482,7 @@ def _build_trading_flows(
                 "risk_limits": strategy.risk_limits.as_dict(),
                 "source_state": source_state,
                 "candidate_state": candidate_state,
+                "entry_posture": entry_posture,
                 "intent_state": intent_summary,
                 "position_state": position_summary,
                 "capacity": {
@@ -1782,6 +2062,11 @@ def build_trading_ops_state(
         account_snapshot=account.account_snapshot,
         trading_flows=flows.trading_flows,
     )
+    broker_exposure = _broker_exposure_state(
+        account_snapshot=account.account_snapshot,
+        open_positions=positions.open_positions,
+        broker_sync=account.broker_sync,
+    )
 
     statuses: list[str] = []
     attention: list[dict[str, str]] = []
@@ -1812,6 +2097,7 @@ def build_trading_ops_state(
         (flow for flow in flows.trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"),
         flows.trading_flows[0] if flows.trading_flows else {},
     )
+    primary_entry_posture = as_mapping(primary_flow.get("entry_posture"))
     primary_capacity = as_mapping(primary_flow.get("capacity"))
     primary_position_state = as_mapping(primary_flow.get("position_state"))
     summary = {
@@ -1833,6 +2119,15 @@ def build_trading_ops_state(
         "broker_sync_age_seconds": account.broker_sync.get("age_seconds"),
         "account_snapshot_status": account.account_snapshot.get("status"),
         "account_snapshot_captured_at": account.account_snapshot.get("captured_at"),
+        "primary_entry_state": primary_entry_posture.get("state"),
+        "primary_entry_message": primary_entry_posture.get("message"),
+        "primary_entry_primary_blocker_group": primary_entry_posture.get("primary_blocker_group"),
+        "primary_entry_healthy_flat": primary_entry_posture.get("healthy_flat"),
+        "primary_entry_blocker_groups": primary_entry_posture.get("blocker_groups"),
+        "broker_position_count": broker_exposure.get("broker_position_count"),
+        "broker_option_position_count": broker_exposure.get("broker_option_position_count"),
+        "spreads_managed_broker_option_position_count": broker_exposure.get("spreads_managed_option_position_count"),
+        "external_manual_broker_option_position_count": broker_exposure.get("external_manual_option_position_count"),
         "open_position_count": len(positions.open_positions),
         "open_execution_count": len(execution.open_execution_attempts),
         "active_intent_count": active_intent_count,
@@ -1876,6 +2171,7 @@ def build_trading_ops_state(
         "recent_job_runs": jobs.details.get("job_runs"),
         "broker_sync": account.broker_sync,
         "account_snapshot": account.account_snapshot,
+        "broker_exposure": broker_exposure,
         "engine": engine.payload,
         "execution_contract": execution_contract.payload,
         "execution_runtimes": resolve_execution_runtime_capabilities(),

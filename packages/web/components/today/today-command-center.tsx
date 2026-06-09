@@ -60,6 +60,18 @@ function countEntries(value: unknown, limit = 5): Array<[string, number]> {
     .slice(0, limit);
 }
 
+function groupLabels(value: unknown, limit = 3): string {
+  const labels = readRecordList(value)
+    .map((row) => {
+      const label = humanizeToken(row.label ?? row.group, "");
+      const count = readNumber(row.count, Number.NaN);
+      return label && Number.isFinite(count) ? `${label} ${formatQuantity(count)}` : label;
+    })
+    .filter((value) => value.length > 0)
+    .slice(0, limit);
+  return labels.length ? labels.join(" · ") : "-";
+}
+
 function StatusLine({
   label,
   value,
@@ -97,8 +109,10 @@ export function TodayCommandCenter() {
   const primaryFlow = readRecord(details.primary_trading_flow);
   const sourceState = readRecord(primaryFlow.source_state);
   const candidateState = readRecord(primaryFlow.candidate_state);
+  const entryPosture = readRecord(primaryFlow.entry_posture);
   const intentState = readRecord(primaryFlow.intent_state);
   const capacity = readRecord(primaryFlow.capacity);
+  const brokerExposure = readRecord(details.broker_exposure);
   const executionRuntimes = readRecord(details.execution_runtimes);
   const runtimeRows = readRecordList(executionRuntimes.runtimes);
   const attention = readRecordList(state?.attention);
@@ -129,6 +143,9 @@ export function TodayCommandCenter() {
   const engineSignalCount = formatNumberMetric(firstPresent(summary.engine_signal_count, engineSummary.signal_count), pendingLabel);
   const engineCandidateCount = formatNumberMetric(firstPresent(summary.engine_trade_candidate_count, engineSummary.trade_candidate_count), pendingLabel);
   const engineDecisionCount = formatNumberMetric(firstPresent(summary.engine_decision_count, engineSummary.decision_count), pendingLabel);
+  const brokerOptionPositions = formatNumberMetric(summary.broker_option_position_count, pendingLabel);
+  const externalBrokerOptionPositions = formatNumberMetric(summary.external_manual_broker_option_position_count, pendingLabel);
+  const managedBrokerOptionPositions = formatNumberMetric(summary.spreads_managed_broker_option_position_count, pendingLabel);
   const netPnl = hasMetricValue(summary.net_pnl) ? readNumber(summary.net_pnl) : null;
   const realizedPnl = hasMetricValue(summary.realized_pnl) ? readNumber(summary.realized_pnl) : null;
   const tradingLogsUrl = useGrafanaTradingLogsUrl();
@@ -184,7 +201,7 @@ export function TodayCommandCenter() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <MetricTile
           label="Trading Gate"
           value={
@@ -205,6 +222,11 @@ export function TodayCommandCenter() {
           label="Entry Engine"
           value={engineSignalCount === pendingLabel ? pendingLabel : `${engineSignalCount} signals`}
           note={`${engineCandidateCount} candidates · ${engineDecisionCount} decisions`}
+        />
+        <MetricTile
+          label="Entry Posture"
+          value={humanizeToken(firstPresent(summary.primary_entry_state, entryPosture.state), pendingLabel)}
+          note={readString(firstPresent(summary.primary_entry_message, entryPosture.message), pendingLabel)}
         />
         <MetricTile
           label="Capacity"
@@ -234,6 +256,11 @@ export function TodayCommandCenter() {
               label="Broker Sync"
               value={summary.broker_sync_status ?? (loading ? "loading" : "idle")}
               note={`${formatAge(summary.broker_sync_age_seconds)} old`}
+            />
+            <StatusLine
+              label="Broker Exposure"
+              value={brokerExposure.status ?? (loading ? "loading" : "clear")}
+              note={`${brokerOptionPositions} option legs · ${externalBrokerOptionPositions} external · ${managedBrokerOptionPositions} managed`}
             />
             <StatusLine
               label="Mode Contract"
@@ -268,6 +295,11 @@ export function TodayCommandCenter() {
               note={`${formatNumberMetric(candidateState.candidate_count, pendingLabel)} candidates · ${humanizeToken(candidateState.diagnostic_status, pendingLabel)}`}
             />
             <StatusLine
+              label="Entry Posture"
+              value={entryPosture.status ?? (loading ? "loading" : "idle")}
+              note={readString(entryPosture.message, pendingLabel)}
+            />
+            <StatusLine
               label="Flow"
               value={primaryFlow.status ?? (loading ? "loading" : "idle")}
               note={`${readString(primaryFlow.trading_strategy_id, "strategy")} · ${readString(primaryFlow.trade_structure, "calls")}`}
@@ -281,6 +313,9 @@ export function TodayCommandCenter() {
               <div className="mt-3 border-t border-border/60 pt-3">
                 <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top blockers</div>
                 <div className="flex flex-wrap gap-2">
+                  {readRecordList(entryPosture.blocker_groups).length ? (
+                    <Badge variant="outline">{groupLabels(entryPosture.blocker_groups)}</Badge>
+                  ) : null}
                   {topCandidateBlockers.map(([name, count]) => (
                     <Badge key={name} variant="outline">
                       {humanizeToken(name)} {formatQuantity(count)}
