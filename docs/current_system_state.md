@@ -180,6 +180,28 @@ Disabled strategy configs are kept as authored strategy definitions, but they do
 
 The long-vol strategy configs are disabled and shadow-mode by default as operator policy. The Spreads execution path itself supports their two-long-leg `mleg` debit order shape when a strategy is intentionally enabled for paper/live; long-vol must not be blocked by vertical-only width or return-on-risk validation.
 
+## Multi-Strategy Activation Contract
+
+Authored strategy breadth is not automatic strategy rotation. Spreads may carry disabled paper or shadow strategy configs as ready-to-evaluate definitions, but no inactive strategy may create scheduler jobs, natural candidate runs, selected decisions, intents, attempts, positions, or broker submissions until it is deliberately activated through config and worker rollout.
+
+The activation states are:
+
+- `authored`: strategy config exists and can be shown in strategy breadth.
+- `observation`: an operator may run `spreads ops observe-strategy <trading_strategy_id>` to evaluate source, candidates, quality, signals, and decisions with `observation_only` provenance. Observation rows are analysis evidence only.
+- `paper_ready`: the strategy has a family-appropriate quality profile, canonical `execution_shape.legs[]` for its trade structure, and portfolio admission coverage. Paper-ready does not enable scheduler jobs by itself.
+- `paper_active`: the strategy config is enabled, its scheduler-owned entry/manage jobs are active, and its paper execution contract is compatible with the observed broker environment.
+- `live_active`: reserved for an explicitly approved live-money rollout using the same lifecycle plus live deployment guards.
+
+For non-long-call families, the required gate order is:
+
+```text
+quality profile -> account-agnostic selection -> portfolio admission -> execution admission -> queued broker submission
+```
+
+`quality profile` proves the candidate is structurally and economically worth considering for that family. `selection` chooses the best account-agnostic idea. `portfolio admission` decides whether the account should add this exposure now. `execution admission` validates broker-submission readiness, including leg shape, net debit/credit sign, quote freshness, and adapter support. Broker submission remains behind `execution_intent_dispatch` and `execution_submit`.
+
+Shadow and paper are distinct activation modes. A shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. A paper strategy may submit only when its execution posture, observed broker environment, approval mode, portfolio admission, execution admission, and risk gates all allow it. Do not use disabled strategy breadth as a hidden auto-allocator.
+
 ## Paper Execution Contract
 
 Paper mode is part of the normal execution lifecycle, not a separate engine. Keep three axes separate in code, docs, and operator state:
