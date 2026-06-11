@@ -59,6 +59,7 @@
   - `uv run spreads jobs lanes`
   - `uv run spreads logs --env ade-nucbox-k8-plus <service>`
   - `uv run spreads positions --date <YYYY-MM-DD> --json`
+  - `uv run spreads execution list --date <YYYY-MM-DD>`
   - `uv run spreads execution-runtimes --json`
 - Do not add frontend or API callers to retired fragmented ops surfaces.
 - The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
@@ -68,10 +69,12 @@
   - `uv run spreads ops state --json`
   - `uv run spreads ops storage --json`
   - `uv run spreads jobs --json`
+  - `uv run spreads execution list --date <YYYY-MM-DD>`
 - Canonical remote live-ops examples from another host:
   - `uv run spreads ops state --env ade-nucbox-k8-plus --json`
   - `uv run spreads ops storage --env ade-nucbox-k8-plus --json`
   - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
+  - `uv run spreads execution list --env ade-nucbox-k8-plus --date <YYYY-MM-DD>`
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/Projects/spreads`.
 - Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
 - Runtime resource policy lives in [docs/current_system_state.md](docs/current_system_state.md). Market-closed `market_recorder_idle` logs are expected and healthy; do not treat recorder idling outside market hours as a capture outage.

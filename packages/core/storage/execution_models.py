@@ -29,6 +29,12 @@ class ExecutionAttemptModel(Base):
             "requested_at",
         ),
         Index(
+            "idx_execution_attempts_strategy_market_requested",
+            "trading_strategy_id",
+            "market_date",
+            "requested_at",
+        ),
+        Index(
             "idx_execution_attempts_session_structure_requested",
             "session_id",
             "structure_identity",
@@ -263,6 +269,18 @@ class PortfolioPositionModel(Base):
             "trading_strategy_id",
             "status",
         ),
+        Index(
+            "idx_portfolio_positions_strategy_opened",
+            "trading_strategy_id",
+            "market_date_opened",
+            "updated_at",
+        ),
+        Index(
+            "idx_portfolio_positions_strategy_closed",
+            "trading_strategy_id",
+            "market_date_closed",
+            "updated_at",
+        ),
         Index("idx_portfolio_positions_source_object", "source_object_type", "source_object_id"),
         Index("idx_portfolio_positions_trade_signal", "trade_signal_id"),
         Index("idx_portfolio_positions_trade_decision", "trade_decision_id"),
@@ -345,6 +363,7 @@ class PositionCloseModel(Base):
     __tablename__ = "position_closes"
     __table_args__ = (
         Index("idx_position_closes_position_closed", "position_id", "closed_at"),
+        Index("idx_position_closes_closed_position", "closed_at", "position_id"),
         Index("ux_position_closes_execution_attempt", "execution_attempt_id", unique=True),
     )
 

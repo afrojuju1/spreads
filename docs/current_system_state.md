@@ -192,6 +192,8 @@ There are currently no disabled-by-default authored strategy configs. Disabled s
 
 `spreads ops strategy-ledger --date <YYYY-MM-DD>` is the shipped daily evidence ledger. It reports every active strategy's source, candidate, signal, decision, admission, intent, attempt, order/fill, position, close, mark, PnL, blocker, config hash, and latest lifecycle ID evidence for one market date. Use it as the first tuning surface for the archetype/profile migration instead of changing thresholds from vibes.
 
+`spreads execution list --date <YYYY-MM-DD>` is the shipped daily execution activity printout. It reports attempts with nested parent/leg order rows and leg fill rows for attempts whose `market_date` equals the date or whose `requested_at` falls inside that UTC activity day. Use `spreads execution inspect <execution_attempt_id>` for full single-attempt broker detail, refresh, or cancel decisions.
+
 The long-vol strategy configs run in paper mode by default after the 2026-06-11 multi-strategy activation. The Spreads execution path supports their two-long-leg `mleg` debit order shape; long-vol must not be blocked by vertical-only width or return-on-risk validation.
 
 ## Multi-Strategy Activation Contract

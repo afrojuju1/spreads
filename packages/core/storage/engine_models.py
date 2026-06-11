@@ -184,6 +184,7 @@ class TradeCandidateModel(Base):
     __table_args__ = (
         Index("ux_trade_candidates_run_identity", "candidate_run_id", "underlying_symbol", "candidate_identity", unique=True),
         Index("idx_trade_candidates_strategy_state", "trading_strategy_id", "routine", "candidate_state"),
+        Index("idx_trade_candidates_strategy_observed", "trading_strategy_id", "observed_at"),
         Index("idx_trade_candidates_underlying_updated", "underlying_symbol", "updated_at"),
     )
 

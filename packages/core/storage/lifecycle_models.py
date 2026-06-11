@@ -43,6 +43,7 @@ class TradeSignalModel(Base):
         Index("idx_trade_signals_session_state", "session_date", "signal_state"),
         Index("idx_trade_signals_underlying_updated", "underlying_symbol", "updated_at"),
         Index("idx_trade_signals_strategy_session", "trading_strategy_id", "routine", "session_date", "signal_state"),
+        Index("idx_trade_signals_strategy_session_observed", "trading_strategy_id", "session_date", "observed_at"),
         Index("idx_trade_signals_candidate", "trade_candidate_id"),
     )
 
@@ -173,6 +174,7 @@ class TradeAdmissionModel(Base):
         Index("idx_trade_admissions_intent", "execution_intent_id"),
         Index("idx_trade_admissions_state_decided", "admission_state", "decided_at"),
         Index("idx_trade_admissions_signal_decided", "trade_signal_id", "decided_at"),
+        Index("idx_trade_admissions_session_decided", "session_date", "decided_at"),
     )
 
     admission_decision_id: Mapped[str] = mapped_column(Text, primary_key=True)

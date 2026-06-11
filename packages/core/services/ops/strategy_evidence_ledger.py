@@ -64,19 +64,6 @@ def _render_datetime(value: datetime | None) -> str | None:
     return rendered.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _count_state_rows(session: Any, statement: Any, field: Any) -> dict[str, int]:
-    rows = session.execute(statement.with_only_columns(field, func.count()).group_by(field)).all()
-    return dict(sorted((str(key or "unknown"), int(count or 0)) for key, count in rows))
-
-
-def _count_action_state_rows(session: Any, statement: Any, action_field: Any, state_field: Any) -> dict[str, dict[str, int]]:
-    counts: dict[str, Counter[str]] = {}
-    for action, state, count in session.execute(statement.with_only_columns(action_field, state_field, func.count()).group_by(action_field, state_field)):
-        action_key = str(action or "unknown")
-        counts.setdefault(action_key, Counter())[str(state or "unknown")] += int(count or 0)
-    return {action: dict(sorted(counter.items())) for action, counter in sorted(counts.items())}
-
-
 def _add_count_mapping(counter: Counter[str], value: Any) -> None:
     for key, raw_count in as_mapping(value).items():
         reason = as_text(key)
@@ -106,195 +93,397 @@ def _top_blockers(counter: Counter[str]) -> dict[str, int]:
     return dict(counter.most_common(TOP_BLOCKER_LIMIT))
 
 
-def _sum_float(rows: Iterable[Any], field_name: str) -> float:
-    return round(sum(coerce_float(getattr(row, field_name)) or 0.0 for row in rows), 2)
+def _newer_desc_asc(value_at: datetime | None, value_id: Any, current_at: datetime | None, current_id: Any) -> bool:
+    if value_at is None:
+        return False
+    if current_at is None:
+        return True
+    if value_at != current_at:
+        return value_at > current_at
+    return str(value_id or "") < str(current_id or "")
 
 
-def _source_symbols_for_run(session: Any, ticker_source_run_id: str | None) -> list[str]:
-    if not ticker_source_run_id:
-        return []
-    rows = session.execute(
-        select(TickerSourceObservationModel.symbol)
-        .where(TickerSourceObservationModel.ticker_source_run_id == ticker_source_run_id)
-        .where(TickerSourceObservationModel.observation_state == "selected")
-        .order_by(
-            TickerSourceObservationModel.rank.asc().nulls_last(),
-            TickerSourceObservationModel.symbol.asc(),
-        )
-        .limit(SOURCE_SYMBOL_LIMIT)
-    ).all()
-    return [str(symbol) for (symbol,) in rows]
+def _newer_desc_desc(value_at: datetime | None, value_id: Any, current_at: datetime | None, current_id: Any) -> bool:
+    if value_at is None:
+        return False
+    if current_at is None:
+        return True
+    if value_at != current_at:
+        return value_at > current_at
+    return str(value_id or "") > str(current_id or "")
 
 
-def _engine_strategy_ledger(
-    *,
-    session: Any,
-    strategy: Any,
-    market_day: date,
-    start: datetime,
-    end: datetime,
-) -> dict[str, Any]:
-    source_ref = strategy.source.ref
-    source_base = select(TickerSourceRunModel).where(TickerSourceRunModel.generated_at >= start).where(TickerSourceRunModel.generated_at < end)
-    source_statement = source_base.where(TickerSourceRunModel.ticker_source_id == source_ref)
-    latest_source = session.scalars(
-        source_statement.order_by(TickerSourceRunModel.generated_at.desc(), TickerSourceRunModel.ticker_source_run_id.asc()).limit(1)
-    ).first()
-    source_run_count = session.scalar(select(func.count()).select_from(source_statement.subquery())) or 0
-    source_symbols = _source_symbols_for_run(session, None if latest_source is None else latest_source.ticker_source_run_id)
+def _set_latest_activity(latest_activity: dict[str, datetime], strategy_id: str, value: datetime | None) -> None:
+    if value is not None and (strategy_id not in latest_activity or value > latest_activity[strategy_id]):
+        latest_activity[strategy_id] = value
+
+
+def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
     configured_source_symbols = list(strategy.symbols[:SOURCE_SYMBOL_LIMIT])
-
-    candidate_statement = (
-        select(CandidateRunModel)
-        .where(CandidateRunModel.trading_strategy_id == strategy.trading_strategy_id)
-        .where(CandidateRunModel.routine == "entry")
-        .where(CandidateRunModel.generated_at >= start)
-        .where(CandidateRunModel.generated_at < end)
-    )
-    candidate_runs = session.scalars(candidate_statement.order_by(CandidateRunModel.generated_at.desc(), CandidateRunModel.candidate_run_id.asc())).all()
-    latest_candidate = candidate_runs[0] if candidate_runs else None
-    candidate_run_ids = [row.candidate_run_id for row in candidate_runs]
-    candidate_count = sum(int(row.candidate_count or 0) for row in candidate_runs)
-    trade_candidate_count = (
-        session.scalar(
-            select(func.count())
-            .select_from(TradeCandidateModel)
-            .where(TradeCandidateModel.trading_strategy_id == strategy.trading_strategy_id)
-            .where(TradeCandidateModel.routine == "entry")
-            .where(TradeCandidateModel.observed_at >= start)
-            .where(TradeCandidateModel.observed_at < end)
-        )
-        or 0
-    )
-
-    signal_statement = select(TradeSignalModel).where(TradeSignalModel.trading_strategy_id == strategy.trading_strategy_id).where(
-        TradeSignalModel.session_date == market_day
-    )
-    signal_state_counts = _count_state_rows(session, signal_statement, TradeSignalModel.signal_state)
-    latest_signal = session.scalars(signal_statement.order_by(TradeSignalModel.observed_at.desc(), TradeSignalModel.trade_signal_id.asc()).limit(1)).first()
-
-    decision_statement = (
-        select(TradeDecisionModel)
-        .where(TradeDecisionModel.trading_strategy_id == strategy.trading_strategy_id)
-        .where(TradeDecisionModel.routine == "entry")
-        .where(TradeDecisionModel.decided_at >= start)
-        .where(TradeDecisionModel.decided_at < end)
-    )
-    decision_state_counts = _count_state_rows(session, decision_statement, TradeDecisionModel.decision_state)
-    latest_decision = session.scalars(
-        decision_statement.order_by(TradeDecisionModel.decided_at.desc(), TradeDecisionModel.trade_decision_id.asc()).limit(1)
-    ).first()
-
-    admission_statement = (
-        select(TradeAdmissionModel)
-        .join(TradeSignalModel, TradeAdmissionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
-        .where(TradeSignalModel.trading_strategy_id == strategy.trading_strategy_id)
-        .where(TradeAdmissionModel.session_date == market_day)
-    )
-    admission_state_counts = _count_state_rows(session, admission_statement, TradeAdmissionModel.admission_state)
-    latest_admission = session.scalars(
-        admission_statement.order_by(TradeAdmissionModel.decided_at.desc(), TradeAdmissionModel.admission_decision_id.asc()).limit(1)
-    ).first()
-
-    blockers: Counter[str] = Counter()
-    for run in candidate_runs:
-        summary = as_mapping(run.summary_json)
-        _add_count_mapping(blockers, summary.get("top_quality_blockers"))
-        _add_count_mapping(blockers, summary.get("top_rejection_counts"))
-    if candidate_run_ids:
-        diagnostics = session.scalars(
-            select(CandidateSymbolDiagnosticModel).where(CandidateSymbolDiagnosticModel.candidate_run_id.in_(candidate_run_ids))
-        ).all()
-        for diagnostic in diagnostics:
-            _add_count_mapping(blockers, diagnostic.rejection_counts_json)
-            _add_quality_waterfall_reasons(blockers, as_mapping(diagnostic.evidence_json).get("quality_waterfall"))
-    candidate_rows = session.scalars(
-        select(TradeCandidateModel)
-        .where(TradeCandidateModel.trading_strategy_id == strategy.trading_strategy_id)
-        .where(TradeCandidateModel.observed_at >= start)
-        .where(TradeCandidateModel.observed_at < end)
-    ).all()
-    for row in candidate_rows:
-        _add_reason_list(blockers, row.reason_codes_json)
-        _add_reason_list(blockers, row.blockers_json)
-    signal_rows = session.scalars(signal_statement).all()
-    for row in signal_rows:
-        _add_reason_list(blockers, row.reason_codes_json)
-        _add_reason_list(blockers, row.blockers_json)
-    decision_rows = session.scalars(decision_statement).all()
-    for row in decision_rows:
-        _add_reason_list(blockers, row.reason_codes_json)
-        _add_reason_list(blockers, row.blockers_json)
-    admission_rows = session.scalars(admission_statement).all()
-    for row in admission_rows:
-        _add_reason_list(blockers, row.reason_codes_json)
-        _add_reason_list(blockers, row.blockers_json)
-
-    latest_activity_at = max(
-        (
-            value
-            for value in (
-                None if latest_source is None else latest_source.generated_at,
-                None if latest_candidate is None else latest_candidate.generated_at,
-                None if latest_signal is None else latest_signal.observed_at,
-                None if latest_decision is None else latest_decision.decided_at,
-                None if latest_admission is None else latest_admission.decided_at,
-            )
-            if value is not None
-        ),
-        default=None,
-    )
-    source_symbol_count = (
-        int(latest_source.selected_count or 0)
-        if latest_source is not None
-        else len(strategy.symbols)
-    )
     return {
         "source": {
             "source_type": strategy.source.kind,
-            "source_id": source_ref,
-            "source_run_count": int(source_run_count),
+            "source_id": strategy.source.ref,
+            "source_run_count": 0,
             "configured_symbol_count": len(strategy.symbols),
-            "latest_symbol_count": source_symbol_count,
-            "symbols": source_symbols or configured_source_symbols,
-            "latest_ticker_source_run_id": None if latest_source is None else latest_source.ticker_source_run_id,
-            "latest_generated_at": None if latest_source is None else _render_datetime(latest_source.generated_at),
+            "latest_symbol_count": len(strategy.symbols),
+            "symbols": configured_source_symbols,
+            "latest_ticker_source_run_id": None,
+            "latest_generated_at": None,
         },
         "candidates": {
-            "candidate_run_count": len(candidate_runs),
-            "candidate_count": int(candidate_count),
-            "trade_candidate_count": int(trade_candidate_count),
-            "latest_candidate_run_id": None if latest_candidate is None else latest_candidate.candidate_run_id,
-            "latest_generated_at": None if latest_candidate is None else _render_datetime(latest_candidate.generated_at),
+            "candidate_run_count": 0,
+            "candidate_count": 0,
+            "trade_candidate_count": 0,
+            "latest_candidate_run_id": None,
+            "latest_generated_at": None,
         },
         "signals": {
-            "signal_count": int(sum(signal_state_counts.values())),
-            "signal_state_counts": signal_state_counts,
-            "latest_trade_signal_id": None if latest_signal is None else latest_signal.trade_signal_id,
-            "latest_observed_at": None if latest_signal is None else _render_datetime(latest_signal.observed_at),
+            "signal_count": 0,
+            "signal_state_counts": {},
+            "latest_trade_signal_id": None,
+            "latest_observed_at": None,
         },
         "decisions": {
-            "decision_count": int(sum(decision_state_counts.values())),
-            "decision_state_counts": decision_state_counts,
-            "selected_count": int(decision_state_counts.get("selected", 0)),
-            "latest_trade_decision_id": None if latest_decision is None else latest_decision.trade_decision_id,
-            "latest_decided_at": None if latest_decision is None else _render_datetime(latest_decision.decided_at),
+            "decision_count": 0,
+            "decision_state_counts": {},
+            "selected_count": 0,
+            "latest_trade_decision_id": None,
+            "latest_decided_at": None,
         },
         "admissions": {
-            "admission_count": int(sum(admission_state_counts.values())),
-            "admission_state_counts": admission_state_counts,
-            "latest_admission_decision_id": None if latest_admission is None else latest_admission.admission_decision_id,
-            "latest_decided_at": None if latest_admission is None else _render_datetime(latest_admission.decided_at),
+            "admission_count": 0,
+            "admission_state_counts": {},
+            "latest_admission_decision_id": None,
+            "latest_decided_at": None,
         },
-        "top_blocker_reasons": _top_blockers(blockers),
-        "latest_activity_at": _render_datetime(latest_activity_at),
+        "top_blocker_reasons": {},
+        "latest_activity_at": None,
     }
 
 
-def _execution_strategy_ledger(
+def _bump_count(mapping: dict[str, int], value: Any, count: int = 1) -> None:
+    key = str(value or "unknown")
+    mapping[key] = int(mapping.get(key, 0)) + int(count)
+
+
+def _finalize_state_counts(payload: dict[str, Any], key: str, count_key: str) -> None:
+    state_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload[key].get(count_key)).items()))
+    payload[key][count_key] = state_counts
+    payload[key][key[:-1] + "_count"] = int(sum(state_counts.values()))
+
+
+def _build_engine_strategy_ledgers(
     *,
     session: Any,
-    strategy: Any,
+    strategies: Iterable[Any],
+    market_day: date,
+    start: datetime,
+    end: datetime,
+) -> dict[str, dict[str, Any]]:
+    strategy_list = list(strategies)
+    payloads = {strategy.trading_strategy_id: _empty_engine_strategy_ledger(strategy) for strategy in strategy_list}
+    strategy_ids = list(payloads)
+    if not strategy_ids:
+        return payloads
+
+    latest_activity: dict[str, datetime] = {}
+    blockers_by_strategy = {strategy_id: Counter() for strategy_id in strategy_ids}
+
+    source_to_strategies: dict[str, list[str]] = {}
+    for strategy in strategy_list:
+        source_to_strategies.setdefault(str(strategy.source.ref), []).append(strategy.trading_strategy_id)
+
+    latest_source_by_ref: dict[str, tuple[str, int, datetime]] = {}
+    source_run_counts: Counter[str] = Counter()
+    source_refs = sorted(source_to_strategies)
+    if source_refs:
+        source_rows = session.execute(
+            select(
+                TickerSourceRunModel.ticker_source_id,
+                TickerSourceRunModel.ticker_source_run_id,
+                TickerSourceRunModel.selected_count,
+                TickerSourceRunModel.generated_at,
+            )
+            .where(TickerSourceRunModel.ticker_source_id.in_(source_refs))
+            .where(TickerSourceRunModel.generated_at >= start)
+            .where(TickerSourceRunModel.generated_at < end)
+            .order_by(
+                TickerSourceRunModel.ticker_source_id.asc(),
+                TickerSourceRunModel.generated_at.desc(),
+                TickerSourceRunModel.ticker_source_run_id.asc(),
+            )
+        )
+        for source_ref, source_run_id, selected_count, generated_at in source_rows:
+            source_key = str(source_ref)
+            source_run_counts[source_key] += 1
+            current = latest_source_by_ref.get(source_key)
+            if current is None or _newer_desc_asc(generated_at, source_run_id, current[2], current[0]):
+                latest_source_by_ref[source_key] = (str(source_run_id), int(selected_count or 0), generated_at)
+
+    source_symbols_by_run: dict[str, list[str]] = {}
+    latest_source_run_ids = [source_run_id for source_run_id, _, _ in latest_source_by_ref.values()]
+    if latest_source_run_ids:
+        symbol_rows = session.execute(
+            select(TickerSourceObservationModel.ticker_source_run_id, TickerSourceObservationModel.symbol)
+            .where(TickerSourceObservationModel.ticker_source_run_id.in_(latest_source_run_ids))
+            .where(TickerSourceObservationModel.observation_state == "selected")
+            .order_by(
+                TickerSourceObservationModel.ticker_source_run_id.asc(),
+                TickerSourceObservationModel.rank.asc().nulls_last(),
+                TickerSourceObservationModel.symbol.asc(),
+            )
+        )
+        for source_run_id, symbol in symbol_rows:
+            symbols = source_symbols_by_run.setdefault(str(source_run_id), [])
+            if len(symbols) < SOURCE_SYMBOL_LIMIT:
+                symbols.append(str(symbol))
+
+    for source_ref, source_strategy_ids in source_to_strategies.items():
+        latest_source = latest_source_by_ref.get(source_ref)
+        for strategy_id in source_strategy_ids:
+            source_payload = payloads[strategy_id]["source"]
+            source_payload["source_run_count"] = int(source_run_counts.get(source_ref, 0))
+            if latest_source is None:
+                continue
+            source_run_id, selected_count, generated_at = latest_source
+            source_payload["latest_symbol_count"] = int(selected_count)
+            source_payload["symbols"] = source_symbols_by_run.get(source_run_id) or source_payload["symbols"]
+            source_payload["latest_ticker_source_run_id"] = source_run_id
+            source_payload["latest_generated_at"] = _render_datetime(generated_at)
+            _set_latest_activity(latest_activity, strategy_id, generated_at)
+
+    candidate_run_strategy: dict[str, str] = {}
+    latest_candidate_at: dict[str, datetime] = {}
+    candidate_rows = session.execute(
+        select(
+            CandidateRunModel.trading_strategy_id,
+            CandidateRunModel.candidate_run_id,
+            CandidateRunModel.candidate_count,
+            CandidateRunModel.summary_json,
+            CandidateRunModel.generated_at,
+        )
+        .where(CandidateRunModel.trading_strategy_id.in_(strategy_ids))
+        .where(CandidateRunModel.routine == "entry")
+        .where(CandidateRunModel.generated_at >= start)
+        .where(CandidateRunModel.generated_at < end)
+        .order_by(
+            CandidateRunModel.trading_strategy_id.asc(),
+            CandidateRunModel.generated_at.desc(),
+            CandidateRunModel.candidate_run_id.asc(),
+        )
+    )
+    for strategy_id, candidate_run_id, candidate_count, summary_json, generated_at in candidate_rows:
+        strategy_key = str(strategy_id)
+        run_id = str(candidate_run_id)
+        candidate_run_strategy[run_id] = strategy_key
+        candidate_payload = payloads[strategy_key]["candidates"]
+        candidate_payload["candidate_run_count"] += 1
+        candidate_payload["candidate_count"] += int(candidate_count or 0)
+        if _newer_desc_asc(generated_at, candidate_run_id, latest_candidate_at.get(strategy_key), candidate_payload.get("latest_candidate_run_id")):
+            latest_candidate_at[strategy_key] = generated_at
+            candidate_payload["latest_candidate_run_id"] = run_id
+            candidate_payload["latest_generated_at"] = _render_datetime(generated_at)
+        _set_latest_activity(latest_activity, strategy_key, generated_at)
+        summary = as_mapping(summary_json)
+        _add_count_mapping(blockers_by_strategy[strategy_key], summary.get("top_quality_blockers"))
+        _add_count_mapping(blockers_by_strategy[strategy_key], summary.get("top_rejection_counts"))
+
+    if candidate_run_strategy:
+        diagnostic_rows = session.execute(
+            select(
+                CandidateSymbolDiagnosticModel.candidate_run_id,
+                CandidateSymbolDiagnosticModel.rejection_counts_json,
+                CandidateSymbolDiagnosticModel.evidence_json,
+            ).where(CandidateSymbolDiagnosticModel.candidate_run_id.in_(list(candidate_run_strategy)))
+        )
+        for candidate_run_id, rejection_counts_json, evidence_json in diagnostic_rows:
+            strategy_key = candidate_run_strategy.get(str(candidate_run_id))
+            if strategy_key is None:
+                continue
+            _add_count_mapping(blockers_by_strategy[strategy_key], rejection_counts_json)
+            _add_quality_waterfall_reasons(blockers_by_strategy[strategy_key], as_mapping(evidence_json).get("quality_waterfall"))
+
+    trade_candidate_rows = session.execute(
+        select(
+            TradeCandidateModel.trading_strategy_id,
+            TradeCandidateModel.routine,
+            TradeCandidateModel.reason_codes_json,
+            TradeCandidateModel.blockers_json,
+        )
+        .where(TradeCandidateModel.trading_strategy_id.in_(strategy_ids))
+        .where(TradeCandidateModel.observed_at >= start)
+        .where(TradeCandidateModel.observed_at < end)
+    )
+    for strategy_id, routine, reason_codes_json, blockers_json in trade_candidate_rows:
+        strategy_key = str(strategy_id)
+        if str(routine or "") == "entry":
+            payloads[strategy_key]["candidates"]["trade_candidate_count"] += 1
+        _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
+        _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
+
+    latest_signal_at: dict[str, datetime] = {}
+    signal_rows = session.execute(
+        select(
+            TradeSignalModel.trading_strategy_id,
+            TradeSignalModel.signal_state,
+            TradeSignalModel.trade_signal_id,
+            TradeSignalModel.observed_at,
+            TradeSignalModel.reason_codes_json,
+            TradeSignalModel.blockers_json,
+        )
+        .where(TradeSignalModel.trading_strategy_id.in_(strategy_ids))
+        .where(TradeSignalModel.session_date == market_day)
+        .order_by(TradeSignalModel.trading_strategy_id.asc(), TradeSignalModel.observed_at.desc(), TradeSignalModel.trade_signal_id.asc())
+    )
+    for strategy_id, signal_state, trade_signal_id, observed_at, reason_codes_json, blockers_json in signal_rows:
+        strategy_key = str(strategy_id)
+        signal_payload = payloads[strategy_key]["signals"]
+        _bump_count(signal_payload["signal_state_counts"], signal_state)
+        if _newer_desc_asc(observed_at, trade_signal_id, latest_signal_at.get(strategy_key), signal_payload.get("latest_trade_signal_id")):
+            latest_signal_at[strategy_key] = observed_at
+            signal_payload["latest_trade_signal_id"] = str(trade_signal_id)
+            signal_payload["latest_observed_at"] = _render_datetime(observed_at)
+        _set_latest_activity(latest_activity, strategy_key, observed_at)
+        _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
+        _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
+
+    latest_decision_at: dict[str, datetime] = {}
+    decision_rows = session.execute(
+        select(
+            TradeDecisionModel.trading_strategy_id,
+            TradeDecisionModel.decision_state,
+            TradeDecisionModel.trade_decision_id,
+            TradeDecisionModel.decided_at,
+            TradeDecisionModel.reason_codes_json,
+            TradeDecisionModel.blockers_json,
+        )
+        .where(TradeDecisionModel.trading_strategy_id.in_(strategy_ids))
+        .where(TradeDecisionModel.routine == "entry")
+        .where(TradeDecisionModel.decided_at >= start)
+        .where(TradeDecisionModel.decided_at < end)
+        .order_by(TradeDecisionModel.trading_strategy_id.asc(), TradeDecisionModel.decided_at.desc(), TradeDecisionModel.trade_decision_id.asc())
+    )
+    for strategy_id, decision_state, trade_decision_id, decided_at, reason_codes_json, blockers_json in decision_rows:
+        strategy_key = str(strategy_id)
+        decision_payload = payloads[strategy_key]["decisions"]
+        _bump_count(decision_payload["decision_state_counts"], decision_state)
+        if _newer_desc_asc(decided_at, trade_decision_id, latest_decision_at.get(strategy_key), decision_payload.get("latest_trade_decision_id")):
+            latest_decision_at[strategy_key] = decided_at
+            decision_payload["latest_trade_decision_id"] = str(trade_decision_id)
+            decision_payload["latest_decided_at"] = _render_datetime(decided_at)
+        _set_latest_activity(latest_activity, strategy_key, decided_at)
+        _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
+        _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
+
+    latest_admission_at: dict[str, datetime] = {}
+    admission_rows = session.execute(
+        select(
+            TradeSignalModel.trading_strategy_id,
+            TradeAdmissionModel.admission_state,
+            TradeAdmissionModel.admission_decision_id,
+            TradeAdmissionModel.decided_at,
+            TradeAdmissionModel.reason_codes_json,
+            TradeAdmissionModel.blockers_json,
+        )
+        .join(TradeSignalModel, TradeAdmissionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+        .where(TradeSignalModel.trading_strategy_id.in_(strategy_ids))
+        .where(TradeAdmissionModel.session_date == market_day)
+        .order_by(
+            TradeSignalModel.trading_strategy_id.asc(),
+            TradeAdmissionModel.decided_at.desc(),
+            TradeAdmissionModel.admission_decision_id.asc(),
+        )
+    )
+    for strategy_id, admission_state, admission_decision_id, decided_at, reason_codes_json, blockers_json in admission_rows:
+        strategy_key = str(strategy_id)
+        admission_payload = payloads[strategy_key]["admissions"]
+        _bump_count(admission_payload["admission_state_counts"], admission_state)
+        if _newer_desc_asc(
+            decided_at,
+            admission_decision_id,
+            latest_admission_at.get(strategy_key),
+            admission_payload.get("latest_admission_decision_id"),
+        ):
+            latest_admission_at[strategy_key] = decided_at
+            admission_payload["latest_admission_decision_id"] = str(admission_decision_id)
+            admission_payload["latest_decided_at"] = _render_datetime(decided_at)
+        _set_latest_activity(latest_activity, strategy_key, decided_at)
+        _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
+        _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
+
+    for strategy_id, payload in payloads.items():
+        _finalize_state_counts(payload, "signals", "signal_state_counts")
+        _finalize_state_counts(payload, "decisions", "decision_state_counts")
+        _finalize_state_counts(payload, "admissions", "admission_state_counts")
+        payload["decisions"]["selected_count"] = int(payload["decisions"]["decision_state_counts"].get("selected", 0))
+        payload["top_blocker_reasons"] = _top_blockers(blockers_by_strategy[strategy_id])
+        payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))
+    return payloads
+
+
+def _empty_execution_strategy_ledger() -> dict[str, Any]:
+    return {
+        "intents": {
+            "intent_count": 0,
+            "intent_state_counts": {},
+            "intent_action_state_counts": {},
+            "latest_execution_intent_id": None,
+            "latest_created_at": None,
+        },
+        "attempts": {
+            "attempt_count": 0,
+            "attempt_status_counts": {},
+            "attempt_intent_status_counts": {},
+            "order_count": 0,
+            "fill_count": 0,
+            "latest_execution_attempt_id": None,
+            "latest_requested_at": None,
+        },
+        "positions": {
+            "position_count": 0,
+            "open_position_count": 0,
+            "closed_position_count": 0,
+            "position_status_counts": {},
+            "mark_count": 0,
+            "missing_mark_count": 0,
+            "stale_mark_count": 0,
+            "latest_position_id": None,
+            "latest_marked_at": None,
+            "latest_updated_at": None,
+        },
+        "closes": {
+            "close_count": 0,
+            "latest_position_close_id": None,
+            "latest_closed_at": None,
+        },
+        "pnl": {
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "net_pnl": 0.0,
+        },
+        "latest_activity_at": None,
+    }
+
+
+def _bump_nested_count(mapping: dict[str, dict[str, int]], outer_value: Any, inner_value: Any) -> None:
+    outer_key = str(outer_value or "unknown")
+    inner_key = str(inner_value or "unknown")
+    nested = mapping.setdefault(outer_key, {})
+    nested[inner_key] = int(nested.get(inner_key, 0)) + 1
+
+
+def _sort_nested_counts(mapping: Mapping[str, Any]) -> dict[str, dict[str, int]]:
+    sorted_mapping: dict[str, dict[str, int]] = {}
+    for outer_key, inner_mapping in sorted(as_mapping(mapping).items()):
+        sorted_mapping[str(outer_key)] = dict(sorted((str(inner_key), int(count)) for inner_key, count in as_mapping(inner_mapping).items()))
+    return sorted_mapping
+
+
+def _build_execution_strategy_ledgers(
+    *,
+    session: Any,
+    strategies: Iterable[Any],
     market_day: date,
     start: datetime,
     end: datetime,
@@ -302,34 +491,53 @@ def _execution_strategy_ledger(
     execution_schema_ready: bool,
     intent_schema_ready: bool,
     portfolio_schema_ready: bool,
-) -> dict[str, Any]:
-    strategy_id = strategy.trading_strategy_id
-    intent_state_counts: dict[str, int] = {}
-    intent_action_state_counts: dict[str, dict[str, int]] = {}
-    latest_intent = None
+) -> dict[str, dict[str, Any]]:
+    strategy_list = list(strategies)
+    strategy_ids = [strategy.trading_strategy_id for strategy in strategy_list]
+    payloads = {strategy_id: _empty_execution_strategy_ledger() for strategy_id in strategy_ids}
+    if not strategy_ids:
+        return payloads
+
+    latest_activity: dict[str, datetime] = {}
+
     if intent_schema_ready:
-        intent_statement = (
-            select(ExecutionIntentModel)
-            .where(ExecutionIntentModel.trading_strategy_id == strategy_id)
+        latest_intent_at: dict[str, datetime] = {}
+        intent_rows = session.execute(
+            select(
+                ExecutionIntentModel.trading_strategy_id,
+                ExecutionIntentModel.state,
+                ExecutionIntentModel.action_type,
+                ExecutionIntentModel.execution_intent_id,
+                ExecutionIntentModel.created_at,
+            )
+            .where(ExecutionIntentModel.trading_strategy_id.in_(strategy_ids))
             .where(ExecutionIntentModel.created_at >= start)
             .where(ExecutionIntentModel.created_at < end)
+            .order_by(ExecutionIntentModel.trading_strategy_id.asc(), ExecutionIntentModel.created_at.desc(), ExecutionIntentModel.execution_intent_id.asc())
         )
-        intent_state_counts = _count_state_rows(session, intent_statement, ExecutionIntentModel.state)
-        intent_action_state_counts = _count_action_state_rows(session, intent_statement, ExecutionIntentModel.action_type, ExecutionIntentModel.state)
-        latest_intent = session.scalars(
-            intent_statement.order_by(ExecutionIntentModel.created_at.desc(), ExecutionIntentModel.execution_intent_id.asc()).limit(1)
-        ).first()
+        for strategy_id, state, action_type, execution_intent_id, created_at in intent_rows:
+            strategy_key = str(strategy_id)
+            intent_payload = payloads[strategy_key]["intents"]
+            _bump_count(intent_payload["intent_state_counts"], state)
+            _bump_nested_count(intent_payload["intent_action_state_counts"], action_type, state)
+            if _newer_desc_asc(created_at, execution_intent_id, latest_intent_at.get(strategy_key), intent_payload.get("latest_execution_intent_id")):
+                latest_intent_at[strategy_key] = created_at
+                intent_payload["latest_execution_intent_id"] = str(execution_intent_id)
+                intent_payload["latest_created_at"] = _render_datetime(created_at)
+            _set_latest_activity(latest_activity, strategy_key, created_at)
 
-    attempt_status_counts: dict[str, int] = {}
-    attempt_intent_status_counts: dict[str, dict[str, int]] = {}
-    latest_attempt = None
-    attempt_ids: list[str] = []
-    order_count = 0
-    fill_count = 0
+    attempt_strategy: dict[str, str] = {}
     if execution_schema_ready:
-        attempt_statement = (
-            select(ExecutionAttemptModel)
-            .where(ExecutionAttemptModel.trading_strategy_id == strategy_id)
+        latest_attempt_at: dict[str, datetime] = {}
+        attempt_rows = session.execute(
+            select(
+                ExecutionAttemptModel.trading_strategy_id,
+                ExecutionAttemptModel.status,
+                ExecutionAttemptModel.trade_intent,
+                ExecutionAttemptModel.execution_attempt_id,
+                ExecutionAttemptModel.requested_at,
+            )
+            .where(ExecutionAttemptModel.trading_strategy_id.in_(strategy_ids))
             .where(
                 or_(
                     ExecutionAttemptModel.market_date == market_day,
@@ -339,39 +547,63 @@ def _execution_strategy_ledger(
                     ),
                 )
             )
+            .order_by(ExecutionAttemptModel.trading_strategy_id.asc(), ExecutionAttemptModel.requested_at.desc(), ExecutionAttemptModel.execution_attempt_id.asc())
         )
-        attempt_rows = session.scalars(attempt_statement.order_by(ExecutionAttemptModel.requested_at.desc())).all()
-        attempt_status_counts = dict(sorted(Counter(str(row.status or "unknown") for row in attempt_rows).items()))
-        intent_counts: dict[str, Counter[str]] = {}
-        for row in attempt_rows:
-            intent_counts.setdefault(str(row.trade_intent or "unknown"), Counter())[str(row.status or "unknown")] += 1
-        attempt_intent_status_counts = {intent: dict(sorted(counter.items())) for intent, counter in sorted(intent_counts.items())}
-        latest_attempt = attempt_rows[0] if attempt_rows else None
-        attempt_ids = [row.execution_attempt_id for row in attempt_rows]
-        if attempt_ids:
-            order_count = int(
-                session.scalar(select(func.count()).select_from(ExecutionOrderModel).where(ExecutionOrderModel.execution_attempt_id.in_(attempt_ids)))
-                or 0
-            )
-            fill_count = int(
-                session.scalar(select(func.count()).select_from(ExecutionFillModel).where(ExecutionFillModel.execution_attempt_id.in_(attempt_ids)))
-                or 0
-            )
+        for strategy_id, status, trade_intent, execution_attempt_id, requested_at in attempt_rows:
+            strategy_key = str(strategy_id)
+            attempt_id = str(execution_attempt_id)
+            attempt_strategy[attempt_id] = strategy_key
+            attempt_payload = payloads[strategy_key]["attempts"]
+            _bump_count(attempt_payload["attempt_status_counts"], status)
+            _bump_nested_count(attempt_payload["attempt_intent_status_counts"], trade_intent, status)
+            if _newer_desc_asc(
+                requested_at,
+                execution_attempt_id,
+                latest_attempt_at.get(strategy_key),
+                attempt_payload.get("latest_execution_attempt_id"),
+            ):
+                latest_attempt_at[strategy_key] = requested_at
+                attempt_payload["latest_execution_attempt_id"] = attempt_id
+                attempt_payload["latest_requested_at"] = _render_datetime(requested_at)
+            _set_latest_activity(latest_activity, strategy_key, requested_at)
 
-    position_status_counts: dict[str, int] = {}
-    latest_position = None
-    close_count = 0
-    latest_close = None
-    realized_pnl = 0.0
-    unrealized_pnl = 0.0
-    mark_count = 0
-    missing_mark_count = 0
-    stale_mark_count = 0
-    latest_marked_at = None
+        if attempt_strategy:
+            order_rows = session.execute(
+                select(ExecutionOrderModel.execution_attempt_id, func.count())
+                .where(ExecutionOrderModel.execution_attempt_id.in_(list(attempt_strategy)))
+                .group_by(ExecutionOrderModel.execution_attempt_id)
+            )
+            for execution_attempt_id, count in order_rows:
+                strategy_key = attempt_strategy.get(str(execution_attempt_id))
+                if strategy_key is not None:
+                    payloads[strategy_key]["attempts"]["order_count"] += int(count or 0)
+
+            fill_rows = session.execute(
+                select(ExecutionFillModel.execution_attempt_id, func.count())
+                .where(ExecutionFillModel.execution_attempt_id.in_(list(attempt_strategy)))
+                .group_by(ExecutionFillModel.execution_attempt_id)
+            )
+            for execution_attempt_id, count in fill_rows:
+                strategy_key = attempt_strategy.get(str(execution_attempt_id))
+                if strategy_key is not None:
+                    payloads[strategy_key]["attempts"]["fill_count"] += int(count or 0)
+
     if portfolio_schema_ready:
-        position_statement = (
-            select(PortfolioPositionModel)
-            .where(PortfolioPositionModel.trading_strategy_id == strategy_id)
+        latest_position_at: dict[str, datetime] = {}
+        latest_marked_at: dict[str, datetime] = {}
+        stale_after = now - timedelta(seconds=LEDGER_MARK_STALE_AFTER_SECONDS)
+        position_rows = session.execute(
+            select(
+                PortfolioPositionModel.trading_strategy_id,
+                PortfolioPositionModel.position_id,
+                PortfolioPositionModel.status,
+                PortfolioPositionModel.realized_pnl,
+                PortfolioPositionModel.unrealized_pnl,
+                PortfolioPositionModel.close_mark,
+                PortfolioPositionModel.close_marked_at,
+                PortfolioPositionModel.updated_at,
+            )
+            .where(PortfolioPositionModel.trading_strategy_id.in_(strategy_ids))
             .where(
                 or_(
                     PortfolioPositionModel.market_date_opened == market_day,
@@ -379,86 +611,86 @@ def _execution_strategy_ledger(
                     PortfolioPositionModel.status.in_(sorted(OPEN_POSITION_STATUSES)),
                 )
             )
+            .order_by(PortfolioPositionModel.trading_strategy_id.asc(), PortfolioPositionModel.updated_at.desc(), PortfolioPositionModel.position_id.asc())
         )
-        positions = session.scalars(position_statement.order_by(PortfolioPositionModel.updated_at.desc(), PortfolioPositionModel.position_id.asc())).all()
-        position_status_counts = dict(sorted(Counter(str(row.status or "unknown") for row in positions).items()))
-        latest_position = positions[0] if positions else None
-        open_positions = [row for row in positions if str(row.status or "") in OPEN_POSITION_STATUSES]
-        realized_pnl = _sum_float(positions, "realized_pnl")
-        unrealized_pnl = _sum_float(open_positions, "unrealized_pnl")
-        mark_count = sum(1 for row in open_positions if row.close_mark is not None)
-        missing_mark_count = sum(1 for row in open_positions if row.close_mark is None)
-        mark_times = [row.close_marked_at for row in open_positions if row.close_marked_at is not None]
-        latest_marked_at = max(mark_times, default=None)
-        stale_after = now - timedelta(seconds=LEDGER_MARK_STALE_AFTER_SECONDS)
-        stale_mark_count = sum(1 for row in open_positions if row.close_marked_at is not None and row.close_marked_at < stale_after)
+        for strategy_id, position_id, status, realized_pnl, unrealized_pnl, close_mark, close_marked_at, updated_at in position_rows:
+            strategy_key = str(strategy_id)
+            position_payload = payloads[strategy_key]["positions"]
+            pnl_payload = payloads[strategy_key]["pnl"]
+            status_key = str(status or "unknown")
+            _bump_count(position_payload["position_status_counts"], status_key)
+            pnl_payload["realized_pnl"] += coerce_float(realized_pnl) or 0.0
+            if status_key in OPEN_POSITION_STATUSES:
+                pnl_payload["unrealized_pnl"] += coerce_float(unrealized_pnl) or 0.0
+                if close_mark is None:
+                    position_payload["missing_mark_count"] += 1
+                else:
+                    position_payload["mark_count"] += 1
+                if close_marked_at is not None:
+                    if close_marked_at < stale_after:
+                        position_payload["stale_mark_count"] += 1
+                    if close_marked_at > latest_marked_at.get(strategy_key, datetime.min.replace(tzinfo=UTC)):
+                        latest_marked_at[strategy_key] = close_marked_at
+                        position_payload["latest_marked_at"] = _render_datetime(close_marked_at)
+            if _newer_desc_asc(updated_at, position_id, latest_position_at.get(strategy_key), position_payload.get("latest_position_id")):
+                latest_position_at[strategy_key] = updated_at
+                position_payload["latest_position_id"] = str(position_id)
+                position_payload["latest_updated_at"] = _render_datetime(updated_at)
+            _set_latest_activity(latest_activity, strategy_key, updated_at)
 
-        close_statement = (
-            select(PositionCloseModel)
+        latest_close_at: dict[str, datetime] = {}
+        close_rows = session.execute(
+            select(
+                PortfolioPositionModel.trading_strategy_id,
+                PositionCloseModel.position_close_id,
+                PositionCloseModel.closed_at,
+            )
             .join(PortfolioPositionModel, PositionCloseModel.position_id == PortfolioPositionModel.position_id)
-            .where(PortfolioPositionModel.trading_strategy_id == strategy_id)
+            .where(PortfolioPositionModel.trading_strategy_id.in_(strategy_ids))
             .where(PositionCloseModel.closed_at >= start)
             .where(PositionCloseModel.closed_at < end)
-        )
-        close_count = int(session.scalar(select(func.count()).select_from(close_statement.subquery())) or 0)
-        latest_close = session.scalars(
-            close_statement.order_by(PositionCloseModel.closed_at.desc(), PositionCloseModel.position_close_id.desc()).limit(1)
-        ).first()
-
-    latest_activity_at = max(
-        (
-            value
-            for value in (
-                None if latest_intent is None else latest_intent.created_at,
-                None if latest_attempt is None else latest_attempt.requested_at,
-                None if latest_position is None else latest_position.updated_at,
-                None if latest_close is None else latest_close.closed_at,
+            .order_by(
+                PortfolioPositionModel.trading_strategy_id.asc(),
+                PositionCloseModel.closed_at.desc(),
+                PositionCloseModel.position_close_id.desc(),
             )
-            if value is not None
-        ),
-        default=None,
-    )
-    return {
-        "intents": {
-            "intent_count": int(sum(intent_state_counts.values())),
-            "intent_state_counts": intent_state_counts,
-            "intent_action_state_counts": intent_action_state_counts,
-            "latest_execution_intent_id": None if latest_intent is None else latest_intent.execution_intent_id,
-            "latest_created_at": None if latest_intent is None else _render_datetime(latest_intent.created_at),
-        },
-        "attempts": {
-            "attempt_count": int(sum(attempt_status_counts.values())),
-            "attempt_status_counts": attempt_status_counts,
-            "attempt_intent_status_counts": attempt_intent_status_counts,
-            "order_count": order_count,
-            "fill_count": fill_count,
-            "latest_execution_attempt_id": None if latest_attempt is None else latest_attempt.execution_attempt_id,
-            "latest_requested_at": None if latest_attempt is None else _render_datetime(latest_attempt.requested_at),
-        },
-        "positions": {
-            "position_count": int(sum(position_status_counts.values())),
-            "open_position_count": int(sum(count for state, count in position_status_counts.items() if state in OPEN_POSITION_STATUSES)),
-            "closed_position_count": int(position_status_counts.get("closed", 0)),
-            "position_status_counts": position_status_counts,
-            "mark_count": int(mark_count),
-            "missing_mark_count": int(missing_mark_count),
-            "stale_mark_count": int(stale_mark_count),
-            "latest_position_id": None if latest_position is None else latest_position.position_id,
-            "latest_marked_at": _render_datetime(latest_marked_at),
-            "latest_updated_at": None if latest_position is None else _render_datetime(latest_position.updated_at),
-        },
-        "closes": {
-            "close_count": close_count,
-            "latest_position_close_id": None if latest_close is None else latest_close.position_close_id,
-            "latest_closed_at": None if latest_close is None else _render_datetime(latest_close.closed_at),
-        },
-        "pnl": {
-            "realized_pnl": round(realized_pnl, 2),
-            "unrealized_pnl": round(unrealized_pnl, 2),
+        )
+        for strategy_id, position_close_id, closed_at in close_rows:
+            strategy_key = str(strategy_id)
+            close_payload = payloads[strategy_key]["closes"]
+            close_payload["close_count"] += 1
+            if _newer_desc_desc(closed_at, position_close_id, latest_close_at.get(strategy_key), close_payload.get("latest_position_close_id")):
+                latest_close_at[strategy_key] = closed_at
+                close_payload["latest_position_close_id"] = int(position_close_id)
+                close_payload["latest_closed_at"] = _render_datetime(closed_at)
+            _set_latest_activity(latest_activity, strategy_key, closed_at)
+
+    for strategy_id, payload in payloads.items():
+        intent_state_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["intents"]["intent_state_counts"]).items()))
+        payload["intents"]["intent_state_counts"] = intent_state_counts
+        payload["intents"]["intent_action_state_counts"] = _sort_nested_counts(payload["intents"]["intent_action_state_counts"])
+        payload["intents"]["intent_count"] = int(sum(intent_state_counts.values()))
+
+        attempt_status_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["attempts"]["attempt_status_counts"]).items()))
+        payload["attempts"]["attempt_status_counts"] = attempt_status_counts
+        payload["attempts"]["attempt_intent_status_counts"] = _sort_nested_counts(payload["attempts"]["attempt_intent_status_counts"])
+        payload["attempts"]["attempt_count"] = int(sum(attempt_status_counts.values()))
+
+        position_status_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["positions"]["position_status_counts"]).items()))
+        payload["positions"]["position_status_counts"] = position_status_counts
+        payload["positions"]["position_count"] = int(sum(position_status_counts.values()))
+        payload["positions"]["open_position_count"] = int(sum(count for state, count in position_status_counts.items() if state in OPEN_POSITION_STATUSES))
+        payload["positions"]["closed_position_count"] = int(position_status_counts.get("closed", 0))
+
+        realized_pnl = round(coerce_float(payload["pnl"]["realized_pnl"]) or 0.0, 2)
+        unrealized_pnl = round(coerce_float(payload["pnl"]["unrealized_pnl"]) or 0.0, 2)
+        payload["pnl"] = {
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
             "net_pnl": round(realized_pnl + unrealized_pnl, 2),
-        },
-        "latest_activity_at": _render_datetime(latest_activity_at),
-    }
+        }
+        payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))
+    return payloads
 
 
 def _strategy_row(
@@ -533,30 +765,37 @@ def build_strategy_evidence_ledger(
 
     rows: list[dict[str, Any]] = []
     with storage.engine_facts.session_factory() as engine_session, storage.execution.session_factory() as execution_session:
-        for strategy in strategies.values():
-            engine_payload = (
-                _engine_strategy_ledger(
-                    session=engine_session,
-                    strategy=strategy,
-                    market_day=market_day,
-                    start=start,
-                    end=end,
-                )
-                if engine_schema_ready
-                else {}
-            )
-            execution_payload = _execution_strategy_ledger(
-                session=execution_session,
-                strategy=strategy,
+        strategy_list = list(strategies.values())
+        engine_payloads = (
+            _build_engine_strategy_ledgers(
+                session=engine_session,
+                strategies=strategy_list,
                 market_day=market_day,
                 start=start,
                 end=end,
-                now=now,
-                execution_schema_ready=execution_schema_ready,
-                intent_schema_ready=intent_schema_ready,
-                portfolio_schema_ready=portfolio_schema_ready,
             )
-            rows.append(_strategy_row(strategy=strategy, engine_payload=engine_payload, execution_payload=execution_payload))
+            if engine_schema_ready
+            else {strategy.trading_strategy_id: {} for strategy in strategy_list}
+        )
+        execution_payloads = _build_execution_strategy_ledgers(
+            session=execution_session,
+            strategies=strategy_list,
+            market_day=market_day,
+            start=start,
+            end=end,
+            now=now,
+            execution_schema_ready=execution_schema_ready,
+            intent_schema_ready=intent_schema_ready,
+            portfolio_schema_ready=portfolio_schema_ready,
+        )
+        for strategy in strategy_list:
+            rows.append(
+                _strategy_row(
+                    strategy=strategy,
+                    engine_payload=engine_payloads.get(strategy.trading_strategy_id, {}),
+                    execution_payload=execution_payloads.get(strategy.trading_strategy_id, {}),
+                )
+            )
 
     total_realized = round(sum(coerce_float(as_mapping(row.get("pnl")).get("realized_pnl")) or 0.0 for row in rows), 2)
     total_unrealized = round(sum(coerce_float(as_mapping(row.get("pnl")).get("unrealized_pnl")) or 0.0 for row in rows), 2)
