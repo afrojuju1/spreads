@@ -22,6 +22,7 @@ from core.services.ops import (
     build_job_lanes_overview,
     build_job_run_view,
     build_jobs_overview,
+    build_strategy_evidence_ledger,
     build_storage_ops_state,
     build_trading_ops_state,
 )
@@ -54,6 +55,126 @@ def _render_value(value: Any) -> str:
     if value in (None, ""):
         return "-"
     return str(value)
+
+
+def _render_money(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    return f"${float(value):,.2f}"
+
+
+def _short_id(value: Any, *, length: int = 12) -> str:
+    text = _render_value(value)
+    if text == "-" or len(text) <= length:
+        return text
+    return text[:length]
+
+
+def _compact_count_name(value: str) -> str:
+    text = value.strip()
+    replacements = {
+        "Calendar data confidence is low for this single-name candidate": "calendar_confidence_low",
+    }
+    if text in replacements:
+        return replacements[text]
+    if text.startswith("Structure strike sits too far inside expected move"):
+        return "expected_move_cushion"
+    if text.startswith("Modeled move does not clear the structure break-even"):
+        return "modeled_move_breakeven"
+    return text.replace(" ", "_").replace("-", "_").lower()
+
+
+def _render_count_map(value: Any, *, limit: int = 3, length: int = 54) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    ranked = sorted(
+        ((str(key), int(raw_count)) for key, raw_count in value.items() if str(key or "").strip()),
+        key=lambda item: (-item[1], item[0]),
+    )
+    rendered = ", ".join(f"{_compact_count_name(name)} {count}" for name, count in ranked[:limit])
+    if len(ranked) > limit:
+        rendered += ", ..."
+    if len(rendered) > length:
+        return rendered[: max(length - 3, 0)].rstrip() + "..."
+    return rendered
+
+
+def _render_status_map(value: Any, *, length: int = 80) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    rendered = ", ".join(f"{key} {raw_value}" for key, raw_value in sorted(value.items()))
+    if len(rendered) > length:
+        return rendered[: max(length - 3, 0)].rstrip() + "..."
+    return rendered
+
+
+def _render_strategy_evidence_ledger(console: Any, payload: dict[str, Any]) -> None:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    schema = payload.get("schema") if isinstance(payload.get("schema"), dict) else {}
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Status", _render_value(payload.get("status")))
+    overview.add_row("Market Date", _render_value(payload.get("market_date")))
+    overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row("Strategies", _render_value(payload.get("strategy_count")))
+    overview.add_row(
+        "Lifecycle",
+        (
+            f"signals {_render_value(summary.get('signal_count'))}, "
+            f"decisions {_render_value(summary.get('decision_count'))}, "
+            f"selected {_render_value(summary.get('selected_count'))}, "
+            f"attempts {_render_value(summary.get('attempt_count'))}, "
+            f"fills {_render_value(summary.get('fill_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Positions",
+        (
+            f"{_render_value(summary.get('position_count'))} seen, "
+            f"{_render_value(summary.get('open_position_count'))} open, "
+            f"{_render_value(summary.get('close_count'))} closes"
+        ),
+    )
+    overview.add_row(
+        "PnL",
+        (
+            f"realized {_render_money(summary.get('realized_pnl'))}, "
+            f"unrealized {_render_money(summary.get('unrealized_pnl'))}, "
+            f"net {_render_money(summary.get('net_pnl'))}"
+        ),
+    )
+    overview.add_row("Schemas", _render_status_map(schema))
+    console.print(Panel(overview, title="Strategy Evidence Ledger"))
+
+    rows = [row for row in payload.get("strategies") or [] if isinstance(row, dict)]
+    console.print("Per-Strategy Daily Evidence")
+    for row in rows:
+        source = dict(row.get("source") or {})
+        candidates = dict(row.get("candidates") or {})
+        signals = dict(row.get("signals") or {})
+        decisions = dict(row.get("decisions") or {})
+        admissions = dict(row.get("admissions") or {})
+        attempts = dict(row.get("attempts") or {})
+        positions = dict(row.get("positions") or {})
+        closes = dict(row.get("closes") or {})
+        pnl = dict(row.get("pnl") or {})
+        console.print(
+            f"- {_render_value(row.get('trading_strategy_id'))} ({_render_value(row.get('trade_structure'))}): "
+            f"src {_render_value(source.get('latest_symbol_count'))}; "
+            f"cand {_render_value(candidates.get('candidate_count'))}/{_render_value(candidates.get('candidate_run_count'))}; "
+            f"s/d/sel/adm "
+            f"{_render_value(signals.get('signal_count'))}/"
+            f"{_render_value(decisions.get('decision_count'))}/"
+            f"{_render_value(decisions.get('selected_count'))}/"
+            f"{_render_value(admissions.get('admission_count'))}; "
+            f"exec i/a/f {_render_value(row.get('intents', {}).get('intent_count'))}/"
+            f"{_render_value(attempts.get('attempt_count'))}/"
+            f"{_render_value(attempts.get('fill_count'))}; "
+            f"pos p/o/c {_render_value(positions.get('position_count'))}/"
+            f"{_render_value(positions.get('open_position_count'))}/"
+            f"{_render_value(closes.get('close_count'))}; "
+            f"net {_render_money(pnl.get('net_pnl'))}; "
+            f"blockers {_render_count_map(row.get('top_blocker_reasons'), limit=2, length=44)}"
+        )
 
 
 def _render_strategy_observation_result(payload: dict[str, Any], *, no_color: bool) -> None:
@@ -126,6 +247,27 @@ def run_trading_ops_state_visibility(
     _run_ops_visibility_command(
         builder=lambda: build_trading_ops_state(db_target=db, market_date=market_date),
         renderer=render_trading_ops_state,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+@ops_app.command("strategy-ledger", help="Show the per-strategy daily evidence ledger.")
+def strategy_evidence_ledger_command(
+    market_date: str | None = typer.Option(
+        None,
+        "--date",
+        help="Market date to inspect. Defaults to today in New York.",
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    _run_ops_visibility_command(
+        builder=lambda: build_strategy_evidence_ledger(db_target=db, market_date=market_date),
+        renderer=_render_strategy_evidence_ledger,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,
