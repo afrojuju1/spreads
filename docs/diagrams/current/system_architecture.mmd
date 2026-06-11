@@ -1,0 +1,164 @@
+flowchart TB
+    %% Current Spreads architecture. Source of truth: docs/current_system_state.md
+
+    classDef operator fill:#eef6ff,stroke:#2563eb,color:#0f172a
+    classDef service fill:#f8fafc,stroke:#475569,color:#0f172a
+    classDef domain fill:#ecfdf5,stroke:#059669,color:#052e16
+    classDef storage fill:#fff7ed,stroke:#ea580c,color:#431407
+    classDef external fill:#fdf2f8,stroke:#be185d,color:#500724
+    classDef optional fill:#f5f3ff,stroke:#7c3aed,color:#2e1065,stroke-dasharray: 5 5
+
+    subgraph Operators["Operator Surfaces"]
+        Browser["Browser operator"]
+        CLI["spreads CLI"]
+    end
+
+    subgraph Deploy["Live Deploy Target: Docker Compose on ade-nucbox-k8-plus"]
+        Web["Next.js web\npackages/web"]
+        API["FastAPI API\npackages/api"]
+        Scheduler["Scheduler\npackages/core/jobs"]
+        WorkerRuntime["runtime workers\nbroker sync, strategy entry/manage, dispatch, alerts"]
+        WorkerData["data worker\nticker sources"]
+        WorkerValuation["valuation worker\noptional, disabled by default"]
+        WorkerResearch["research worker\noptional, disabled by default"]
+        MarketRecorder["market recorder\nAlpaca option websocket owner"]
+    end
+
+    subgraph Config["Authored Configuration"]
+        StrategyConfig["trading strategy configs\npackages/config/trading_strategies"]
+        TickerConfig["ticker source configs\npackages/config/ticker_sources"]
+        JobConfig["job configs + generated strategy routines\npackages/config/jobs"]
+    end
+
+    subgraph Core["Core Domain Services: packages/core/services"]
+        OpsReadModels["TradingOpsState + StorageOpsState\nservices/ops, retention, positions, execution runtimes"]
+        StrategyRuntime["StrategyRuntime\nentry orchestration + decision persistence"]
+        PortfolioRuntime["PortfolioEngine + RiskEngine\nclose policy, admission, position readiness"]
+        DataEngine["DataEngine\nticker resolution + candidate inputs"]
+        TickerSources["Ticker source service\nmaterialized universes"]
+        CandidateBuilders["Strategy candidate builders\noption structures, ranking, diagnostics"]
+        EntrySelection["EntrySelectionEngine\nquality, selected, monitored, rejected"]
+        CaptureTargets["Capture target service\ndesired option stream state"]
+        ExecutionIntents["Execution intents\ncontrol-plane handoff"]
+        ExecutionRuntime["Execution services\nalpaca_direct submit, refresh, cancel"]
+        BrokerSync["Broker sync\naccount, orders, fills, broker positions"]
+        Alerts["Alert delivery + reconcile"]
+        CompanyValuation["Company valuation services\noptional offline lane"]
+        TradingAgentsScan["TradingAgents scan orchestration\noptional research lane"]
+    end
+
+    subgraph Persistence["Persistence + Transport"]
+        Postgres[("Postgres\nsource of truth")]
+        Redis[("Redis\nqueues, leases, pub/sub")]
+        Artifacts["outputs + logs\nresearch artifacts, alerts, runtime logs"]
+    end
+
+    subgraph External["External Systems"]
+        AlpacaAccount["Alpaca account + trading API"]
+        AlpacaMarket["Alpaca market data\nsnapshots, chains, option websocket"]
+        Finviz["Finviz screener"]
+        TradingAgents["external/TradingAgents\nsymlink to /home/ade/Projects/TradingAgents"]
+        AlertTargets["alert targets\nwebhooks/operators"]
+    end
+
+    Browser --> Web --> API
+    CLI --> OpsReadModels
+    CLI --> StrategyRuntime
+    CLI --> ExecutionRuntime
+    API --> OpsReadModels
+
+    StrategyConfig --> StrategyRuntime
+    StrategyConfig --> PortfolioRuntime
+    StrategyConfig --> ExecutionIntents
+    TickerConfig --> TickerSources
+    JobConfig --> Scheduler
+    StrategyRuntime --> JobConfig
+
+    Scheduler --> Redis
+    Redis --> WorkerRuntime
+    Redis --> WorkerData
+    Redis -. optional .-> WorkerValuation
+    Redis -. optional .-> WorkerResearch
+
+    WorkerData --> TickerSources
+    TickerSources --> Finviz
+    TickerSources --> Postgres
+
+    WorkerRuntime --> StrategyRuntime
+    WorkerRuntime --> PortfolioRuntime
+    WorkerRuntime --> ExecutionIntents
+    WorkerRuntime --> BrokerSync
+    WorkerRuntime --> Alerts
+
+    StrategyRuntime --> DataEngine
+    DataEngine --> TickerSources
+    DataEngine --> CandidateBuilders
+    CandidateBuilders --> AlpacaMarket
+    CandidateBuilders --> EntrySelection
+    EntrySelection --> StrategyRuntime
+    EntrySelection --> CaptureTargets
+
+    StrategyRuntime --> PortfolioRuntime
+    PortfolioRuntime --> ExecutionIntents
+    ExecutionIntents --> Redis
+    ExecutionIntents --> ExecutionRuntime
+    ExecutionRuntime --> AlpacaAccount
+    ExecutionRuntime --> Postgres
+    AlpacaAccount --> BrokerSync
+    BrokerSync --> Postgres
+    BrokerSync --> PortfolioRuntime
+
+    PortfolioRuntime --> CaptureTargets
+    ExecutionIntents --> CaptureTargets
+    CaptureTargets --> Postgres
+    MarketRecorder --> CaptureTargets
+    MarketRecorder --> AlpacaMarket
+    MarketRecorder --> Postgres
+
+    Alerts --> AlertTargets
+    Alerts --> Postgres
+    WorkerValuation -. disabled by default .-> CompanyValuation
+    CompanyValuation -. offline data .-> Postgres
+    WorkerResearch -. disabled by default .-> TradingAgentsScan
+    TradingAgentsScan -. runs external agents .-> TradingAgents
+    TradingAgentsScan -. artifacts .-> Artifacts
+
+    StrategyRuntime --> Postgres
+    PortfolioRuntime --> Postgres
+    DataEngine --> Postgres
+    EntrySelection --> Postgres
+    OpsReadModels --> Postgres
+    OpsReadModels --> Redis
+
+    Browser:::operator
+    CLI:::operator
+    Web:::service
+    API:::service
+    Scheduler:::service
+    WorkerRuntime:::service
+    WorkerData:::service
+    MarketRecorder:::service
+    StrategyRuntime:::domain
+    PortfolioRuntime:::domain
+    DataEngine:::domain
+    TickerSources:::domain
+    CandidateBuilders:::domain
+    EntrySelection:::domain
+    CaptureTargets:::domain
+    ExecutionIntents:::domain
+    ExecutionRuntime:::domain
+    BrokerSync:::domain
+    OpsReadModels:::domain
+    Alerts:::domain
+    Postgres:::storage
+    Redis:::storage
+    Artifacts:::storage
+    AlpacaAccount:::external
+    AlpacaMarket:::external
+    Finviz:::external
+    TradingAgents:::external
+    AlertTargets:::external
+    WorkerValuation:::optional
+    WorkerResearch:::optional
+    CompanyValuation:::optional
+    TradingAgentsScan:::optional

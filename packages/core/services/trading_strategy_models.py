@@ -567,11 +567,94 @@ class StrategyEntryQualityPolicy:
 
 
 @dataclass(frozen=True)
+class StrategyPortfolioAdmissionLimits:
+    max_strategy_open_positions: int | None = None
+    max_family_open_positions: int | None = None
+    max_symbol_family_open_positions: int | None = None
+    max_daily_new_entries: int | None = None
+    max_total_strategy_risk: float | None = None
+    max_correlated_group_open_positions: int | None = None
+    configured: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            (
+                "risk.limits.portfolio_admission.max_strategy_open_positions",
+                self.max_strategy_open_positions,
+            ),
+            (
+                "risk.limits.portfolio_admission.max_family_open_positions",
+                self.max_family_open_positions,
+            ),
+            (
+                "risk.limits.portfolio_admission.max_symbol_family_open_positions",
+                self.max_symbol_family_open_positions,
+            ),
+            (
+                "risk.limits.portfolio_admission.max_daily_new_entries",
+                self.max_daily_new_entries,
+            ),
+            (
+                "risk.limits.portfolio_admission.max_correlated_group_open_positions",
+                self.max_correlated_group_open_positions,
+            ),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must be >= 0")
+        if self.max_total_strategy_risk is not None and self.max_total_strategy_risk < 0:
+            raise ValueError("risk.limits.portfolio_admission.max_total_strategy_risk must be >= 0")
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, Any] | None,
+    ) -> StrategyPortfolioAdmissionLimits:
+        mapping = _require_mapping(payload, field_name="risk.limits.portfolio_admission")
+        return cls(
+            max_strategy_open_positions=_optional_int(mapping.get("max_strategy_open_positions")),
+            max_family_open_positions=_optional_int(mapping.get("max_family_open_positions")),
+            max_symbol_family_open_positions=_optional_int(mapping.get("max_symbol_family_open_positions")),
+            max_daily_new_entries=_optional_int(mapping.get("max_daily_new_entries")),
+            max_total_strategy_risk=_optional_float(mapping.get("max_total_strategy_risk")),
+            max_correlated_group_open_positions=_optional_int(mapping.get("max_correlated_group_open_positions")),
+            configured=bool(mapping),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for key, value in (
+            ("max_strategy_open_positions", self.max_strategy_open_positions),
+            ("max_family_open_positions", self.max_family_open_positions),
+            ("max_symbol_family_open_positions", self.max_symbol_family_open_positions),
+            ("max_daily_new_entries", self.max_daily_new_entries),
+            ("max_total_strategy_risk", self.max_total_strategy_risk),
+            ("max_correlated_group_open_positions", self.max_correlated_group_open_positions),
+        ):
+            if value is not None:
+                payload[key] = value
+        return payload
+
+    def as_policy(
+        self,
+        *,
+        trading_strategy_id: str,
+        strategy_family: str,
+    ) -> dict[str, Any]:
+        return {
+            "trading_strategy_id": trading_strategy_id,
+            "strategy_family": strategy_family,
+            "policy_source": "strategy_config",
+            **self.as_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class StrategyRiskLimits:
     max_open_positions: int
     max_daily_actions: int
     max_new_entries_per_day: int | None = None
     daily_loss_limit: float | None = None
+    portfolio_admission: StrategyPortfolioAdmissionLimits = field(default_factory=StrategyPortfolioAdmissionLimits)
 
     def __post_init__(self) -> None:
         if self.max_open_positions < 0:
@@ -594,6 +677,9 @@ class StrategyRiskLimits:
             max_daily_actions=int(mapping.get("max_daily_actions") or 0),
             max_new_entries_per_day=_optional_int(mapping.get("max_new_entries_per_day")),
             daily_loss_limit=_optional_float(mapping.get("daily_loss_limit")),
+            portfolio_admission=StrategyPortfolioAdmissionLimits.from_payload(
+                mapping.get("portfolio_admission"),
+            ),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -605,6 +691,8 @@ class StrategyRiskLimits:
             payload["max_new_entries_per_day"] = self.max_new_entries_per_day
         if self.daily_loss_limit is not None:
             payload["daily_loss_limit"] = self.daily_loss_limit
+        if self.portfolio_admission.configured:
+            payload["portfolio_admission"] = self.portfolio_admission.as_dict()
         return payload
 
 
@@ -651,6 +739,7 @@ __all__ = [
     "RoutineSchedule",
     "RoutineScheduleWindow",
     "EntrySelectionPolicy",
+    "StrategyPortfolioAdmissionLimits",
     "StrategyRiskLimits",
     "StrategyRuntimeControls",
     "DeltaRange",

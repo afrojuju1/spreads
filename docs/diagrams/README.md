@@ -12,7 +12,13 @@ Conventions:
 
 Current subfolders:
 
+- `current/` for diagrams that describe the current runtime architecture
 - `planning/` for diagrams referenced by planning documents under `docs/planning/`
+
+Current architecture:
+
+- [`current/system_architecture.md`](current/system_architecture.md) - ASCII diagram in Markdown for plain-text renderers
+- [`current/system_architecture.mmd`](current/system_architecture.mmd)
 
 Primary planning entrypoint:
 

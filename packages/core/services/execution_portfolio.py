@@ -246,7 +246,12 @@ def refresh_session_position_marks(
             limit=500,
         )
     ]
-    if session_ids is not None:
+    normalized_session_ids = [
+        str(session_id)
+        for session_id in (session_ids or [])
+        if parse_live_run_scope_id(str(session_id)) is not None
+    ]
+    if session_ids is not None and normalized_session_ids:
         open_positions = [
             position
             for position in open_positions
@@ -256,7 +261,7 @@ def refresh_session_position_marks(
                     str(session_id),
                     execution_store=execution_store,
                 )
-                for session_id in session_ids
+                for session_id in normalized_session_ids
             )
         ]
     if not open_positions:

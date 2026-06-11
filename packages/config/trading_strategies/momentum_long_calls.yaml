@@ -74,6 +74,13 @@ risk:
     max_daily_actions: 15
     max_new_entries_per_day: 15
     daily_loss_limit: 500
+    portfolio_admission:
+      max_strategy_open_positions: 10
+      max_family_open_positions: 10
+      max_symbol_family_open_positions: 1
+      max_daily_new_entries: 15
+      max_total_strategy_risk: 5000
+      max_correlated_group_open_positions: 6
   sizing:
     max_risk_per_trade: 500
 runtime:

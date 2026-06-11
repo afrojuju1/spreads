@@ -1,6 +1,6 @@
 trading_strategy_id: short_dated_earnings_long_strangle
 name: Short-Dated Earnings Long Strangle
-enabled: false
+enabled: true
 source:
   type: static
   ref: liquid_stocks
@@ -43,8 +43,8 @@ management:
       start_et: "09:45"
       end_et: "15:45"
   recipes:
-    - take_profit_50pct
-    - max_loss_2x_credit
+    - take_profit_40pct
+    - max_loss_40pct_debit
     - expiry_day_exit
 liquidity:
   min_open_interest: 200
@@ -53,6 +53,13 @@ liquidity:
 risk:
   limits:
     extends: baseline
+    portfolio_admission:
+      max_strategy_open_positions: 1
+      max_family_open_positions: 1
+      max_symbol_family_open_positions: 1
+      max_daily_new_entries: 1
+      max_total_strategy_risk: 1500
+      max_correlated_group_open_positions: 2
   sizing:
     min_return_on_risk: 0.05
     position_size_pct_of_available_balance: 0.0025
@@ -61,5 +68,5 @@ runtime:
   extends: short_dated_default
 execution:
   approval: auto
-  mode: shadow
+  mode: paper
   runtime: alpaca_direct

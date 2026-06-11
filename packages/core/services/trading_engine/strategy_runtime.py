@@ -87,6 +87,13 @@ def _portfolio_admission_policy(
     runtime: EntryRuntime,
     position_size_policy: dict[str, Any],
 ) -> dict[str, Any]:
+    portfolio_limits = getattr(getattr(runtime.strategy, "risk_limits", None), "portfolio_admission", None)
+    if portfolio_limits is not None and bool(getattr(portfolio_limits, "configured", False)):
+        return portfolio_limits.as_policy(
+            trading_strategy_id=runtime.trading_strategy_id,
+            strategy_family=runtime.trade_structure,
+        )
+
     is_long_call = runtime.trade_structure == "long_call"
     default_strategy_cap = 10 if is_long_call else 2
     default_family_cap = 10 if is_long_call else 2
@@ -102,6 +109,7 @@ def _portfolio_admission_policy(
     return {
         "trading_strategy_id": runtime.trading_strategy_id,
         "strategy_family": runtime.trade_structure,
+        "policy_source": "runtime_fallback",
         "max_strategy_open_positions": strategy_cap,
         "max_family_open_positions": max(default_family_cap, min(strategy_cap, default_family_cap)),
         "max_symbol_family_open_positions": 1,

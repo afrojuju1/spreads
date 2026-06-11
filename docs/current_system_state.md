@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-09
+Last updated: 2026-06-11
 
 ## Top-Level Boundaries
 
@@ -161,9 +161,6 @@ Current default-enabled strategies:
 
 - `momentum_long_calls`
 - `short_dated_index_call_credit`
-
-Available but disabled-by-default strategy configs:
-
 - `short_dated_earnings_call_debit`
 - `short_dated_earnings_long_straddle`
 - `short_dated_earnings_long_strangle`
@@ -176,11 +173,17 @@ Available but disabled-by-default strategy configs:
 
 `short_dated_index_call_credit` is the first deliberately enabled non-long-call paper proof family. It consumes the static `liquid_index_etfs` source, applies `entry.quality_profile: call_credit_spread_v1`, and remains subject to portfolio admission plus execution-submit structure guards before any Alpaca paper submission.
 
-Disabled strategy configs are kept as authored strategy definitions, but they do not generate default scheduler jobs until intentionally re-enabled.
+`short_dated_index_put_credit` and `short_dated_index_iron_condor` consume the same `liquid_index_etfs` source and run defined-risk index premium strategies through `put_credit_spread_v1` and `iron_condor_v1`.
 
-`TradingOpsState.details.strategy_breadth` projects every authored strategy config, including disabled paper/shadow families, as operator-visible breadth. That projection is observation-only for inactive strategies: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create scheduler jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface only.
+`short_dated_earnings_call_debit`, `short_dated_earnings_put_debit`, `short_dated_earnings_long_straddle`, and `short_dated_earnings_long_strangle` consume the static `liquid_stocks` source and run paper-mode earnings-oriented debit and long-vol structures through their family quality profiles.
 
-The long-vol strategy configs are disabled and shadow-mode by default as operator policy. The Spreads execution path itself supports their two-long-leg `mleg` debit order shape when a strategy is intentionally enabled for paper/live; long-vol must not be blocked by vertical-only width or return-on-risk validation.
+`short_dated_etf_short_put` consumes `liquid_etf_short_puts` and runs the `short_put_v1` quality profile with explicit cash-secured short-put portfolio caps.
+
+There are currently no disabled-by-default authored strategy configs. Disabled strategy configs may still be kept as authored definitions in the future; if disabled, they must not generate scheduler jobs until intentionally re-enabled.
+
+`TradingOpsState.details.strategy_breadth` projects every authored strategy config, including active, disabled paper, or disabled shadow families, as operator-visible breadth. Disabled strategy projection is observation-only: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create scheduler jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface.
+
+The long-vol strategy configs run in paper mode by default after the 2026-06-11 multi-strategy activation. The Spreads execution path supports their two-long-leg `mleg` debit order shape; long-vol must not be blocked by vertical-only width or return-on-risk validation.
 
 ## Multi-Strategy Activation Contract
 
@@ -202,7 +205,7 @@ quality profile -> account-agnostic selection -> portfolio admission -> executio
 
 `quality profile` proves the candidate is structurally and economically worth considering for that family. `selection` chooses the best account-agnostic idea. `portfolio admission` decides whether the account should add this exposure now. `execution admission` validates broker-submission readiness, including leg shape, net debit/credit sign, quote freshness, and adapter support. Broker submission remains behind `execution_intent_dispatch` and `execution_submit`.
 
-Portfolio admission is evaluated after a selected natural entry decision and before pending intent creation. It reads current portfolio positions, open entry attempts, and active entry intents, then persists a `portfolio_admission` sub-payload on the trade admission alongside `capacity_admission` and deferred `execution_readiness`. The policy blocks duplicate symbol/family exposure, strategy and family caps, daily new-entry caps, correlated broad-index ETF crowding, and total strategy max-loss exposure when the strategy exposes a computable risk budget. `TradingOpsState` projects portfolio admission separately under each trading flow and summarizes portfolio block counts/reasons separately from quality blockers and execution-submit guards.
+Portfolio admission is evaluated after a selected natural entry decision and before pending intent creation. It reads current portfolio positions, open entry attempts, and active entry intents, then persists a `portfolio_admission` sub-payload on the trade admission alongside `capacity_admission` and deferred `execution_readiness`. The policy blocks duplicate symbol/family exposure, strategy and family caps, daily new-entry caps, correlated broad-index ETF crowding, and total strategy max-loss exposure when the strategy exposes a computable risk budget. Active strategies must declare these caps under `risk.limits.portfolio_admission`; runtime fallback defaults exist only for older configs and must not be used to justify enabling a second non-long-call family. `TradingOpsState` projects the resolved strategy risk config and portfolio admission state separately under each trading flow, and summarizes portfolio block counts/reasons separately from quality blockers and execution-submit guards.
 
 Shadow and paper are distinct activation modes. A shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. A paper strategy may submit only when its execution posture, observed broker environment, approval mode, portfolio admission, execution admission, and risk gates all allow it. Do not use disabled strategy breadth as a hidden auto-allocator.
 

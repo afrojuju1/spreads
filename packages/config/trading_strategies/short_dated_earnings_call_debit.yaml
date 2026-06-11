@@ -1,6 +1,6 @@
 trading_strategy_id: short_dated_earnings_call_debit
 name: Short-Dated Earnings Call Debit
-enabled: false
+enabled: true
 source:
   type: static
   ref: liquid_stocks
@@ -57,6 +57,13 @@ risk:
     max_open_positions: 1
     max_new_entries_per_day: 1
     daily_loss_limit: 125
+    portfolio_admission:
+      max_strategy_open_positions: 1
+      max_family_open_positions: 1
+      max_symbol_family_open_positions: 1
+      max_daily_new_entries: 1
+      max_total_strategy_risk: 750
+      max_correlated_group_open_positions: 2
   sizing:
     min_return_on_risk: 0.05
     position_size_pct_of_available_balance: 0.0025
