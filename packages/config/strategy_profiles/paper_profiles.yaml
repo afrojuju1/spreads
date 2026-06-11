@@ -1,0 +1,477 @@
+version: 1
+status: transitional_reference
+runtime_loaded: false
+notes:
+  - Current runtime still loads packages/config/trading_strategies/*.yaml.
+  - This catalog is the target composition model for those strategies and preserves current paper behavior.
+
+universe_models:
+  finviz_momentum_dynamic:
+    source:
+      type: dynamic
+      ref: finviz_momentum
+      max_age_seconds: 300
+      max_symbols: 10
+  liquid_index_etfs_static:
+    source:
+      type: static
+      ref: liquid_index_etfs
+  liquid_stocks_static:
+    source:
+      type: static
+      ref: liquid_stocks
+  liquid_etf_short_puts_static:
+    source:
+      type: static
+      ref: liquid_etf_short_puts
+
+routine_profiles:
+  momentum_entry_2m:
+    cadence_minutes: 2
+    offset_seconds: 30
+    market_hours_only: true
+    window:
+      start_et: "10:00"
+      end_et: "15:45"
+  momentum_manage_1m:
+    cadence_minutes: 1
+    market_hours_only: true
+    window:
+      start_et: "10:00"
+      end_et: "15:45"
+  short_dated_entry_5m_morning:
+    cadence_minutes: 5
+    market_hours_only: true
+    window:
+      start_et: "09:45"
+      end_et: "14:30"
+  short_dated_entry_5m_full_day:
+    cadence_minutes: 5
+    market_hours_only: true
+    window:
+      start_et: "09:45"
+      end_et: "15:45"
+  short_dated_iron_condor_entry_5m:
+    cadence_minutes: 5
+    market_hours_only: true
+    window:
+      start_et: "09:50"
+      end_et: "15:15"
+  short_dated_manage_1m:
+    cadence_minutes: 1
+    market_hours_only: true
+    window:
+      start_et: "09:45"
+      end_et: "15:45"
+  short_dated_iron_condor_manage_1m:
+    cadence_minutes: 1
+    market_hours_only: true
+    window:
+      start_et: "09:50"
+      end_et: "15:45"
+
+liquidity_profiles:
+  liquid_momentum_options:
+    min_open_interest: 500
+    max_leg_spread_pct_mid: 0.10
+    max_quote_age_seconds: 180
+  short_dated_liquid_options:
+    min_open_interest: 200
+    max_leg_spread_pct_mid: 0.15
+    max_quote_age_seconds: 30
+
+structure_models:
+  momentum_long_call_7_21d:
+    quality_profile: momentum_long_call_v1
+    build:
+      dte:
+        min: 7
+        max: 21
+      entry_delta:
+        min: 0.45
+        max: 0.75
+        target: 0.55
+  index_call_credit_4_10d:
+    quality_profile: call_credit_spread_v1
+    build:
+      dte:
+        min: 4
+        max: 10
+      short_delta:
+        min: 0.10
+        max: 0.28
+      widths: [2, 3, 5]
+      ranking:
+        min_probability_of_profit: 0.60
+        min_expected_value_dollars: 10
+        min_slippage_adjusted_expected_value_dollars: 8
+        max_entry_slippage_dollars: 12
+        min_model_implied_volatility: 0.18
+        weights:
+          probability_of_profit: 0.42
+          expected_value_dollars: 0.16
+          slippage_adjusted_expected_value_dollars: 0.24
+          entry_slippage_dollars: 0.10
+          model_implied_volatility: 0.08
+  index_put_credit_5_10d:
+    quality_profile: put_credit_spread_v1
+    build:
+      dte:
+        min: 5
+        max: 10
+      short_delta:
+        min: 0.18
+        max: 0.28
+      widths: [2, 3, 5]
+      ranking:
+        min_probability_of_profit: 0.60
+        min_expected_value_dollars: 0
+        min_slippage_adjusted_expected_value_dollars: 0
+        max_entry_slippage_dollars: 12
+        min_model_implied_volatility: 0.18
+        weights:
+          probability_of_profit: 0.42
+          expected_value_dollars: 0.16
+          slippage_adjusted_expected_value_dollars: 0.24
+          entry_slippage_dollars: 0.10
+          model_implied_volatility: 0.08
+  index_iron_condor_5_10d:
+    quality_profile: iron_condor_v1
+    build:
+      dte:
+        min: 5
+        max: 10
+      short_delta:
+        min: 0.12
+        max: 0.22
+      widths: [2, 3, 5]
+      symmetric_wings_only: true
+      expected_move:
+        min_short_vs_expected_move_ratio: -0.30
+        min_breakeven_vs_expected_move_ratio: -0.35
+      ranking:
+        min_probability_of_profit: 0.64
+        min_expected_value_dollars: 1
+        min_slippage_adjusted_expected_value_dollars: 0
+        max_entry_slippage_dollars: 16
+        min_model_implied_volatility: 0.20
+        weights:
+          probability_of_profit: 0.48
+          expected_value_dollars: 0.12
+          slippage_adjusted_expected_value_dollars: 0.22
+          entry_slippage_dollars: 0.10
+          model_implied_volatility: 0.08
+  earnings_call_debit_4_10d:
+    quality_profile: call_debit_spread_v1
+    build:
+      dte:
+        min: 4
+        max: 10
+      short_delta:
+        min: 0.20
+        max: 0.35
+        target: 0.27
+      widths: [2, 3, 5]
+      ranking:
+        min_probability_of_profit: 0.25
+        min_expected_value_dollars: 10
+        min_slippage_adjusted_expected_value_dollars: 6
+        max_entry_slippage_dollars: 12
+        max_model_implied_volatility: 0.60
+        weights:
+          probability_of_profit: 0.28
+          expected_value_dollars: 0.26
+          slippage_adjusted_expected_value_dollars: 0.28
+          entry_slippage_dollars: 0.10
+          model_implied_volatility: 0.08
+  earnings_put_debit_4_10d:
+    quality_profile: put_debit_spread_v1
+    extends: earnings_call_debit_4_10d
+  earnings_long_straddle_2_10d:
+    quality_profile: long_straddle_v1
+    build:
+      dte:
+        min: 2
+        max: 10
+      entry_delta:
+        min: 0.45
+        max: 0.55
+        target: 0.50
+      ranking:
+        min_probability_of_profit: 0.28
+        min_expected_value_dollars: 10
+        min_slippage_adjusted_expected_value_dollars: 6
+        max_entry_slippage_dollars: 25
+        max_model_implied_volatility: 0.60
+        weights:
+          probability_of_profit: 0.18
+          expected_value_dollars: 0.28
+          slippage_adjusted_expected_value_dollars: 0.34
+          entry_slippage_dollars: 0.12
+          model_implied_volatility: 0.08
+  earnings_long_strangle_2_10d:
+    quality_profile: long_strangle_v1
+    build:
+      dte:
+        min: 2
+        max: 10
+      entry_delta:
+        min: 0.20
+        max: 0.35
+        target: 0.25
+      ranking:
+        min_probability_of_profit: 0.28
+        min_expected_value_dollars: 10
+        min_slippage_adjusted_expected_value_dollars: 6
+        max_entry_slippage_dollars: 25
+        max_model_implied_volatility: 0.60
+        weights:
+          probability_of_profit: 0.18
+          expected_value_dollars: 0.28
+          slippage_adjusted_expected_value_dollars: 0.34
+          entry_slippage_dollars: 0.12
+          model_implied_volatility: 0.08
+  etf_short_put_4_10d:
+    quality_profile: short_put_v1
+    build:
+      dte:
+        min: 4
+        max: 10
+      entry_delta:
+        min: 0.08
+        max: 0.16
+        target: 0.12
+      min_fill_ratio: 0.72
+      expected_move:
+        min_short_vs_expected_move_ratio: -0.05
+        min_breakeven_vs_expected_move_ratio: -0.02
+      ranking:
+        min_probability_of_profit: 0.78
+        min_expected_value_dollars: 0
+        min_slippage_adjusted_expected_value_dollars: 0
+        max_entry_slippage_dollars: 10
+        min_model_implied_volatility: 0.18
+        weights:
+          probability_of_profit: 0.38
+          expected_value_dollars: 0.18
+          slippage_adjusted_expected_value_dollars: 0.26
+          entry_slippage_dollars: 0.10
+          model_implied_volatility: 0.08
+
+portfolio_models:
+  momentum_long_call_paper:
+    limits:
+      max_open_positions: 10
+      max_daily_actions: 15
+      max_new_entries_per_day: 15
+      daily_loss_limit: 500
+      portfolio_admission:
+        max_strategy_open_positions: 10
+        max_family_open_positions: 10
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 15
+        max_total_strategy_risk: 5000
+        max_correlated_group_open_positions: 6
+    sizing:
+      max_risk_per_trade: 500
+  index_credit_vertical_2_slots:
+    limits:
+      extends: baseline
+      portfolio_admission:
+        max_strategy_open_positions: 2
+        max_family_open_positions: 2
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 2
+        max_total_strategy_risk: 1000
+        max_correlated_group_open_positions: 3
+    sizing:
+      min_return_on_risk: 0.13
+      position_size_pct_of_available_balance: 0.0025
+      max_credit_slippage_pct: 0.25
+  index_condor_1_slot:
+    limits:
+      extends: baseline
+      portfolio_admission:
+        max_strategy_open_positions: 1
+        max_family_open_positions: 1
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 1
+        max_total_strategy_risk: 1000
+        max_correlated_group_open_positions: 2
+    sizing:
+      min_return_on_risk: 0.13
+      position_size_pct_of_available_balance: 0.0025
+      max_credit_slippage_pct: 0.25
+  earnings_debit_1_slot:
+    limits:
+      extends: baseline
+      max_open_positions: 1
+      max_new_entries_per_day: 1
+      daily_loss_limit: 125
+      portfolio_admission:
+        max_strategy_open_positions: 1
+        max_family_open_positions: 1
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 1
+        max_total_strategy_risk: 750
+        max_correlated_group_open_positions: 2
+    sizing:
+      min_return_on_risk: 0.05
+      position_size_pct_of_available_balance: 0.0025
+      max_credit_slippage_pct: 0.25
+  earnings_long_vol_1_slot:
+    limits:
+      extends: baseline
+      portfolio_admission:
+        max_strategy_open_positions: 1
+        max_family_open_positions: 1
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 1
+        max_total_strategy_risk: 1500
+        max_correlated_group_open_positions: 2
+    sizing:
+      min_return_on_risk: 0.05
+      position_size_pct_of_available_balance: 0.0025
+      max_credit_slippage_pct: 0.25
+  etf_short_put_cash_secured:
+    limits:
+      extends: baseline
+      portfolio_admission:
+        max_strategy_open_positions: 1
+        max_family_open_positions: 1
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 1
+        max_total_strategy_risk: 75000
+        max_correlated_group_open_positions: 1
+    sizing:
+      min_return_on_risk: 0.05
+      position_size_pct_of_available_balance: 0.0025
+      max_credit_slippage_pct: 0.25
+
+protection_models:
+  short_dated_default_protections:
+    runtime:
+      extends: short_dated_default
+  momentum_intraday_protections:
+    runtime:
+      live_enabled: false
+      cancel_pending_entries_after_et: "15:30"
+      flatten_positions_at_et: "15:45"
+      paused: false
+  iron_condor_late_day_protections:
+    runtime:
+      extends: short_dated_default
+      cancel_pending_entries_after_et: "15:00"
+      flatten_positions_at_et: "15:40"
+
+executor_profiles:
+  alpaca_paper_auto_direct:
+    approval: auto
+    mode: paper
+    runtime: alpaca_direct
+
+exit_controllers:
+  momentum_long_call_exit:
+    routine_profile: momentum_manage_1m
+    policy:
+      profit_target_pct: 0.40
+      stop_loss_pct: 0.30
+      force_close_minutes_before_close: 15
+      max_spread_pct: 20
+      max_quote_age_seconds: 180
+      repricing:
+        stale_after_seconds: 75
+        max_reprices: 3
+        price_step: 0.01
+        max_concession: 0.03
+      underlying_invalidation:
+        enabled: true
+        min_intraday_bars: 30
+        recent_lookback_bars: 5
+        confirmation_bars: 2
+        breakdown_tolerance_bps: 5
+        max_spread_pct: 1.0
+        max_quote_age_seconds: 180
+  short_dated_credit_exit:
+    routine_profile: short_dated_manage_1m
+    recipes:
+      - take_profit_50pct
+      - max_loss_2x_credit
+      - expiry_day_exit
+  short_dated_debit_exit:
+    routine_profile: short_dated_manage_1m
+    recipes:
+      - take_profit_40pct
+      - max_loss_40pct_debit
+      - expiry_day_exit
+  short_dated_iron_condor_exit:
+    routine_profile: short_dated_iron_condor_manage_1m
+    recipes:
+      - take_profit_50pct
+      - max_loss_2x_credit
+      - expiry_day_exit
+
+archetypes:
+  momentum_long_call:
+    universe_model: finviz_momentum_dynamic
+    structure_family: long_call
+    default_structure_model: momentum_long_call_7_21d
+    liquidity_profile: liquid_momentum_options
+    entry_routine_profile: momentum_entry_2m
+    portfolio_model: momentum_long_call_paper
+    protection_model: momentum_intraday_protections
+    executor_profile: alpaca_paper_auto_direct
+    exit_controller: momentum_long_call_exit
+  index_credit_vertical:
+    universe_model: liquid_index_etfs_static
+    allowed_trade_structures:
+      - call_credit_spread
+      - put_credit_spread
+    liquidity_profile: short_dated_liquid_options
+    entry_routine_profile: short_dated_entry_5m_full_day
+    portfolio_model: index_credit_vertical_2_slots
+    protection_model: short_dated_default_protections
+    executor_profile: alpaca_paper_auto_direct
+    exit_controller: short_dated_credit_exit
+  index_iron_condor:
+    universe_model: liquid_index_etfs_static
+    structure_family: iron_condor
+    default_structure_model: index_iron_condor_5_10d
+    liquidity_profile: short_dated_liquid_options
+    entry_routine_profile: short_dated_iron_condor_entry_5m
+    portfolio_model: index_condor_1_slot
+    protection_model: iron_condor_late_day_protections
+    executor_profile: alpaca_paper_auto_direct
+    exit_controller: short_dated_iron_condor_exit
+  earnings_debit_vertical:
+    universe_model: liquid_stocks_static
+    allowed_trade_structures:
+      - call_debit_spread
+      - put_debit_spread
+    liquidity_profile: short_dated_liquid_options
+    entry_routine_profile: short_dated_entry_5m_morning
+    portfolio_model: earnings_debit_1_slot
+    protection_model: short_dated_default_protections
+    executor_profile: alpaca_paper_auto_direct
+    exit_controller: short_dated_debit_exit
+  earnings_long_vol:
+    universe_model: liquid_stocks_static
+    allowed_trade_structures:
+      - long_straddle
+      - long_strangle
+    liquidity_profile: short_dated_liquid_options
+    entry_routine_profile: short_dated_entry_5m_morning
+    portfolio_model: earnings_long_vol_1_slot
+    protection_model: short_dated_default_protections
+    executor_profile: alpaca_paper_auto_direct
+    exit_controller: short_dated_debit_exit
+  etf_short_put:
+    universe_model: liquid_etf_short_puts_static
+    structure_family: short_put
+    default_structure_model: etf_short_put_4_10d
+    liquidity_profile: short_dated_liquid_options
+    entry_routine_profile: short_dated_entry_5m_morning
+    portfolio_model: etf_short_put_cash_secured
+    protection_model: short_dated_default_protections
+    executor_profile: alpaca_paper_auto_direct
+    exit_controller: short_dated_credit_exit

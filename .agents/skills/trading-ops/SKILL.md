@@ -30,10 +30,22 @@ Use JSON when exact fields matter:
 
 ```bash
 uv run spreads ops state --env ade-nucbox-k8-plus --json
+uv run spreads ops strategy-ledger --env ade-nucbox-k8-plus --date <YYYY-MM-DD> --json
 uv run spreads ops storage --env ade-nucbox-k8-plus --json
 uv run spreads jobs --env ade-nucbox-k8-plus --json
 uv run spreads jobs --env ade-nucbox-k8-plus --status failed --limit 10 --json
 ```
+
+## Strategy Evidence Ledger
+
+Use `spreads ops strategy-ledger` before tuning or comparing strategy profiles. It reports every active `trading_strategy_id` for one market date with trade structure, config hash, source/candidate/signal/decision/admission/intent/attempt/position counts, top blockers, PnL, marks, and latest lifecycle IDs.
+
+The target archetype/profile model is represented by transitional sidecar config:
+
+- `packages/config/strategy_profiles/paper_profiles.yaml`
+- `packages/config/strategy_specs/paper_strategies.yaml`
+
+These files are not scheduler-loaded yet. Treat them as the migration map for reducing repeated strategy YAML into reusable profiles, and preserve runtime behavior unless ledger evidence justifies a deliberate profile change.
 
 ## Momentum Calls Flow
 
@@ -114,6 +126,7 @@ docker compose restart scheduler worker-runtime worker-data
 
 ```bash
 uv run spreads ops state --env ade-nucbox-k8-plus
+uv run spreads ops strategy-ledger --env ade-nucbox-k8-plus --date <YYYY-MM-DD> --json
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type ticker_source --limit 5 --json
 uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry --limit 5 --json
 ```
@@ -134,6 +147,7 @@ Report:
 - exact timestamp and market state
 - concise health summary
 - source/candidate/decision status for `momentum_long_calls`
+- daily strategy ledger totals when strategy tuning, breadth, or profile quality is relevant
 - open positions, active intents, broker sync, and PnL if relevant
 - worker/scheduler state and disabled lanes
 - commands used and anything not verified

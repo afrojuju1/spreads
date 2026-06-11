@@ -144,6 +144,13 @@ Scale defaults:
 
 Trading strategies are authored as one file per strategy in `packages/config/trading_strategies`.
 
+As of the `spr-s82` migration slice, the target archetype/profile representation exists beside the runtime-loaded strategy YAML:
+
+- `packages/config/strategy_profiles/paper_profiles.yaml` owns the reusable paper archetypes, universe models, routine profiles, liquidity profiles, structure models, portfolio models, protection models, executor profile, and exit controllers for the nine active paper strategies.
+- `packages/config/strategy_specs/paper_strategies.yaml` owns the compact transitional `StrategySpec` catalog: identity, activation, thesis, archetype, trade structure, structure model, and thesis-level overrides.
+
+These sidecar files are `transitional_reference` and are not loaded by the scheduler yet. Current paper behavior remains sourced from `packages/config/trading_strategies/*.yaml` until the loader composes runtime strategy payloads from `StrategySpec + StrategyArchetype + profiles`. Do not tune or reduce the legacy runtime YAML blindly; use the daily evidence ledger first, preserve deployed paper behavior by default, then move justified changes into the reusable profiles.
+
 Each strategy owns:
 
 - `trading_strategy_id`
@@ -182,6 +189,8 @@ Current default-enabled strategies:
 There are currently no disabled-by-default authored strategy configs. Disabled strategy configs may still be kept as authored definitions in the future; if disabled, they must not generate scheduler jobs until intentionally re-enabled.
 
 `TradingOpsState.details.strategy_breadth` projects every authored strategy config, including active, disabled paper, or disabled shadow families, as operator-visible breadth. Disabled strategy projection is observation-only: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create scheduler jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface.
+
+`spreads ops strategy-ledger --date <YYYY-MM-DD>` is the shipped daily evidence ledger. It reports every active strategy's source, candidate, signal, decision, admission, intent, attempt, order/fill, position, close, mark, PnL, blocker, config hash, and latest lifecycle ID evidence for one market date. Use it as the first tuning surface for the archetype/profile migration instead of changing thresholds from vibes.
 
 The long-vol strategy configs run in paper mode by default after the 2026-06-11 multi-strategy activation. The Spreads execution path supports their two-long-leg `mleg` debit order shape; long-vol must not be blocked by vertical-only width or return-on-risk validation.
 
