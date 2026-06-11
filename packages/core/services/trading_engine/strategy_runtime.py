@@ -1065,7 +1065,17 @@ def _run_trading_strategy_entry(
             or signal_economics.get("midpoint_value")
             or signal.get("limit_price")
         )
-        intent_quantity = selected_admission.get("admissible_quantity") or signal_execution_shape.get("quantity") or signal_order_payload.get("qty")
+        requested_quantity = _positive_int(
+            (
+                selected_admission.get("requested_quantity")
+                or signal_execution_shape.get("quantity")
+                or signal_order_payload.get("qty")
+                or signal_order_payload.get("quantity")
+            ),
+            default=1,
+        )
+        admissible_quantity = _positive_int(selected_admission.get("admissible_quantity"), default=requested_quantity)
+        intent_quantity = min(requested_quantity, admissible_quantity)
         selected_intent = issue_pending_execution_intent(
             execution_store,
             execution_intent_id=execution_intent_id,

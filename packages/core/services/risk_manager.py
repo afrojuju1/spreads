@@ -25,6 +25,7 @@ from core.services.execution_lifecycle import (
     OPEN_ATTEMPT_STATUS_LIST,
     is_open_execution_attempt_status,
     resolve_execution_attempt_filled_quantity,
+    resolve_execution_attempt_requested_quantity,
 )
 from core.services.option_structures import (
     candidate_legs,
@@ -531,7 +532,7 @@ def _account_open_attempts(execution_store: Any) -> list[dict[str, Any]]:
 
 
 def _pending_open_attempt_quantity(attempt: Mapping[str, Any]) -> float:
-    requested_quantity = coerce_float(attempt.get("quantity")) or 0.0
+    requested_quantity = resolve_execution_attempt_requested_quantity(attempt)
     if requested_quantity <= 0:
         return 0.0
     filled_quantity = min(

@@ -183,6 +183,40 @@ def resolve_execution_attempt_filled_quantity(
     return 0.0
 
 
+def resolve_execution_attempt_requested_quantity(
+    attempt: Mapping[str, Any],
+    *,
+    primary_order: Mapping[str, Any] | None = None,
+) -> float:
+    primary = primary_order if primary_order is not None else resolve_execution_attempt_primary_order(attempt)
+    primary_value = None if primary is None else coerce_float(primary.get("quantity"))
+    if primary_value is not None and primary_value > 0:
+        return primary_value
+
+    order_values: list[float] = []
+    for order in attempt.get("orders") or []:
+        if not isinstance(order, Mapping):
+            continue
+        quantity = coerce_float(order.get("quantity"))
+        if quantity is not None and quantity > 0:
+            order_values.append(quantity)
+    if order_values:
+        return max(order_values)
+
+    request = resolve_execution_attempt_request(attempt)
+    for payload in (
+        request.get("order") if isinstance(request.get("order"), Mapping) else None,
+        attempt.get("order_payload") if isinstance(attempt.get("order_payload"), Mapping) else None,
+    ):
+        if not isinstance(payload, Mapping):
+            continue
+        quantity = coerce_float(payload.get("qty") or payload.get("quantity"))
+        if quantity is not None and quantity > 0:
+            return quantity
+
+    return max(coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+
+
 def resolve_open_attempt_working_stale_after_seconds(
     attempt: Mapping[str, Any],
     *,
@@ -217,7 +251,7 @@ def classify_open_execution_attempt(
     source = resolve_execution_attempt_source(attempt)
     source_kind = as_text(source.get("kind")) or "unknown"
     filled_quantity = resolve_execution_attempt_filled_quantity(attempt)
-    requested_quantity = max(coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    requested_quantity = resolve_execution_attempt_requested_quantity(attempt)
     pending_quantity = max(requested_quantity - min(filled_quantity, requested_quantity), 0.0)
     linked_position_id = as_text(attempt.get("position_id"))
     occupies_position_slot = linked_position_id is None and filled_quantity <= 0
@@ -426,7 +460,10 @@ def project_execution_attempt_lifecycle(
         attempt,
         primary_order=primary_order,
     )
-    requested_quantity = max(coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    requested_quantity = resolve_execution_attempt_requested_quantity(
+        attempt,
+        primary_order=primary_order,
+    )
     pending_quantity = max(
         requested_quantity - min(filled_quantity, requested_quantity),
         0.0,
@@ -514,6 +551,7 @@ __all__ = [
     "resolve_execution_submit_job_run_id",
     "resolve_execution_attempt_filled_quantity",
     "resolve_execution_attempt_primary_order",
+    "resolve_execution_attempt_requested_quantity",
     "resolve_execution_attempt_request",
     "resolve_execution_attempt_source",
     "resolve_execution_attempt_source_job",

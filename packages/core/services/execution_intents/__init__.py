@@ -209,15 +209,26 @@ def _trade_decision_option_payload(
         legs = normalize_legs(legs, expiration_date=expiration_date)
     admission = payload.get("execution_admission") if isinstance(payload.get("execution_admission"), dict) else {}
     economics = decision_signal.economics
-    quantity = (
+    requested_quantity = (
         _first_positive_int(
             payload.get("quantity"),
-            decision_signal.selected_quantity,
-            admission.get("admissible_quantity"),
+            admission.get("requested_quantity"),
             order_payload.get("qty"),
+            order_payload.get("quantity"),
+            decision_signal.selected_quantity,
         )
         or 1
     )
+    portfolio_admission = admission.get("portfolio_admission") if isinstance(admission.get("portfolio_admission"), dict) else {}
+    quantity_caps = [
+        cap
+        for cap in (
+            _first_positive_int(admission.get("admissible_quantity")),
+            _first_positive_int(portfolio_admission.get("admissible_quantity")),
+        )
+        if cap is not None
+    ]
+    quantity = min([requested_quantity, *quantity_caps]) if quantity_caps else requested_quantity
     limit_price = _first_positive_float(
         payload.get("limit_price"),
         order_payload.get("limit_price"),
