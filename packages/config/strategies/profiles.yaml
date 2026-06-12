@@ -1,11 +1,9 @@
 version: 1
-status: transitional_reference
-runtime_loaded: false
 notes:
-  - Current runtime still loads packages/config/trading_strategies/*.yaml.
-  - This catalog is the target composition model for those strategies and preserves current paper behavior.
+  - Runtime strategy config is composed from catalog.yaml plus these reusable profiles.
+  - Execution posture such as paper, shadow, or live belongs on each catalog strategy.
 
-universe_models:
+source_models:
   finviz_momentum_dynamic:
     source:
       type: dynamic
@@ -259,7 +257,7 @@ structure_models:
           model_implied_volatility: 0.08
 
 portfolio_models:
-  momentum_long_call_paper:
+  momentum_long_call_10_slots:
     limits:
       max_open_positions: 10
       max_daily_actions: 15
@@ -302,12 +300,26 @@ portfolio_models:
       min_return_on_risk: 0.13
       position_size_pct_of_available_balance: 0.0025
       max_credit_slippage_pct: 0.25
-  earnings_debit_1_slot:
+  earnings_call_debit_1_slot:
     limits:
       extends: baseline
       max_open_positions: 1
       max_new_entries_per_day: 1
       daily_loss_limit: 125
+      portfolio_admission:
+        max_strategy_open_positions: 1
+        max_family_open_positions: 1
+        max_symbol_family_open_positions: 1
+        max_daily_new_entries: 1
+        max_total_strategy_risk: 750
+        max_correlated_group_open_positions: 2
+    sizing:
+      min_return_on_risk: 0.05
+      position_size_pct_of_available_balance: 0.0025
+      max_credit_slippage_pct: 0.25
+  earnings_put_debit_baseline_limits:
+    limits:
+      extends: baseline
       portfolio_admission:
         max_strategy_open_positions: 1
         max_family_open_positions: 1
@@ -365,9 +377,8 @@ protection_models:
       flatten_positions_at_et: "15:40"
 
 executor_profiles:
-  alpaca_paper_auto_direct:
+  alpaca_auto_direct:
     approval: auto
-    mode: paper
     runtime: alpaca_direct
 
 exit_controllers:
@@ -418,9 +429,9 @@ archetypes:
     default_structure_model: momentum_long_call_7_21d
     liquidity_profile: liquid_momentum_options
     entry_routine_profile: momentum_entry_2m
-    portfolio_model: momentum_long_call_paper
+    portfolio_model: momentum_long_call_10_slots
     protection_model: momentum_intraday_protections
-    executor_profile: alpaca_paper_auto_direct
+    executor_profile: alpaca_auto_direct
     exit_controller: momentum_long_call_exit
   index_credit_vertical:
     universe_model: liquid_index_etfs_static
@@ -431,7 +442,7 @@ archetypes:
     entry_routine_profile: short_dated_entry_5m_full_day
     portfolio_model: index_credit_vertical_2_slots
     protection_model: short_dated_default_protections
-    executor_profile: alpaca_paper_auto_direct
+    executor_profile: alpaca_auto_direct
     exit_controller: short_dated_credit_exit
   index_iron_condor:
     universe_model: liquid_index_etfs_static
@@ -441,7 +452,7 @@ archetypes:
     entry_routine_profile: short_dated_iron_condor_entry_5m
     portfolio_model: index_condor_1_slot
     protection_model: iron_condor_late_day_protections
-    executor_profile: alpaca_paper_auto_direct
+    executor_profile: alpaca_auto_direct
     exit_controller: short_dated_iron_condor_exit
   earnings_debit_vertical:
     universe_model: liquid_stocks_static
@@ -450,9 +461,9 @@ archetypes:
       - put_debit_spread
     liquidity_profile: short_dated_liquid_options
     entry_routine_profile: short_dated_entry_5m_morning
-    portfolio_model: earnings_debit_1_slot
+    portfolio_model: earnings_call_debit_1_slot
     protection_model: short_dated_default_protections
-    executor_profile: alpaca_paper_auto_direct
+    executor_profile: alpaca_auto_direct
     exit_controller: short_dated_debit_exit
   earnings_long_vol:
     universe_model: liquid_stocks_static
@@ -463,7 +474,7 @@ archetypes:
     entry_routine_profile: short_dated_entry_5m_morning
     portfolio_model: earnings_long_vol_1_slot
     protection_model: short_dated_default_protections
-    executor_profile: alpaca_paper_auto_direct
+    executor_profile: alpaca_auto_direct
     exit_controller: short_dated_debit_exit
   etf_short_put:
     universe_model: liquid_etf_short_puts_static
@@ -473,5 +484,5 @@ archetypes:
     entry_routine_profile: short_dated_entry_5m_morning
     portfolio_model: etf_short_put_cash_secured
     protection_model: short_dated_default_protections
-    executor_profile: alpaca_paper_auto_direct
+    executor_profile: alpaca_auto_direct
     exit_controller: short_dated_credit_exit

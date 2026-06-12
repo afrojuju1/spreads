@@ -206,7 +206,7 @@ def _build_short_put_candidates(
 
 
 @dataclass(frozen=True)
-class StrategySpec:
+class TradeStructureSpec:
     strategy_family: str
     candidate_builder_key: str
     display_label: str
@@ -243,7 +243,7 @@ class StrategySpec:
 
 
 _SPEC_LIST = (
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="call_credit_spread",
         candidate_builder_key="call_credit",
         display_label="Call Credit",
@@ -257,7 +257,7 @@ _SPEC_LIST = (
             option_type="call",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="put_credit_spread",
         candidate_builder_key="put_credit",
         display_label="Put Credit",
@@ -271,7 +271,7 @@ _SPEC_LIST = (
             option_type="put",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="call_debit_spread",
         candidate_builder_key="call_debit",
         display_label="Call Debit",
@@ -285,7 +285,7 @@ _SPEC_LIST = (
             option_type="call",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="put_debit_spread",
         candidate_builder_key="put_debit",
         display_label="Put Debit",
@@ -299,7 +299,7 @@ _SPEC_LIST = (
             option_type="put",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="long_call",
         candidate_builder_key="long_call",
         display_label="Long Call",
@@ -313,7 +313,7 @@ _SPEC_LIST = (
             option_type="call",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="long_put",
         candidate_builder_key="long_put",
         display_label="Long Put",
@@ -327,7 +327,7 @@ _SPEC_LIST = (
             option_type="put",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="short_call",
         candidate_builder_key="short_call",
         display_label="Short Call",
@@ -341,7 +341,7 @@ _SPEC_LIST = (
             option_type="call",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="short_put",
         candidate_builder_key="short_put",
         display_label="Short Put",
@@ -355,7 +355,7 @@ _SPEC_LIST = (
             option_type="put",
         ),
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="iron_condor",
         candidate_builder_key="iron_condor",
         display_label="Iron Condor",
@@ -366,7 +366,7 @@ _SPEC_LIST = (
         candidate_builder=_build_iron_condor_candidates,
         coverage_counter=_dual_side_coverage,
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="long_straddle",
         candidate_builder_key="long_straddle",
         display_label="Long Straddle",
@@ -377,7 +377,7 @@ _SPEC_LIST = (
         candidate_builder=_build_long_straddle_candidates,
         coverage_counter=_dual_side_coverage,
     ),
-    StrategySpec(
+    TradeStructureSpec(
         strategy_family="long_strangle",
         candidate_builder_key="long_strangle",
         display_label="Long Strangle",
@@ -393,7 +393,7 @@ _SPEC_LIST = (
 _SPECS_BY_ID = {identifier: spec for spec in _SPEC_LIST for identifier in spec.aliases}
 
 
-def resolve_strategy_spec(strategy_id: Any) -> StrategySpec:
+def resolve_trade_structure_spec(strategy_id: Any) -> TradeStructureSpec:
     normalized = str(strategy_id or "").strip().lower()
     spec = _SPECS_BY_ID.get(normalized)
     if spec is None:
@@ -401,32 +401,32 @@ def resolve_strategy_spec(strategy_id: Any) -> StrategySpec:
     return spec
 
 
-def all_strategy_specs() -> tuple[StrategySpec, ...]:
+def all_trade_structure_specs() -> tuple[TradeStructureSpec, ...]:
     return _SPEC_LIST
 
 
-def strategy_display_label(strategy: str) -> str:
+def trade_structure_display_label(strategy: str) -> str:
     if strategy == "auto":
         return "Auto"
     if strategy == "combined":
         return "Combined"
-    return resolve_strategy_spec(strategy).display_label
+    return resolve_trade_structure_spec(strategy).display_label
 
 
-def strategy_option_type(strategy: str) -> str:
+def trade_structure_option_type(strategy: str) -> str:
     if strategy in {"combined", "auto"}:
         return "call"
-    spec = resolve_strategy_spec(strategy)
+    spec = resolve_trade_structure_spec(strategy)
     return spec.option_type or "call"
 
 
-def strategy_direction(strategy: str) -> str:
+def trade_structure_direction(strategy: str) -> str:
     if strategy in {"combined", "auto"}:
         return "neutral"
-    return resolve_strategy_spec(strategy).direction
+    return resolve_trade_structure_spec(strategy).direction
 
 
-def concrete_strategies(strategy: str) -> tuple[str, ...]:
+def concrete_trade_structures(strategy: str) -> tuple[str, ...]:
     if strategy == "auto":
         return (
             "call_credit",
@@ -439,15 +439,15 @@ def concrete_strategies(strategy: str) -> tuple[str, ...]:
         )
     if strategy == "combined":
         return ("call_credit", "put_credit")
-    return (resolve_strategy_spec(strategy).candidate_builder_key,)
+    return (resolve_trade_structure_spec(strategy).candidate_builder_key,)
 
 
 __all__ = [
-    "StrategySpec",
-    "all_strategy_specs",
-    "concrete_strategies",
-    "resolve_strategy_spec",
-    "strategy_direction",
-    "strategy_display_label",
-    "strategy_option_type",
+    "TradeStructureSpec",
+    "all_trade_structure_specs",
+    "concrete_trade_structures",
+    "resolve_trade_structure_spec",
+    "trade_structure_direction",
+    "trade_structure_display_label",
+    "trade_structure_option_type",
 ]

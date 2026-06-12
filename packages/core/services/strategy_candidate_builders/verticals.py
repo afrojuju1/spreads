@@ -10,7 +10,7 @@ from core.domain.models import (
     SpreadCandidate,
 )
 from core.services.option_structures import net_premium_kind
-from core.services.strategy_specs import strategy_option_type
+from core.services.trade_structure_specs import trade_structure_option_type
 
 from .analytics import attach_structure_analytics
 from .shared import (
@@ -33,7 +33,7 @@ def build_vertical_spreads(
     args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
-    option_type = strategy_option_type(strategy)
+    option_type = trade_structure_option_type(strategy)
     premium_kind = net_premium_kind(strategy)
 
     for expiration_date, contracts in sorted(contracts_by_expiration.items()):

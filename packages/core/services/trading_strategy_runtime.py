@@ -7,7 +7,7 @@ from typing import Any
 
 from core.services.candidate_policy import resolve_strategy_min_return_on_risk
 from core.services.option_structures import normalize_strategy_family
-from core.services.strategy_specs import StrategySpec
+from core.services.trade_structure_specs import TradeStructureSpec
 from core.services.strategy_candidate_builders.settings import RANKING_POLICY_ARG_KEYS
 from core.services.trading_strategies import (
     TradingStrategyConfig,
@@ -45,7 +45,7 @@ def _float_tuple(values: Any) -> tuple[float, ...]:
 class StrategyBuildSettings:
     trading_strategy_id: str
     trade_structure: str
-    strategy_spec: StrategySpec
+    trade_structure_spec: TradeStructureSpec
     build: StrategyBuildConfig
     liquidity: StrategyLiquidityRules
     risk: StrategyRiskDefaults
@@ -159,7 +159,7 @@ def build_strategy_build_settings(strategy: TradingStrategyConfig) -> StrategyBu
     return StrategyBuildSettings(
         trading_strategy_id=strategy.trading_strategy_id,
         trade_structure=strategy.trade_structure,
-        strategy_spec=strategy.strategy_spec,
+        trade_structure_spec=strategy.trade_structure_spec,
         build=strategy.build,
         liquidity=strategy.liquidity,
         risk=strategy.position_sizing,

@@ -1,117 +1,160 @@
 version: 1
-status: transitional_reference
-runtime_loaded: false
-profile_catalog: ../strategy_profiles/paper_profiles.yaml
-notes:
-  - These specs are the compact target representation for the active paper strategies.
-  - Runtime behavior is still preserved by packages/config/trading_strategies/*.yaml until the loader composes this model.
+profiles: profiles.yaml
 
 strategies:
   - trading_strategy_id: momentum_long_calls
     name: Momentum Long Calls
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: momentum_long_call
     trade_structure: long_call
     structure_model: momentum_long_call_7_21d
     thesis: Buy short-dated calls on fresh Finviz momentum names after intraday reclaim evidence and option liquidity clear.
-    thesis_overrides:
-      signal_model:
-        type: vwap_reclaim
-        min_price: 10
-        min_market_cap: 1000000000
-        min_daily_volume: 1000000
-        min_move_percent: 0
-        require_positive_momentum: true
-        max_spread_pct: 1.0
-        max_quote_age_seconds: 180
-        min_intraday_bars: 30
-        recent_lookback_bars: 5
-        confirmation_bars: 2
-        breakout_tolerance_bps: 5
+    entry:
+      policy:
+        signal:
+          type: vwap_reclaim
+          min_price: 10
+          min_market_cap: 1000000000
+          min_daily_volume: 1000000
+          min_move_percent: 0
+          require_positive_momentum: true
+          max_spread_pct: 1.0
+          max_quote_age_seconds: 180
+          min_intraday_bars: 30
+          recent_lookback_bars: 5
+          confirmation_bars: 2
+          breakout_tolerance_bps: 5
 
   - trading_strategy_id: short_dated_index_call_credit
     name: Short-Dated Index Call Credit
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: index_credit_vertical
     trade_structure: call_credit_spread
     structure_model: index_call_credit_4_10d
-    portfolio_model: index_credit_vertical_2_slots
     thesis: Sell short-dated call premium on liquid index ETFs when resistance, expected value, volatility, and portfolio exposure gates clear.
-    thesis_overrides:
-      entry_routine_profile: short_dated_entry_5m_full_day
-      entry_recipes:
+    entry:
+      routine_profile: short_dated_entry_5m_full_day
+      selection:
+        min_signal_score: 60
+      recipes:
         - trend_resistance
 
   - trading_strategy_id: short_dated_index_put_credit
     name: Short-Dated Index Put Credit
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: index_credit_vertical
     trade_structure: put_credit_spread
     structure_model: index_put_credit_5_10d
-    portfolio_model: index_credit_vertical_2_slots
     thesis: Sell short-dated put premium on liquid index ETFs when support, expected value, volatility, and portfolio exposure gates clear.
-    thesis_overrides:
-      entry_routine_profile: short_dated_entry_5m_morning
-      entry_recipes:
+    entry:
+      routine_profile: short_dated_entry_5m_morning
+      selection:
+        min_signal_score: 60
+      recipes:
         - trend_support
 
   - trading_strategy_id: short_dated_index_iron_condor
     name: Short-Dated Index Iron Condor
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: index_iron_condor
     trade_structure: iron_condor
     structure_model: index_iron_condor_5_10d
-    portfolio_model: index_condor_1_slot
     thesis: Sell short-dated neutral index premium when both wings clear range, liquidity, expected-value, and exposure gates.
-    thesis_overrides:
-      entry_recipes:
+    entry:
+      selection:
+        min_signal_score: 60
+      recipes:
         - neutral_range
 
   - trading_strategy_id: short_dated_earnings_call_debit
     name: Short-Dated Earnings Call Debit
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: earnings_debit_vertical
     trade_structure: call_debit_spread
     structure_model: earnings_call_debit_4_10d
-    portfolio_model: earnings_debit_1_slot
+    portfolio_model: earnings_call_debit_1_slot
     thesis: Buy defined-risk upside earnings exposure when debit, expected value, and event liquidity clear.
-    thesis_overrides:
-      min_signal_score: 72
+    entry:
+      selection:
+        min_signal_score: 72
 
   - trading_strategy_id: short_dated_earnings_put_debit
     name: Short-Dated Earnings Put Debit
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: earnings_debit_vertical
     trade_structure: put_debit_spread
     structure_model: earnings_put_debit_4_10d
-    portfolio_model: earnings_debit_1_slot
+    portfolio_model: earnings_put_debit_baseline_limits
     thesis: Buy defined-risk downside earnings exposure when debit, expected value, and event liquidity clear.
-    thesis_overrides:
-      min_signal_score: 72
+    entry:
+      selection:
+        min_signal_score: 72
 
   - trading_strategy_id: short_dated_earnings_long_straddle
     name: Short-Dated Earnings Long Straddle
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: earnings_long_vol
     trade_structure: long_straddle
     structure_model: earnings_long_straddle_2_10d
-    portfolio_model: earnings_long_vol_1_slot
     thesis: Buy at-the-money two-long-leg earnings volatility when modeled move, debit, and liquidity clear.
+    entry:
+      selection:
+        min_signal_score: 60
 
   - trading_strategy_id: short_dated_earnings_long_strangle
     name: Short-Dated Earnings Long Strangle
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: earnings_long_vol
     trade_structure: long_strangle
     structure_model: earnings_long_strangle_2_10d
-    portfolio_model: earnings_long_vol_1_slot
     thesis: Buy out-of-the-money two-long-leg earnings volatility when modeled move, debit, and liquidity clear.
+    entry:
+      selection:
+        min_signal_score: 60
 
   - trading_strategy_id: short_dated_etf_short_put
     name: Short-Dated ETF Short Put
-    activation: paper_active
+    activation:
+      state: active
+      paused: false
+    execution:
+      mode: paper
     archetype: etf_short_put
     trade_structure: short_put
     structure_model: etf_short_put_4_10d
-    portfolio_model: etf_short_put_cash_secured
     thesis: Sell cash-secured short-dated ETF put premium when assignment risk, fill ratio, expected value, and concentration gates clear.
+    entry:
+      selection:
+        min_signal_score: 60

@@ -23,7 +23,7 @@ from core.services.strategy_candidate_builders.setup import (
     analyze_underlying_setup,
     attach_underlying_setup,
 )
-from core.services.strategy_specs import resolve_strategy_spec
+from core.services.trade_structure_specs import resolve_trade_structure_spec
 
 
 def build_setup_context_from_market_slice(*, market_slice: SymbolMarketSlice, symbol_args: Any) -> UnderlyingSetupContext | None:
@@ -40,7 +40,7 @@ def build_setup_context_from_market_slice(*, market_slice: SymbolMarketSlice, sy
 
 
 def count_market_slice_coverage(*, market_slice: SymbolMarketSlice, symbol_args: Any) -> tuple[int, int, int, int]:
-    spec = resolve_strategy_spec(symbol_args.candidate_builder_key)
+    spec = resolve_trade_structure_spec(symbol_args.candidate_builder_key)
     return spec.count_coverage(market_slice=market_slice)
 
 
@@ -49,7 +49,7 @@ def build_raw_candidates_from_market_slice(
     market_slice: SymbolMarketSlice,
     symbol_args: Any,
 ) -> list[SpreadCandidate]:
-    spec = resolve_strategy_spec(symbol_args.candidate_builder_key)
+    spec = resolve_trade_structure_spec(symbol_args.candidate_builder_key)
     return spec.build_candidates(market_slice=market_slice, symbol_args=symbol_args)
 
 

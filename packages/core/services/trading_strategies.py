@@ -20,7 +20,7 @@ from core.services.payload_validation import (
     normalize_text_tuple,
     validate_payload_model,
 )
-from core.services.strategy_specs import StrategySpec, resolve_strategy_spec
+from core.services.trade_structure_specs import TradeStructureSpec, resolve_trade_structure_spec
 from core.services.trading_strategy_models import (
     EntrySelectionPolicy,
     RoutineSchedule,
@@ -123,7 +123,7 @@ class StrategySourceYamlPayload(BaseModel):
         return value
 
 
-class StrategyRoutineYamlPayload(BaseModel):
+class StrategyRoutinePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
@@ -150,7 +150,7 @@ class StrategyRoutineYamlPayload(BaseModel):
         return normalize_text_tuple(value)
 
 
-class TradingStrategyYamlPayload(BaseModel):
+class TradingStrategyPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     trading_strategy_id: str
@@ -159,8 +159,8 @@ class TradingStrategyYamlPayload(BaseModel):
     source: StrategySourceYamlPayload
     trade_structure: str
     build: dict[str, Any] = Field(default_factory=dict)
-    entry: StrategyRoutineYamlPayload | None = None
-    management: StrategyRoutineYamlPayload | None = None
+    entry: StrategyRoutinePayload | None = None
+    management: StrategyRoutinePayload | None = None
     liquidity: dict[str, Any] = Field(default_factory=dict)
     risk: dict[str, Any] = Field(default_factory=dict)
     runtime: dict[str, Any] = Field(default_factory=dict)
@@ -175,6 +175,135 @@ class TradingStrategyYamlPayload(BaseModel):
     @classmethod
     def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
         return normalize_mapping(value)
+
+
+class StrategyActivationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["active", "disabled"] = "active"
+    paused: bool = False
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _normalize_state(cls, value: Any) -> str:
+        rendered = normalize_required_text(value or "active").lower()
+        if rendered not in {"active", "disabled"}:
+            raise ValueError("activation.state must be active or disabled")
+        return rendered
+
+
+class StrategyCatalogExecutionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["shadow", "paper", "live"]
+    approval: str | None = None
+    runtime: str | None = None
+    executor_profile: str | None = None
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Any) -> str:
+        rendered = normalize_required_text(value).lower()
+        if rendered not in {"shadow", "paper", "live"}:
+            raise ValueError("execution.mode must be shadow, paper, or live")
+        return rendered
+
+    @field_validator("approval", "runtime", "executor_profile", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+
+class StrategyCatalogRoutinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    routine_profile: str | None = None
+    exit_controller: str | None = None
+    enabled: bool = True
+    selection: dict[str, Any] = Field(default_factory=dict)
+    quality_overrides: dict[str, Any] = Field(default_factory=dict)
+    recipes: tuple[str, ...] = Field(default_factory=tuple)
+    policy: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("routine_profile", "exit_controller", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+    @field_validator("selection", "quality_overrides", "policy", mode="before")
+    @classmethod
+    def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
+        return normalize_mapping(value)
+
+    @field_validator("recipes", mode="before")
+    @classmethod
+    def _normalize_recipes(cls, value: Any) -> tuple[str, ...]:
+        return normalize_text_tuple(value)
+
+
+class StrategyCatalogEntryPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trading_strategy_id: str
+    name: str
+    activation: StrategyActivationPayload = Field(default_factory=StrategyActivationPayload)
+    execution: StrategyCatalogExecutionPayload
+    archetype: str
+    trade_structure: str
+    structure_model: str | None = None
+    source_model: str | None = None
+    liquidity_profile: str | None = None
+    portfolio_model: str | None = None
+    protection_model: str | None = None
+    executor_profile: str | None = None
+    thesis: str | None = None
+    entry: StrategyCatalogRoutinePayload | None = None
+    management: StrategyCatalogRoutinePayload | None = None
+
+    @field_validator(
+        "trading_strategy_id",
+        "name",
+        "archetype",
+        "trade_structure",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_required_text(cls, value: Any) -> str:
+        return normalize_required_text(value)
+
+    @field_validator(
+        "structure_model",
+        "source_model",
+        "liquidity_profile",
+        "portfolio_model",
+        "protection_model",
+        "executor_profile",
+        "thesis",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
+
+
+class StrategyCatalogPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = 1
+    profiles: str = "profiles.yaml"
+    strategies: tuple[StrategyCatalogEntryPayload, ...]
+
+    @field_validator("profiles", mode="before")
+    @classmethod
+    def _normalize_profiles(cls, value: Any) -> str:
+        return normalize_required_text(value or "profiles.yaml")
+
+    @field_validator("strategies", mode="before")
+    @classmethod
+    def _normalize_strategies(cls, value: Any) -> Any:
+        if not isinstance(value, list) or not value:
+            raise ValueError("strategies must be a non-empty list")
+        return value
 
 
 def default_config_root(config_root: str | Path | None = None) -> Path:
@@ -234,7 +363,7 @@ class StrategyRoutine:
     policy: dict[str, Any]
 
     @classmethod
-    def from_payload(cls, routine: str, payload: StrategyRoutineYamlPayload | None) -> StrategyRoutine | None:
+    def from_payload(cls, routine: str, payload: StrategyRoutinePayload | None) -> StrategyRoutine | None:
         if payload is None:
             return None
         return cls(
@@ -271,7 +400,7 @@ class TradingStrategyConfig:
     trading_strategy_id: str
     name: str
     trade_structure: str
-    strategy_spec: StrategySpec
+    trade_structure_spec: TradeStructureSpec
     source: StrategySource
     build: StrategyBuildConfig
     entry: StrategyRoutine | None
@@ -296,7 +425,7 @@ class TradingStrategyConfig:
 
     @property
     def candidate_builder_key(self) -> str:
-        return self.strategy_spec.candidate_builder_key
+        return self.trade_structure_spec.candidate_builder_key
 
     @property
     def build_profile(self) -> str:
@@ -410,44 +539,284 @@ def _source_symbols(
     return ()
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _required_mapping(payload: dict[str, Any], key: str, *, label: str) -> dict[str, Any]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"{label}.{key} must be a mapping")
+    return value
+
+
+def _resolve_profile(
+    profiles: dict[str, Any],
+    section_name: str,
+    profile_id: str,
+    *,
+    stack: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    section = _required_mapping(profiles, section_name, label="profiles")
+    raw = section.get(profile_id)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Unknown {section_name} profile: {profile_id}")
+    if profile_id in stack:
+        cycle = " -> ".join((*stack, profile_id))
+        raise ValueError(f"Profile inheritance cycle in {section_name}: {cycle}")
+    payload = dict(raw)
+    parent = normalize_optional_text(payload.pop("extends", None))
+    if parent is None:
+        return payload
+    base = _resolve_profile(profiles, section_name, parent, stack=(*stack, profile_id))
+    return _deep_merge(base, payload)
+
+
+def _profile_ref(
+    *,
+    entry_ref: str | None,
+    archetype: dict[str, Any],
+    archetype_key: str,
+    required: bool = True,
+) -> str | None:
+    ref = entry_ref or normalize_optional_text(archetype.get(archetype_key))
+    if required and ref is None:
+        raise ValueError(f"archetype.{archetype_key} is required")
+    return ref
+
+
+def _compose_entry_routine(
+    *,
+    profiles: dict[str, Any],
+    archetype: dict[str, Any],
+    structure_model: dict[str, Any],
+    entry: StrategyCatalogRoutinePayload | None,
+) -> dict[str, Any]:
+    routine = entry or StrategyCatalogRoutinePayload()
+    routine_profile_ref = _profile_ref(
+        entry_ref=routine.routine_profile,
+        archetype=archetype,
+        archetype_key="entry_routine_profile",
+    )
+    if routine_profile_ref is None:
+        raise ValueError("entry routine profile is required")
+    payload: dict[str, Any] = {
+        "enabled": routine.enabled,
+        "schedule": _resolve_profile(profiles, "routine_profiles", routine_profile_ref),
+        "selection": dict(routine.selection),
+        "quality_profile": normalize_required_text(structure_model.get("quality_profile")),
+        "quality_overrides": dict(routine.quality_overrides),
+        "recipes": list(routine.recipes),
+        "policy": dict(routine.policy),
+    }
+    return payload
+
+
+def _compose_management_routine(
+    *,
+    profiles: dict[str, Any],
+    archetype: dict[str, Any],
+    management: StrategyCatalogRoutinePayload | None,
+) -> dict[str, Any]:
+    routine = management or StrategyCatalogRoutinePayload()
+    exit_controller_ref = _profile_ref(
+        entry_ref=routine.exit_controller,
+        archetype=archetype,
+        archetype_key="exit_controller",
+    )
+    if exit_controller_ref is None:
+        raise ValueError("management exit controller is required")
+    exit_controller = _resolve_profile(profiles, "exit_controllers", exit_controller_ref)
+    routine_profile_ref = routine.routine_profile or normalize_optional_text(exit_controller.get("routine_profile"))
+    if routine_profile_ref is None:
+        raise ValueError(f"exit_controller {exit_controller_ref} must declare routine_profile")
+    default_recipes = normalize_text_tuple(exit_controller.get("recipes"))
+    payload: dict[str, Any] = {
+        "enabled": routine.enabled,
+        "schedule": _resolve_profile(profiles, "routine_profiles", routine_profile_ref),
+        "selection": dict(routine.selection),
+        "quality_overrides": dict(routine.quality_overrides),
+        "recipes": list(routine.recipes or default_recipes),
+        "policy": _deep_merge(normalize_mapping(exit_controller.get("policy")), dict(routine.policy)),
+    }
+    return payload
+
+
+def _validate_trade_structure(
+    *,
+    strategy: StrategyCatalogEntryPayload,
+    archetype: dict[str, Any],
+    structure_model: dict[str, Any],
+) -> None:
+    configured = strategy.trade_structure
+    structure_family = normalize_optional_text(archetype.get("structure_family"))
+    allowed = normalize_text_tuple(archetype.get("allowed_trade_structures"))
+    if structure_family is not None and configured != structure_family:
+        raise ValueError(
+            f"{strategy.trading_strategy_id} trade_structure {configured!r} does not match archetype structure_family {structure_family!r}"
+        )
+    if allowed and configured not in allowed:
+        raise ValueError(f"{strategy.trading_strategy_id} trade_structure {configured!r} is not allowed by archetype {strategy.archetype}")
+    resolve_trade_structure_spec(configured).validate_build(normalize_mapping(structure_model.get("build")))
+
+
+def _compose_strategy_payload(
+    *,
+    strategy: StrategyCatalogEntryPayload,
+    profiles: dict[str, Any],
+) -> dict[str, Any]:
+    archetype = _resolve_profile(profiles, "archetypes", strategy.archetype)
+    source_model_ref = _profile_ref(
+        entry_ref=strategy.source_model,
+        archetype=archetype,
+        archetype_key="universe_model",
+    )
+    structure_model_ref = _profile_ref(
+        entry_ref=strategy.structure_model,
+        archetype=archetype,
+        archetype_key="default_structure_model",
+    )
+    liquidity_profile_ref = _profile_ref(
+        entry_ref=strategy.liquidity_profile,
+        archetype=archetype,
+        archetype_key="liquidity_profile",
+    )
+    portfolio_model_ref = _profile_ref(
+        entry_ref=strategy.portfolio_model,
+        archetype=archetype,
+        archetype_key="portfolio_model",
+    )
+    protection_model_ref = _profile_ref(
+        entry_ref=strategy.protection_model,
+        archetype=archetype,
+        archetype_key="protection_model",
+    )
+    executor_profile_ref = (
+        strategy.execution.executor_profile
+        or strategy.executor_profile
+        or normalize_required_text(archetype.get("executor_profile"))
+    )
+    if source_model_ref is None or structure_model_ref is None or liquidity_profile_ref is None or portfolio_model_ref is None or protection_model_ref is None:
+        raise ValueError(f"{strategy.trading_strategy_id} has incomplete profile references")
+
+    source_model = _resolve_profile(profiles, "source_models", source_model_ref)
+    structure_model = _resolve_profile(profiles, "structure_models", structure_model_ref)
+    liquidity_profile = _resolve_profile(profiles, "liquidity_profiles", liquidity_profile_ref)
+    portfolio_model = _resolve_profile(profiles, "portfolio_models", portfolio_model_ref)
+    protection_model = _resolve_profile(profiles, "protection_models", protection_model_ref)
+    executor_profile = _resolve_profile(profiles, "executor_profiles", executor_profile_ref)
+    _validate_trade_structure(strategy=strategy, archetype=archetype, structure_model=structure_model)
+
+    runtime_payload = normalize_mapping(protection_model.get("runtime"))
+    if strategy.activation.paused:
+        runtime_payload = _deep_merge(runtime_payload, {"paused": True})
+    execution_payload = _deep_merge(
+        normalize_mapping(executor_profile),
+        {
+            "mode": strategy.execution.mode,
+            **({} if strategy.execution.approval is None else {"approval": strategy.execution.approval}),
+            **({} if strategy.execution.runtime is None else {"runtime": strategy.execution.runtime}),
+        },
+    )
+    return {
+        "trading_strategy_id": strategy.trading_strategy_id,
+        "name": strategy.name,
+        "enabled": strategy.activation.state == "active",
+        "source": normalize_mapping(source_model.get("source")),
+        "trade_structure": strategy.trade_structure,
+        "build": normalize_mapping(structure_model.get("build")),
+        "entry": _compose_entry_routine(
+            profiles=profiles,
+            archetype=archetype,
+            structure_model=structure_model,
+            entry=strategy.entry,
+        ),
+        "management": _compose_management_routine(
+            profiles=profiles,
+            archetype=archetype,
+            management=strategy.management,
+        ),
+        "liquidity": liquidity_profile,
+        "risk": {
+            "limits": normalize_mapping(portfolio_model.get("limits")),
+            "sizing": normalize_mapping(portfolio_model.get("sizing")),
+        },
+        "runtime": runtime_payload,
+        "execution": execution_payload,
+    }
+
+
+def _load_strategy_catalog(path: Path) -> StrategyCatalogPayload:
+    payload = validate_payload_model(StrategyCatalogPayload, _load_yaml_file(path), path=path, label="strategy catalog")
+    if payload.version != 1:
+        raise ValueError(f"Unsupported strategy catalog version: {payload.version}")
+    if payload.profiles != "profiles.yaml":
+        raise ValueError("strategy catalog must use profiles: profiles.yaml")
+    return payload
+
+
+def _load_profiles(path: Path) -> dict[str, Any]:
+    payload = _load_yaml_file(path)
+    version = int(payload.get("version") or 0)
+    if version != 1:
+        raise ValueError(f"Unsupported strategy profiles version: {version}")
+    return payload
+
+
 @lru_cache(maxsize=8)
 def _load_trading_strategies_cached(
-    root_key: str,
-    signature: tuple[tuple[str, int, int], ...],
+    catalog_key: str,
+    profiles_key: str,
+    catalog_signature: tuple[str, int, int] | None,
+    profiles_signature: tuple[str, int, int] | None,
     limits_policy_signature: tuple[tuple[str, int, int], ...],
     runtime_policy_signature: tuple[tuple[str, int, int], ...],
     universe_signature: tuple[tuple[str, int, int], ...],
 ) -> tuple[TradingStrategyConfig, ...]:
-    del signature, limits_policy_signature, runtime_policy_signature, universe_signature
-    root = Path(root_key)
-    config_root = root.parent
+    del catalog_signature, profiles_signature, limits_policy_signature, runtime_policy_signature, universe_signature
+    catalog_path = Path(catalog_key)
+    profiles_path = Path(profiles_key)
+    config_root = catalog_path.parents[1]
+    catalog = _load_strategy_catalog(catalog_path)
+    profiles = _load_profiles(profiles_path)
     strategies: dict[str, TradingStrategyConfig] = {}
-    for path in sorted(root.glob("*.yaml")):
-        payload = validate_payload_model(TradingStrategyYamlPayload, _load_yaml_file(path), path=path, label="trading strategy")
+    for catalog_entry in catalog.strategies:
+        payload = validate_payload_model(
+            TradingStrategyPayload,
+            _compose_strategy_payload(strategy=catalog_entry, profiles=profiles),
+            path=catalog_path,
+            label="trading strategy",
+        )
         source = StrategySource.from_payload(payload.source)
         trade_structure = payload.trade_structure
-        strategy_spec = resolve_strategy_spec(trade_structure)
+        trade_structure_spec = resolve_trade_structure_spec(trade_structure)
         risk_limits_payload = resolve_policy_mapping(
             payload.risk.get("limits"),
             field_name="risk.limits",
             policy_kind="strategy_limits",
             config_root=config_root,
-            config_path=path,
+            config_path=catalog_path,
         )
         runtime_payload = resolve_policy_mapping(
             payload.runtime,
             field_name="runtime",
             policy_kind="strategy_runtime",
             config_root=config_root,
-            config_path=path,
+            config_path=catalog_path,
         )
         strategy = TradingStrategyConfig(
             trading_strategy_id=payload.trading_strategy_id,
             name=payload.name,
             trade_structure=trade_structure,
-            strategy_spec=strategy_spec,
+            trade_structure_spec=trade_structure_spec,
             source=source,
-            build=strategy_spec.validate_build(payload.build),
+            build=trade_structure_spec.validate_build(payload.build),
             entry=StrategyRoutine.from_payload("entry", payload.entry),
             management=StrategyRoutine.from_payload("management", payload.management),
             liquidity=StrategyLiquidityRules.from_payload(payload.liquidity),
@@ -456,7 +825,7 @@ def _load_trading_strategies_cached(
             runtime=StrategyRuntimeControls.from_payload(runtime_payload),
             execution=StrategyExecutionPolicy.from_payload(payload.execution),
             enabled=payload.enabled,
-            config_path=path,
+            config_path=catalog_path,
             config_hash="",
             symbols=_source_symbols(source, config_root=config_root),
         )
@@ -476,14 +845,22 @@ def load_trading_strategies(
     config_root: str | Path | None = None,
 ) -> dict[str, TradingStrategyConfig]:
     config_root_path = default_config_root(config_root)
-    root = config_root_path / "trading_strategies"
-    if not root.exists():
+    root = config_root_path / "strategies"
+    catalog_path = root / "catalog.yaml"
+    profiles_path = root / "profiles.yaml"
+    if not catalog_path.exists() and not profiles_path.exists():
         return {}
+    if not catalog_path.exists():
+        raise ValueError(f"Missing strategy catalog: {catalog_path}")
+    if not profiles_path.exists():
+        raise ValueError(f"Missing strategy profiles: {profiles_path}")
     return {
         strategy.trading_strategy_id: strategy
         for strategy in _load_trading_strategies_cached(
-            str(root),
-            _yaml_directory_signature(root),
+            str(catalog_path),
+            str(profiles_path),
+            _yaml_file_signature(catalog_path),
+            _yaml_file_signature(profiles_path),
             _yaml_directory_signature(config_root_path / "policies" / "strategy_limits"),
             _yaml_directory_signature(config_root_path / "policies" / "strategy_runtime"),
             _yaml_directory_signature(config_root_path / "universes"),

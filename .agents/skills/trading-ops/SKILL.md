@@ -15,7 +15,7 @@ Use this skill from `/home/ade/Projects/spreads`.
 - Use `uv run spreads ...` commands. When already on `ade-nucbox-k8-plus` in `/home/ade/Projects/spreads`, run local CLI and Docker commands directly. From another host, use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` for operator reads; command-level `--env` passthrough on non-deploy commands is intentionally not shipped.
 - Do not add or update tests unless Ade explicitly asks. Report live checks and remaining runtime risk instead.
 - `spreads ops storage` reports ClickHouse market-data health plus Postgres capture summaries; do not use removed Postgres tick partition or retention-prune workflows.
-- Treat `momentum_long_calls` as the current active paper flow. It sources tickers dynamically, trades option calls through `alpaca_direct`, and reports through `TradingOpsState`.
+- Treat `momentum_long_calls` as the primary dynamic paper flow among the active strategy set. It sources tickers dynamically, trades option calls through `alpaca_direct`, and reports through `TradingOpsState`; the full active set is visible through `spreads ops strategy-ledger`.
 - Nautilus host services and support containers are sunset for live operations. They should remain stopped/disabled unless Ade explicitly asks to re-enable Nautilus as a separate experiment.
 - TradingAgents is the external research AI layer linked from Spreads at `external/TradingAgents`. Spreads owns the orchestration, job config, outputs, alerts, and operator visibility around that layer.
 
@@ -50,12 +50,12 @@ uv run spreads deploy exec --env ade-nucbox-k8-plus -- execution list --date <YY
 
 Use `spreads ops strategy-ledger` before tuning or comparing strategy profiles. It reports every active `trading_strategy_id` for one market date with trade structure, config hash, source/candidate/signal/decision/admission/intent/attempt/position counts, top blockers, PnL, marks, and latest lifecycle IDs.
 
-The target archetype/profile model is represented by transitional sidecar config:
+The scheduler-loaded strategy config is the single catalog/profile model:
 
-- `packages/config/strategy_profiles/paper_profiles.yaml`
-- `packages/config/strategy_specs/paper_strategies.yaml`
+- `packages/config/strategies/catalog.yaml`
+- `packages/config/strategies/profiles.yaml`
 
-These files are not scheduler-loaded yet. Treat them as the migration map for reducing repeated strategy YAML into reusable profiles, and preserve runtime behavior unless ledger evidence justifies a deliberate profile change.
+Treat `execution.mode` as the paper/shadow/live switch. Do not create paper-specific strategy files, per-strategy runtime YAML, or sidecar compatibility config. Preserve runtime behavior unless ledger evidence justifies a deliberate profile change.
 
 ## Execution Activity
 
@@ -125,6 +125,8 @@ After changing job config, scheduler code, worker-imported code, or trading poli
 uv run spreads config validate --json
 uv run python -m py_compile <touched-python-files>
 ```
+
+If `py_compile` is blocked by stale Docker-owned `__pycache__` permissions, use a no-write compile check over the touched files instead of changing permissions as part of unrelated work.
 
 2. From another host, deploy to the live target through the shipped deploy CLI:
 

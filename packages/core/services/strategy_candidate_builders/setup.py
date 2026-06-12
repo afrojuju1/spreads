@@ -12,7 +12,7 @@ from core.domain.models import (
     SymbolMarketSlice,
     UnderlyingSetupContext,
 )
-from core.services.strategy_specs import strategy_direction
+from core.services.trade_structure_specs import trade_structure_direction
 
 
 def average(values: list[float]) -> float | None:
@@ -154,7 +154,7 @@ def analyze_daily_setup(
     *,
     strategy: str,
 ) -> UnderlyingSetupContext:
-    direction = strategy_direction(strategy)
+    direction = trade_structure_direction(strategy)
     bullish = direction == "bullish"
     neutral = direction == "neutral"
     if len(bars) < 20:
@@ -301,7 +301,7 @@ def analyze_intraday_setup(
     *,
     strategy: str,
 ) -> UnderlyingSetupContext | None:
-    direction = strategy_direction(strategy)
+    direction = trade_structure_direction(strategy)
     bullish = direction == "bullish"
     neutral = direction == "neutral"
     if len(bars) < 5:

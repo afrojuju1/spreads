@@ -40,6 +40,7 @@ Before rollout, classify what changed:
 
 - schema or Alembic files changed
 - job definitions, schedules, or policy payloads changed
+- strategy catalog/profile config changed
 - code imported by `worker-runtime`
 - code imported by `worker-data`
 - scheduler enqueue logic changed
@@ -60,6 +61,8 @@ uv run ruff check <touched-python-files>
 uv run python -m py_compile <touched-python-files>
 ```
 
+If `py_compile` is blocked by stale Docker-owned `__pycache__` permissions, use a no-write compile check over the touched files instead of changing permissions as part of unrelated work.
+
 Do not run broad builds or repo-wide test suites unless the user asks.
 
 ## Rollout Matrix
@@ -68,7 +71,7 @@ Apply only the steps that match the change:
 
 - schema changed:
   - `uv run alembic upgrade head`
-- job definitions, seeded payloads, schedules, or policies changed:
+- job definitions, seeded payloads, schedules, strategy catalog/profiles, or policies changed:
   - `uv run spreads config validate --json`
   - restart the scheduler and affected workers so they load the current config/code
 - code imported by `worker-runtime` changed:

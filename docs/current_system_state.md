@@ -11,7 +11,7 @@ Last updated: 2026-06-12
 | Boundary | Current owner | Notes |
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Canonical on-box CLI visibility lives under `spreads ops state`, `spreads ops storage`, `spreads jobs`, `spreads execution list`, `spreads execution positions`, and `spreads execution runtimes`. Remote target reads go through `spreads deploy exec --env <target> -- ...`; command-level `--env` passthrough is intentionally not shipped. On-box logs use Docker Compose directly; remote deployment logs live under `spreads deploy logs`. |
-| Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
+| Trading strategy config | `packages/config/strategies/catalog.yaml`, `packages/config/strategies/profiles.yaml`, `services/trading_strategies.py`, `services/trade_structure_specs.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. Reusable trade-structure construction lives in code; authored strategy runtime config composes from the catalog and profiles only. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py`, `storage/market_data_store.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into ClickHouse option quote/trade ticks plus Postgres `capture_summaries`. |
@@ -26,7 +26,7 @@ Last updated: 2026-06-12
 ## Non-Negotiable Boundary Rules
 
 - `trading_strategy_id` is the canonical runtime owner for strategy-owned candidates, signals, decisions, intents, attempts, and positions.
-- Authored trading strategy config lives in `packages/config/trading_strategies`. Do not recreate legacy wrapper directories around it.
+- Authored trading strategy config lives in `packages/config/strategies/catalog.yaml` and `packages/config/strategies/profiles.yaml`. Do not recreate per-strategy runtime YAML, paper-specific config directories, or compatibility wrappers around it.
 - Strategy routines generate jobs named `trading_strategy:<strategy_id>:entry` and `trading_strategy:<strategy_id>:manage`.
 - `execution_intent_dispatch:global` owns the global pending-intent dispatch loop.
 - `trade_structure` names reusable option construction behavior, such as `long_call`, `call_credit_spread`, `iron_condor`, or `short_put`.
@@ -46,7 +46,7 @@ Last updated: 2026-06-12
 
 | Domain object | Meaning | Source of truth / owner | Must not own |
 |---|---|---|---|
-| Trading strategy | Operator/product trading unit with source, trade structure, routines, risk, limits, execution settings, and config hash. | `packages/config/trading_strategies`, `services/trading_strategies.py` | Discovery-session identity, broker facts, or dashboard-only state. |
+| Trading strategy | Operator/product trading unit with source, trade structure, routines, risk, limits, execution settings, and config hash. | `packages/config/strategies/catalog.yaml`, `packages/config/strategies/profiles.yaml`, `services/trading_strategies.py` | Discovery-session identity, broker facts, or dashboard-only state. |
 | Trade structure | Reusable option construction family. | `services/strategy_builders.py`, `services/strategy_candidate_builders/`, `services/option_structures.py` | Runtime owner identity. |
 | Routine | Scheduled strategy behavior such as entry or manage. | `services/trading_strategy_runtime.py`, generated job specs | Broker submission facts. |
 | Ticker source | Reusable static or dynamic symbol source. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
@@ -143,14 +143,14 @@ Scale defaults:
 
 ## Trading Strategy Ownership
 
-Trading strategies are authored as one file per strategy in `packages/config/trading_strategies`.
+Trading strategies are authored through a single catalog/profile model under `packages/config/strategies`:
 
-As of the `spr-s82` migration slice, the target archetype/profile representation exists beside the runtime-loaded strategy YAML:
+- `catalog.yaml` owns strategy identity, activation, execution mode, thesis, archetype, trade structure, structure model reference, portfolio model reference, and thesis-level overrides.
+- `profiles.yaml` owns reusable source models, archetypes, routine profiles, liquidity profiles, structure models, portfolio models, protection models, executor profiles, and exit controllers.
 
-- `packages/config/strategy_profiles/paper_profiles.yaml` owns the reusable paper archetypes, universe models, routine profiles, liquidity profiles, structure models, portfolio models, protection models, executor profile, and exit controllers for the nine active paper strategies.
-- `packages/config/strategy_specs/paper_strategies.yaml` owns the compact transitional `StrategySpec` catalog: identity, activation, thesis, archetype, trade structure, structure model, and thesis-level overrides.
+`services/trading_strategies.py` composes the catalog and profiles into the runtime `TradingStrategyConfig` objects consumed by scheduler-generated strategy routines. There is no per-strategy runtime YAML path and no paper-specific config namespace. `paper`, `shadow`, and `live` are execution posture values under `execution.mode`, not separate files or directories.
 
-These sidecar files are `transitional_reference` and are not loaded by the scheduler yet. Current paper behavior remains sourced from `packages/config/trading_strategies/*.yaml` until the loader composes runtime strategy payloads from `StrategySpec + StrategyArchetype + profiles`. Do not tune or reduce the legacy runtime YAML blindly; use the daily evidence ledger first, preserve deployed paper behavior by default, then move justified changes into the reusable profiles.
+`services/trade_structure_specs.py` owns reusable code-level trade-structure specs for candidate builders. These are not authored strategy configs and must not become a second strategy catalog.
 
 Each strategy owns:
 
@@ -191,7 +191,7 @@ There are currently no disabled-by-default authored strategy configs. Disabled s
 
 `TradingOpsState.details.strategy_breadth` projects every authored strategy config, including active, disabled paper, or disabled shadow families, as operator-visible breadth. Disabled strategy projection is observation-only: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create scheduler jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface.
 
-`spreads ops strategy-ledger --date <YYYY-MM-DD>` is the shipped daily evidence ledger. It reports every active strategy's source, candidate, signal, decision, admission, intent, attempt, order/fill, position, close, mark, PnL, blocker, config hash, and latest lifecycle ID evidence for one market date. Use it as the first tuning surface for the archetype/profile migration instead of changing thresholds from vibes.
+`spreads ops strategy-ledger --date <YYYY-MM-DD>` is the shipped daily evidence ledger. It reports every active strategy's source, candidate, signal, decision, admission, intent, attempt, order/fill, position, close, mark, PnL, blocker, config hash, and latest lifecycle ID evidence for one market date. Use it as the first tuning surface for catalog/profile changes instead of changing thresholds from vibes.
 
 `spreads execution list --date <YYYY-MM-DD>` is the shipped daily execution activity printout. It reports attempts with nested parent/leg order rows and leg fill rows for attempts whose `market_date` equals the date or whose `requested_at` falls inside that UTC activity day. Use `spreads execution inspect <execution_attempt_id>` for full single-attempt broker detail, refresh, or cancel decisions.
 
@@ -199,15 +199,15 @@ The long-vol strategy configs run in paper mode by default after the 2026-06-11 
 
 ## Multi-Strategy Activation Contract
 
-Authored strategy breadth is not automatic strategy rotation. Spreads may carry disabled paper or shadow strategy configs as ready-to-evaluate definitions, but no inactive strategy may create scheduler jobs, natural candidate runs, selected decisions, intents, attempts, positions, or broker submissions until it is deliberately activated through config and worker rollout.
+Authored strategy breadth is not automatic strategy rotation. Spreads may carry disabled, shadow, paper, or future live strategy definitions, but no inactive strategy may create scheduler jobs, natural candidate runs, selected decisions, intents, attempts, positions, or broker submissions until it is deliberately activated through config and worker rollout.
 
-The activation states are:
+Config keeps three concerns separate:
 
-- `authored`: strategy config exists and can be shown in strategy breadth.
-- `observation`: an operator may run `spreads lifecycle observe-strategy <trading_strategy_id>` to evaluate source, candidates, quality, signals, and decisions with `observation_only` provenance. Observation rows are persisted analysis evidence only.
-- `paper_ready`: the strategy has a family-appropriate quality profile, canonical `execution_shape.legs[]` for its trade structure, and portfolio admission coverage. Paper-ready does not enable scheduler jobs by itself.
-- `paper_active`: the strategy config is enabled, its scheduler-owned entry/manage jobs are active, and its paper execution contract is compatible with the observed broker environment.
-- `live_active`: reserved for an explicitly approved live-money rollout using the same lifecycle plus live deployment guards.
+- `activation.state`: whether the strategy is active and allowed to generate scheduler-owned entry/manage jobs. Inactive definitions are visible breadth only.
+- `activation.paused`: operator/runtime pause state for an otherwise active strategy.
+- `execution.mode`: `shadow`, `paper`, or `live` execution posture for the canonical lifecycle.
+
+An active shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. An active paper strategy may submit only when its execution posture, observed broker environment, approval mode, portfolio admission, execution admission, and risk gates all allow it. Live mode is reserved for an explicitly approved live-money rollout using the same lifecycle plus live deployment guards.
 
 For non-long-call families, the required gate order is:
 

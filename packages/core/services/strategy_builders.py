@@ -210,10 +210,10 @@ def _single_leg_diagnostics(
     market_slice: SymbolMarketSlice,
     runtime_parameters: CandidateBuildParameters,
 ) -> dict[str, Any]:
-    strategy_family = runtime.build_settings.strategy_spec.strategy_family
+    strategy_family = runtime.build_settings.trade_structure_spec.strategy_family
     if strategy_family not in {"long_call", "long_put", "short_call", "short_put"}:
         return {"reject_counts": {}, "examples": {}, "pass_count": 0, "pass_examples": []}
-    option_type = runtime.build_settings.strategy_spec.option_type
+    option_type = runtime.build_settings.trade_structure_spec.option_type
     contracts_by_expiration, snapshots_by_expiration = _market_side_maps(
         market_slice=market_slice,
         option_type=option_type,
@@ -240,7 +240,7 @@ def build_entry_runtime_symbol_diagnostic(
     all_rows: list[dict[str, Any]],
     returned_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    option_type = runtime.build_settings.strategy_spec.option_type
+    option_type = runtime.build_settings.trade_structure_spec.option_type
     contracts_by_expiration, snapshots_by_expiration = _market_side_maps(
         market_slice=market_slice,
         option_type=option_type,

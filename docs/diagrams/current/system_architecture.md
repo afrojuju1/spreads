@@ -86,7 +86,7 @@ Live target: ade-nucbox-k8-plus
 |                                                                                |
 |  +------------------------+       +-----------------------------------------+   |
 |  | market recorder        | ----> | option quote/trade ticks + summaries   |   |
-|  | Alpaca option stream   |       | stored in Postgres                     |   |
+|  | Alpaca option stream   |       | ClickHouse + Postgres capture state    |   |
 |  +------------------------+       +-----------------------------------------+   |
 |                                                                                |
 +--------------------------------------------------------------------------------+
@@ -96,7 +96,8 @@ Live target: ade-nucbox-k8-plus
 
 ```text
 Authored strategy config
-  packages/config/trading_strategies
+  packages/config/strategies/catalog.yaml
+  packages/config/strategies/profiles.yaml
             |
             v
 +-----------------------+
@@ -217,32 +218,25 @@ These lanes are not part of default live trading health.
 ## Strategy Activation Contract
 
 ```text
-authored
+catalog entry
    |
    | visible in strategy breadth
    v
-observation
+activation.state inactive
    |
-   | manual observe-strategy only
    | no scheduler jobs
-   | no broker submission
    v
-paper_ready
+activation.state active
    |
-   | quality profile exists
-   | canonical execution_shape.legs[] exists
-   | portfolio admission coverage exists
-   v
-paper_active
-   |
-   | strategy enabled
    | scheduler entry/manage jobs active
-   | paper execution contract compatible
    v
-live_active
+execution.mode
    |
-   | reserved for explicit live-money rollout
-   | same lifecycle plus live deployment guards
+   +-- shadow: analysis-only evidence, no selected decisions or intents
+   |
+   +-- paper: paper broker submission through gates
+   |
+   +-- live: explicit live-money rollout plus live deployment guards
 ```
 
 Required non-long-call gate order:

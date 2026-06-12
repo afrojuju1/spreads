@@ -30,6 +30,8 @@ Use these only for the roles they now own:
   - external trading-engine repos/frameworks to check first when designing trading-engine, source/scanner, strategy-quality, execution, risk, or portfolio refactors
 - [docs/planning/2026-06-08_entry_quality_pipeline_refactor.md](../../../docs/planning/2026-06-08_entry_quality_pipeline_refactor.md)
   - implementation plan for the `quality_profile` / `EntryQualityPipeline` refactor; `momentum_long_calls` is cut over to `momentum_long_call_v1`, while later beads still cover new filters, ops rendering, cleanup, and final cutover validation
+- [docs/planning/2026-06-11_strategy_archetype_profile_contract.md](../../../docs/planning/2026-06-11_strategy_archetype_profile_contract.md)
+  - implemented strategy catalog/profile contract; use it for authored strategy config shape under `packages/config/strategies`, while `docs/current_system_state.md` remains the current runtime source of truth
 - [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
   - candidate, signal, decision, and admission ownership inside the broader system
 - [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)

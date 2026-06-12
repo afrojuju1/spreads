@@ -10,7 +10,7 @@ from core.domain.models import (
     SpreadCandidate,
 )
 from core.services.option_structures import net_premium_kind
-from core.services.strategy_specs import strategy_option_type
+from core.services.trade_structure_specs import trade_structure_option_type
 
 from .analytics import attach_structure_analytics
 from .shared import days_from_reference, relative_spread, relative_spread_exceeds
@@ -196,7 +196,7 @@ def diagnose_single_leg_rejections(
     args: Any,
     example_limit: int = 3,
 ) -> dict[str, object]:
-    option_type = strategy_option_type(strategy)
+    option_type = trade_structure_option_type(strategy)
     premium_kind = net_premium_kind(strategy)
     counts: Counter[str] = Counter()
     examples: dict[str, list[dict[str, object]]] = {}
@@ -264,7 +264,7 @@ def build_single_legs(
     args: Any,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
-    option_type = strategy_option_type(strategy)
+    option_type = trade_structure_option_type(strategy)
     premium_kind = net_premium_kind(strategy)
     if premium_kind not in {"credit", "debit"}:
         return candidates
