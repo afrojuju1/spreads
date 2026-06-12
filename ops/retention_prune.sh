@@ -12,9 +12,4 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-target_env="${SPREADS_DEPLOY_ENV:-}"
-command=(uv run spreads retention prune --execute --json)
-if [[ -n "$target_env" ]]; then
-  command+=(--env "$target_env")
-fi
-"${command[@]}"
+uv run spreads maintenance retention prune --execute --json
