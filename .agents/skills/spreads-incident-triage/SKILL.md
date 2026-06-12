@@ -24,9 +24,9 @@ Current shipped operator surfaces:
 - `spreads ops state` is the canonical live trading, strategy, source, candidate, and decision surface
 - `spreads ops storage` is the canonical storage and retention surface
 - `spreads jobs` and `spreads jobs lanes` are the canonical scheduler/worker surfaces
-- `spreads positions` is the shipped position drilldown
+- `spreads execution positions` is the shipped position drilldown
 - `spreads execution list` is the shipped day-level attempts/orders/fills printout
-- do not tell operators to use removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands
+- do not tell operators to use removed or currently unshipped `spreads positions`, `spreads execution-runtimes`, `spreads logs`, `spreads market-intel`, `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands
 
 ## First Principle
 
@@ -60,7 +60,7 @@ uv run spreads ops state
 uv run spreads ops storage
 uv run spreads jobs
 uv run spreads jobs lanes
-uv run spreads positions --date <YYYY-MM-DD> --json
+uv run spreads execution positions --date <YYYY-MM-DD> --json
 uv run spreads execution list --date <YYYY-MM-DD>
 ```
 
@@ -132,7 +132,7 @@ Use:
 ```bash
 uv run spreads ops state
 uv run spreads jobs --limit 25 --json
-uv run spreads positions --date YYYY-MM-DD --json
+uv run spreads execution positions --date YYYY-MM-DD --json
 ```
 
 Focus on:
@@ -157,7 +157,7 @@ Use:
 
 ```bash
 uv run spreads ops state
-uv run spreads positions --date YYYY-MM-DD --json
+uv run spreads execution positions --date YYYY-MM-DD --json
 uv run spreads execution list --date YYYY-MM-DD
 uv run spreads jobs --job-type execution_intent_dispatch --limit 10 --json
 ```
@@ -177,7 +177,7 @@ There is no shipped `audit`, `automations`, or `backtest` CLI in the current app
 ```bash
 uv run spreads ops state --json
 uv run spreads jobs --json
-uv run spreads positions --date YYYY-MM-DD --json
+uv run spreads execution positions --date YYYY-MM-DD --json
 uv run spreads execution list --date YYYY-MM-DD --json
 docker compose logs --since 30m scheduler worker-runtime worker-data market-recorder
 ```

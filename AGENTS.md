@@ -57,26 +57,27 @@
   - `uv run spreads ops storage`
   - `uv run spreads jobs`
   - `uv run spreads jobs lanes`
-  - `uv run spreads logs --env ade-nucbox-k8-plus <service>`
-  - `uv run spreads positions --date <YYYY-MM-DD> --json`
+  - `docker compose logs --tail=200 <service>`
+  - `uv run spreads execution positions --date <YYYY-MM-DD> --json`
   - `uv run spreads execution list --date <YYYY-MM-DD>`
-  - `uv run spreads execution-runtimes --json`
+  - `uv run spreads execution runtimes --json`
 - Do not add frontend or API callers to retired fragmented ops surfaces.
 - The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
 - When you are already running inside `/home/ade/Projects/spreads` on `ade-nucbox-k8-plus`, use local CLI and Docker commands directly. Do not use `--env ade-nucbox-k8-plus` passthrough from the same box.
-- Use `--env <target>` only when operating from a different host and intentionally routing through the deploy target. For target-aware remote reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
+- Command-level `--env` passthrough on non-deploy commands was intentionally removed. Use deploy-owned commands for target operations, and do not use bare `--db postgresql://...` when a named deploy target exists.
 - Canonical live-ops examples on the live box:
   - `uv run spreads ops state --json`
   - `uv run spreads ops storage --json`
   - `uv run spreads jobs --json`
   - `uv run spreads execution list --date <YYYY-MM-DD>`
+  - `uv run spreads execution positions --date <YYYY-MM-DD> --json`
+  - `docker compose logs --tail=200 scheduler worker-runtime worker-data market-recorder`
 - Canonical remote live-ops examples from another host:
-  - `uv run spreads ops state --env ade-nucbox-k8-plus --json`
-  - `uv run spreads ops storage --env ade-nucbox-k8-plus --json`
-  - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
-  - `uv run spreads execution list --env ade-nucbox-k8-plus --date <YYYY-MM-DD>`
-- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/Projects/spreads`.
-- Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
+  - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops state --json`
+  - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops storage --json`
+  - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- jobs --json`
+  - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- execution list --date <YYYY-MM-DD>`
+- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...`, `uv run spreads deploy logs --env ade-nucbox-k8-plus ...`, and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` only from another host or when intentionally exercising deploy-target plumbing.
 - Runtime resource policy lives in [docs/current_system_state.md](docs/current_system_state.md). Market-closed `market_recorder_idle` logs are expected and healthy; do not treat recorder idling outside market hours as a capture outage.
 - Do not tell operators to run removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first and create a bead before reintroducing a historical evaluation CLI.
 - For offline selection research or policy tuning, start by validating current strategy config and stored engine facts. If a historical evaluator is needed, design it explicitly against the current ticker-source/candidate/signal/decision model instead of reviving old audit/backtest wrappers.

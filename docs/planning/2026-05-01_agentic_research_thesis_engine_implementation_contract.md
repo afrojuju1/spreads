@@ -1172,7 +1172,7 @@ Failures should preserve all artifacts already fetched.
 3. Add Ollama model router with env-driven profile mapping.
 4. Add local/remote Ollama env defaults and LLM call logging.
 5. Add model eval harness contracts, fixtures, scoring, and `eval-models` CLI.
-6. Run `market-intel eval` against `qwen2.5:3b`; keep larger models gated unless the eval shows a concrete gap.
+6. Historical: run `market-intel eval` against `qwen2.5:3b`; the shipped market-intel CLI was removed on 2026-06-11 and any future eval surface should be rebuilt through `spr-0ct`.
 7. Add SEC and market-data adapters.
 8. Add investor-relations and news adapters.
 9. Add sector router and `GeneralOperatingCompanySpecialist`.

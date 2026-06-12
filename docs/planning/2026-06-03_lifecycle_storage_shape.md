@@ -67,16 +67,16 @@ Existing runtime tables such as `execution_intents`, `execution_attempts`, `exec
 
 The target lifecycle tables start empty. No automatic backfill is required before the first runtime cutover. If active paper positions exist during the cutover window, they should be closed/canceled intentionally or rebuilt into `trade_positions` from broker state during the position/reconciliation bead.
 
-## Operator CLI
+## Historical Operator CLI
 
-The operator inspection surface is:
+This bead originally exposed a temporary schema inspection command:
 
 ```bash
-uv run spreads lifecycle schema
-uv run spreads lifecycle schema --json
+# removed 2026-06-11: uv run spreads lifecycle schema
+# removed 2026-06-11: uv run spreads lifecycle schema --json
 ```
 
-The command reports the target tables, lifecycle state enums, and breaking-rewrite cutover flags. It does not claim live writers are already using the new tables.
+That command was removed in the 2026-06-11 CLI cleanup because it described target schema plumbing rather than an active operator lifecycle workflow. Use direct service/module inspection if this historical schema summary is needed again, or reintroduce it through a development-only surface.
 
 ## Runtime Risk
 
@@ -86,7 +86,7 @@ This bead defines the target storage and schema inspection surface only. Live Fi
 
 Validation for this bead is schema and runtime-smoke oriented, not automated-test oriented.
 
-Additional 0043 cleanup validation was run with targeted Python compilation, Alembic `heads`/`upgrade head`/`current`, direct lifecycle summary assertions, direct database column inspection for the target lifecycle tables, and `git diff --check`. The full `uv run spreads lifecycle schema --json` CLI import is currently blocked by an unrelated indentation error in `packages/core/services/scanners/config.py`.
+Additional 0043 cleanup validation was run with targeted Python compilation, Alembic `heads`/`upgrade head`/`current`, direct lifecycle summary assertions, direct database column inspection for the target lifecycle tables, and `git diff --check`. The temporary lifecycle schema CLI mentioned here was later removed from the shipped operator surface.
 
 Formatter note: at bead close, `ruff` and `black` were not installed yet. A follow-up tooling setup added both formatters and ran Black against the lifecycle schema files.
 
@@ -95,8 +95,8 @@ Commands run:
 ```bash
 uv run black packages/core/storage/lifecycle_models.py alembic/versions/20260603_0042_target_trade_lifecycle_schema.py
 uv run python -m py_compile packages/core/storage/lifecycle_models.py packages/core/services/lifecycle_schema.py packages/core/cli/lifecycle.py packages/core/cli/main.py alembic/env.py alembic/versions/20260603_0042_target_trade_lifecycle_schema.py
-uv run spreads lifecycle schema --json
-uv run spreads lifecycle schema
+# removed 2026-06-11: uv run spreads lifecycle schema --json
+# removed 2026-06-11: uv run spreads lifecycle schema
 uv run alembic heads
 uv run python - <<'PY'
 from core.storage.db import Base

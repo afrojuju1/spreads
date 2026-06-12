@@ -82,13 +82,13 @@ Main local surfaces:
 Check live trading state:
 
 ```bash
-uv run spreads ops state --env ade-nucbox-k8-plus
+uv run spreads ops state
 ```
 
 Check job health:
 
 ```bash
-uv run spreads jobs --env ade-nucbox-k8-plus
+uv run spreads jobs
 ```
 
 Validate runtime config:
@@ -100,7 +100,7 @@ uv run spreads config validate --json
 Run the scheduler directly:
 
 ```bash
-uv run spreads scheduler
+uv run spreads runtime scheduler
 ```
 
 Format touched Python files:
@@ -138,6 +138,6 @@ The repo is actively evolving toward:
 
 - durable alert delivery
 - stronger session and trading visibility
-- one canonical `spreads` CLI over trading, jobs, storage, logs, deploys, and config
+- one canonical `spreads` CLI over trading, jobs, storage, execution, deploys, maintenance, runtime processes, and config
 
 The planning docs in [`docs/planning`](docs/planning) are the best place to see in-flight architecture and execution plans.

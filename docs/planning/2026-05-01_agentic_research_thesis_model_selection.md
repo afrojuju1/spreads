@@ -179,13 +179,13 @@ Do not pull for this box:
 
 ## Eval Harness
 
-Before changing defaults or pulling deferred models, run the fixed model eval harness:
+Historical note: this model-selection checkpoint used the temporary market-intel eval harness before the 2026-06-11 CLI cleanup.
 
 ```text
-uv run spreads market-intel eval --tickers SOFI --as-of 2026-05-01 --sources sec,market --depth standard
+# removed 2026-06-11: uv run spreads market-intel eval --tickers SOFI --as-of 2026-05-01 --sources sec,market --depth standard
 ```
 
-The harness should test:
+Any future market-intel product should reintroduce a complete eval surface through bead `spr-0ct`. The harness should test:
 
 - sector routing
 - fact extraction

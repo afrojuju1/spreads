@@ -183,7 +183,7 @@ services:
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
-    command: ["uv", "run", "spreads", "scheduler"]
+    command: ["uv", "run", "spreads", "runtime", "scheduler"]
     volumes:
       - .:/app
   market-recorder:
@@ -197,7 +197,7 @@ services:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
-    command: ["uv", "run", "spreads", "market-recorder"]
+    command: ["uv", "run", "spreads", "runtime", "market-recorder"]
     volumes:
       - .:/app
   web:

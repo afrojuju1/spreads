@@ -1,8 +1,10 @@
 # Market Intel OpenClaw Architecture
 
-Status: target architecture
+Status: historical target architecture; not shipped
 
 As of: Friday, May 1, 2026
+
+2026-06-11 cleanup note: the shipped `spreads market-intel` CLI, `core.services.market_intel` package, and local `plugins/market-intel` shell were deleted because the surface was half-built. Reintroduce this product through bead `spr-0ct` with a complete current design rather than reviving the removed commands.
 
 Related:
 
@@ -206,10 +208,10 @@ market_intel_finalize_report
 market_intel_run_eval
 ```
 
-The plugin should shell out to the repo CLI at first:
+Historical plugin shell-out path:
 
 ```text
-uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
+# removed 2026-06-11: uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 ```
 
 Later it can call a narrower Python service, HTTP route, or local daemon. Do not create a second source-of-truth path.
@@ -942,7 +944,7 @@ Deployment checks:
 openclaw gateway status
 curl http://127.0.0.1:18789/healthz
 curl http://127.0.0.1:18789/readyz
-uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
+# removed 2026-06-11: uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 ```
 
 ## Build Order
@@ -1037,7 +1039,7 @@ Current model-path caveat
 - Dedicated OpenClaw `market-intel` agent uses `ollama/qwen3.5:27b-q4_K_M` as the frontier model, with the main agent kept on qwen2.5 for recoverability.
 - `qwen3.5:27b-q4_K_M` is installed and available, but the full main-agent context is still too slow on CPU even after raising command and provider timeouts.
 - `qwen3.6:35b` is deferred.
-- `market_intel` replaces `research_thesis` in the active code path.
+- Historical: `market_intel` replaced `research_thesis` in this prototype path, then the market-intel code path was removed from the shipped repo on 2026-06-11.
 - First engine-native source providers are SEC and market snapshot; Alpaca MCP is also available as an OpenClaw tool surface.
 - The v0 finalizer writes `thesis.json`, `thesis.md`, `review.json`, and `review.md`; a final thesis is only rendered from evidence-backed claims.
-- The eval harness is available as `uv run spreads market-intel eval`, plugin tool `market_intel_eval`, and Gateway RPC `marketIntel.eval`.
+- Historical: the eval harness was available as `uv run spreads market-intel eval`, plugin tool `market_intel_eval`, and Gateway RPC `marketIntel.eval`; those shipped surfaces were removed on 2026-06-11.

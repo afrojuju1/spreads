@@ -7,12 +7,25 @@ import typer
 from rich.panel import Panel
 from rich.table import Table
 
+from core.cli.command_harness import run_passthrough
 from core.cli.ops_render import (
     build_console,
     render_json_payload,
 )
 from core.services.execution.runtimes import resolve_execution_runtime_capabilities
 from core.services.positions import get_position_detail, list_positions
+
+PASSTHROUGH_CONTEXT_SETTINGS = {
+    "allow_extra_args": True,
+    "ignore_unknown_options": True,
+    "help_option_names": [],
+}
+
+runtime_app = typer.Typer(
+    add_completion=False,
+    help="Run internal runtime processes.",
+    no_args_is_help=True,
+)
 
 
 def _render_value(value: Any) -> str:
@@ -186,11 +199,6 @@ def _render_execution_runtimes(payload: dict[str, Any], *, no_color: bool) -> No
 
 
 def execution_runtimes_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
@@ -204,11 +212,6 @@ def execution_runtimes_command(
 
 def positions_command(
     position_id: str | None = typer.Argument(None, help="Position id to inspect."),
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
     trading_strategy_id: str | None = typer.Option(
         None,
         "--trading-strategy-id",
@@ -237,3 +240,25 @@ def positions_command(
         _render_positions(payload, no_color=no_color)
     else:
         _render_position_detail(payload, no_color=no_color)
+
+
+@runtime_app.command(
+    "scheduler",
+    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
+    help="Run the ARQ scheduler loop.",
+)
+def scheduler_command(ctx: typer.Context) -> None:
+    from core.jobs.scheduler import main as scheduler_main
+
+    run_passthrough(ctx=ctx, entrypoint=scheduler_main)
+
+
+@runtime_app.command(
+    "market-recorder",
+    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
+    help="Run the market recorder loop.",
+)
+def market_recorder_command(ctx: typer.Context) -> None:
+    from core.services.market_recorder import main as market_recorder_main
+
+    run_passthrough(ctx=ctx, entrypoint=market_recorder_main)

@@ -73,7 +73,7 @@ uv run spreads jobs --json
 ARQ orchestration defaults:
 
 ```bash
-uv run spreads scheduler
+uv run spreads runtime scheduler
 uv run arq core.jobs.worker.RuntimeWorkerSettings
 uv run arq core.jobs.worker.DataWorkerSettings
 uv run arq core.jobs.worker.ValuationWorkerSettings

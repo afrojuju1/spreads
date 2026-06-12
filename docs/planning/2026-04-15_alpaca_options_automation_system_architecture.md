@@ -211,9 +211,9 @@ Recommended command families:
 - `uv run spreads approvals list`
 - `uv run spreads approvals approve <opportunity-id>`
 - `uv run spreads approvals reject <opportunity-id>`
-- `uv run spreads positions`
+- `uv run spreads execution positions`
 - `uv run spreads orders`
-- `uv run spreads logs decisions --bot <bot-id>`
+- Historical surface: decision logs are no longer exposed as `spreads logs decisions`; use current ops/execution read models and deployment logs.
 - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
 - `uv run spreads backtest compare --left-json <path> --right-json <path>`
 

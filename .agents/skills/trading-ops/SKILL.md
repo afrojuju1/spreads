@@ -12,7 +12,7 @@ Use this skill from `/home/ade/Projects/spreads`.
 - This skill is owned by the Spreads repo under `.agents/skills/trading-ops`. Do not add new active trading-ops guidance to the retired `trading_operator` wrapper repo.
 - Start with live system state, not code inspection.
 - Prefer shipped CLIs and Docker service checks.
-- Use `uv run spreads ...` commands. When already on `ade-nucbox-k8-plus` in `/home/ade/Projects/spreads`, run local CLI and Docker commands directly. Use `--env ade-nucbox-k8-plus` only from another host.
+- Use `uv run spreads ...` commands. When already on `ade-nucbox-k8-plus` in `/home/ade/Projects/spreads`, run local CLI and Docker commands directly. From another host, use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` for operator reads; command-level `--env` passthrough on non-deploy commands is intentionally not shipped.
 - Do not add or update tests unless Ade explicitly asks. Report live checks and remaining runtime risk instead.
 - Treat `momentum_long_calls` as the current active paper flow. It sources tickers dynamically, trades option calls through `alpaca_direct`, and reports through `TradingOpsState`.
 - Nautilus host services and support containers are sunset for live operations. They should remain stopped/disabled unless Ade explicitly asks to re-enable Nautilus as a separate experiment.
@@ -41,8 +41,8 @@ uv run spreads jobs --status failed --limit 10 --json
 From another host, add the deploy target:
 
 ```bash
-uv run spreads ops state --env ade-nucbox-k8-plus --json
-uv run spreads execution list --env ade-nucbox-k8-plus --date <YYYY-MM-DD>
+uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops state --json
+uv run spreads deploy exec --env ade-nucbox-k8-plus -- execution list --date <YYYY-MM-DD>
 ```
 
 ## Strategy Evidence Ledger

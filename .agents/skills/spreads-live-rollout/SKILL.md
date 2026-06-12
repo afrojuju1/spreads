@@ -111,7 +111,7 @@ uv run spreads ops state
 uv run spreads ops storage
 uv run spreads jobs
 uv run spreads jobs lanes
-uv run spreads positions --date <YYYY-MM-DD> --json
+uv run spreads execution positions --date <YYYY-MM-DD> --json
 ```
 
 Do not add rollout checks around removed runtime product names or fragmented ops surfaces.

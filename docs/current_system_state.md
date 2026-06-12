@@ -10,7 +10,7 @@ Last updated: 2026-06-11
 
 | Boundary | Current owner | Notes |
 |---|---|---|
-| Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Canonical CLI visibility lives under `spreads ops state` and `spreads ops storage`; root commands such as `spreads jobs`, `spreads logs`, `spreads positions`, and `spreads execution-runtimes` remain operator entrypoints over their canonical services. |
+| Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Canonical on-box CLI visibility lives under `spreads ops state`, `spreads ops storage`, `spreads jobs`, `spreads execution list`, `spreads execution positions`, and `spreads execution runtimes`. Remote target reads go through `spreads deploy exec --env <target> -- ...`; command-level `--env` passthrough is intentionally not shipped. On-box logs use Docker Compose directly; remote deployment logs live under `spreads deploy logs`. |
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
@@ -203,7 +203,7 @@ Authored strategy breadth is not automatic strategy rotation. Spreads may carry 
 The activation states are:
 
 - `authored`: strategy config exists and can be shown in strategy breadth.
-- `observation`: an operator may run `spreads ops observe-strategy <trading_strategy_id>` to evaluate source, candidates, quality, signals, and decisions with `observation_only` provenance. Observation rows are analysis evidence only.
+- `observation`: an operator may run `spreads lifecycle observe-strategy <trading_strategy_id>` to evaluate source, candidates, quality, signals, and decisions with `observation_only` provenance. Observation rows are persisted analysis evidence only.
 - `paper_ready`: the strategy has a family-appropriate quality profile, canonical `execution_shape.legs[]` for its trade structure, and portfolio admission coverage. Paper-ready does not enable scheduler jobs by itself.
 - `paper_active`: the strategy config is enabled, its scheduler-owned entry/manage jobs are active, and its paper execution contract is compatible with the observed broker environment.
 - `live_active`: reserved for an explicitly approved live-money rollout using the same lifecycle plus live deployment guards.
@@ -373,7 +373,7 @@ The dashboard should show strategy-owned runtime state, not recreate old runtime
 
 Entry planning treats non-live signal eligibility, including `analysis_only` emitted by shadow-mode strategy runs, as observation evidence rather than selected-entry eligibility. Those rows may be persisted for regime comparison, but they must not create selected entry decisions or execution intents.
 
-Disabled strategy breadth can be run explicitly through `spreads ops observe-strategy <trading_strategy_id>`. Observation runs resolve authored strategy config without enabling scheduler jobs, run the normal ticker-source, candidate-build, entry-quality, signal, and decision persistence spine, force `analysis_only`/`observation_only` provenance, and stop before admission or execution-intent creation. `TradingOpsState.details.strategy_breadth[].latest_observation` exposes the latest observation evidence for each authored strategy.
+Disabled strategy breadth can be run explicitly through `spreads lifecycle observe-strategy <trading_strategy_id>`. Observation runs resolve authored strategy config without enabling scheduler jobs, run the normal ticker-source, candidate-build, entry-quality, signal, and decision persistence spine, force `analysis_only`/`observation_only` provenance, and stop before admission or execution-intent creation. `TradingOpsState.details.strategy_breadth[].latest_observation` exposes the latest observation evidence for each authored strategy.
 
 `TradingOpsState.details.broker_exposure` classifies the latest broker account snapshot positions by ownership against canonical open Spreads position legs. Broker option legs should be labeled as `spreads_managed`, `spreads_synthetic_validation`, or `external_manual` instead of being hidden behind raw broker account positions.
 

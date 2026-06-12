@@ -15,7 +15,7 @@ Closed since this plan was written:
 
 - Worker startup is now gated by a runtime init step that applies migrations before API/workers/scheduler/market-recorder start.
 - The Nautilus Alpaca bridge is installed as a stable release binary and mounted into Docker from `/home/ade/.local/bin/alpaca-submit-order-list-bridge`.
-- Runtime readiness is exposed through `spreads execution-runtimes --json` and `GET /executions/runtimes`.
+- Runtime readiness is exposed through `spreads execution runtimes --json` and `GET /executions/runtimes`.
 - Nautilus submit handoff now supports option open and close for two-leg verticals and four-leg iron condors through `SubmitOrderList`.
 - Execution refresh and cancel are explicit operator actions backed by Alpaca broker order IDs.
 - Alpaca direct now has a first-class equity buy/sell execution path that records execution attempts, broker orders, and fills without routing stock fills into the option position model.

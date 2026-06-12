@@ -156,7 +156,7 @@ services:
         condition: service_healthy
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "spreads", "scheduler"]
+    command: ["uv", "run", "spreads", "runtime", "scheduler"]
     logging: *default-logging
 
   market-recorder:
@@ -168,7 +168,7 @@ services:
         condition: service_healthy
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "spreads", "market-recorder"]
+    command: ["uv", "run", "spreads", "runtime", "market-recorder"]
     logging: *default-logging
 
   web:

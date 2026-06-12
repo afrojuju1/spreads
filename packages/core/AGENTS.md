@@ -31,7 +31,7 @@
 - `TradingOpsState` and `StorageOpsState` are the canonical operator read models. Remove retired fragmented ops product surfaces rather than extending them.
 - For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and live validation workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
-- Treat `ade-nucbox-k8-plus` as the canonical live paper backend target. When already on that box in `/home/ade/Projects/spreads`, use local `uv run spreads ...` and Docker commands. From another host, prefer `uv run spreads ... --env ade-nucbox-k8-plus` for operator reads instead of raw `--db` overrides.
+- Treat `ade-nucbox-k8-plus` as the canonical live paper backend target. When already on that box in `/home/ade/Projects/spreads`, use local `uv run spreads ...` and Docker commands. From another host, prefer `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` for operator reads instead of raw `--db` overrides.
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you intentionally need the deployed checkout on the box at `/home/ade/Projects/spreads`.
 - Default verification should be live/runtime validation against the running stack or shipped CLI. Do not add or update backend tests unless the user explicitly asks for test work.
 

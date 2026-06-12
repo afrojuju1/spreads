@@ -14,10 +14,11 @@ from core.services.execution.sync import (
     inspect_execution_attempt,
     refresh_execution_attempt,
 )
+from core.cli.runtime import execution_runtimes_command, positions_command
 
 execution_app = typer.Typer(
     add_completion=False,
-    help="Inspect, refresh, or cancel execution attempts.",
+    help="Inspect execution attempts, positions, and runtime capabilities.",
     no_args_is_help=True,
 )
 
@@ -389,6 +390,10 @@ def execution_list_command(
     raise typer.Exit(0)
 
 
+execution_app.command("positions", help="List positions or inspect one position.")(positions_command)
+execution_app.command("runtimes", help="Show execution runtime capabilities.")(execution_runtimes_command)
+
+
 @execution_app.command("inspect", help="Inspect an execution_attempt by id without broker mutation.")
 def execution_inspect_command(
     execution_attempt_id: str = typer.Argument(..., help="Execution attempt id."),
@@ -443,4 +448,6 @@ __all__ = [
     "execution_inspect_command",
     "execution_list_command",
     "execution_refresh_command",
+    "execution_runtimes_command",
+    "positions_command",
 ]

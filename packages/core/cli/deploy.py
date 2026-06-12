@@ -276,7 +276,7 @@ def exec_command(
         raise typer.Exit(3)
     if _has_option(args, "--db"):
         print_command_error(
-            "Do not use --db with deploy targets. Use the target's --env wiring instead.",
+            "Do not use --db with deploy targets. Run the command through the named deploy target instead.",
         )
         raise typer.Exit(3)
 

@@ -285,7 +285,7 @@ Implementation validation should be live/CLI/runtime focused:
 - `uv run spreads config validate --json`
 - `uv run alembic upgrade head`
 - Partition catalog check through `StorageOpsState` or a shipped `spreads storage partitions --json` style command, not manual SQL.
-- `uv run spreads ops storage --env ade-nucbox-k8-plus --json`
+- `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops storage --json`
 - Market recorder writes quote ticks into today's `option_quote_ticks` partition.
 - Market recorder writes trade ticks into today's `option_trade_ticks` partition when trades occur.
 - No runtime path writes to `event_log` or any replacement event-log table.

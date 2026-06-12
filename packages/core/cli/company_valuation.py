@@ -6,7 +6,6 @@ from typing import Any
 import typer
 
 from core.cli.command_harness import print_command_error, render_json_value, run_payload_command
-from core.runtime.config import default_database_url, default_redis_url
 from core.services.company_valuation import (
     CompanyValuationTemplateAssignmentRefreshRequest,
     CompanyValuationBenchmarkPriorReportRequest,
@@ -33,7 +32,28 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 
 company_valuation_app = typer.Typer(
     add_completion=False,
-    help="Queue company valuation ingestion, recompute, and ownership resolution jobs.",
+    help="Operate the offline company valuation lane.",
+    no_args_is_help=True,
+)
+company_valuation_jobs_app = typer.Typer(
+    add_completion=False,
+    help="Queue company valuation jobs.",
+    no_args_is_help=True,
+)
+company_valuation_screen_app = typer.Typer(
+    add_completion=False,
+    help="Refresh and inspect valuation screens.",
+    no_args_is_help=True,
+)
+company_valuation_research_app = typer.Typer(
+    add_completion=False,
+    help="Export and analyze offline valuation research datasets.",
+    no_args_is_help=True,
+)
+company_valuation_taxonomy_app = typer.Typer(
+    add_completion=False,
+    help="Maintain valuation taxonomy and template assignments.",
+    no_args_is_help=True,
 )
 
 
@@ -184,7 +204,7 @@ def _render_classification_backfill_payload(payload: dict[str, Any]) -> None:
         typer.echo("notes=" + "; ".join(payload["notes"]))
 
 
-@company_valuation_app.command("bootstrap", help="Queue company valuation bootstrap work.")
+@company_valuation_jobs_app.command("bootstrap", help="Queue company valuation bootstrap work.")
 def company_valuation_bootstrap_command(
     ticker: list[str] = typer.Option(
         ...,
@@ -216,13 +236,13 @@ def company_valuation_bootstrap_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
-    redis_url: str = typer.Option(
-        default_redis_url(),
+    redis_url: str | None = typer.Option(
+        None,
         "--redis-url",
         help="Redis URL override.",
     ),
@@ -246,8 +266,8 @@ def company_valuation_bootstrap_command(
     )
 
 
-@company_valuation_app.command(
-    "screen-refresh",
+@company_valuation_screen_app.command(
+    "refresh",
     help="Queue a company valuation screen recompute/materialization job.",
 )
 def company_valuation_screen_refresh_command(
@@ -286,13 +306,13 @@ def company_valuation_screen_refresh_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
-    redis_url: str = typer.Option(
-        default_redis_url(),
+    redis_url: str | None = typer.Option(
+        None,
         "--redis-url",
         help="Redis URL override.",
     ),
@@ -322,8 +342,8 @@ def company_valuation_screen_refresh_command(
     )
 
 
-@company_valuation_app.command(
-    "screen-show",
+@company_valuation_screen_app.command(
+    "show",
     help="Show the latest company valuation screen with support-aware filters.",
 )
 def company_valuation_screen_show_command(
@@ -364,14 +384,13 @@ def company_valuation_screen_show_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    default_db = default_database_url()
     _run_company_payload_command(
         builder=lambda: list_company_valuation_screen(
             as_of=as_of,
@@ -380,7 +399,7 @@ def company_valuation_screen_show_command(
             limit=limit,
             supported_only=supported_only,
             stressed_operator_only=stressed_operator_only,
-            repository=None if db == default_db else CompanyValuationRepository(db),
+            repository=None if db is None else CompanyValuationRepository(db),
             config_root=config_root,
         ),
         renderer=_render_screen_payload,
@@ -388,7 +407,7 @@ def company_valuation_screen_show_command(
     )
 
 
-@company_valuation_app.command(
+@company_valuation_jobs_app.command(
     "resolve-unresolved",
     help="Queue unresolved 13F CUSIP resolution work.",
 )
@@ -413,13 +432,13 @@ def company_valuation_resolve_unresolved_command(
         "--max-attempts",
         help="Maximum retry attempts before marking unresolved rows failed.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
-    redis_url: str = typer.Option(
-        default_redis_url(),
+    redis_url: str | None = typer.Option(
+        None,
         "--redis-url",
         help="Redis URL override.",
     ),
@@ -441,8 +460,8 @@ def company_valuation_resolve_unresolved_command(
     )
 
 
-@company_valuation_app.command(
-    "export-research-dataset",
+@company_valuation_research_app.command(
+    "export",
     help="Export point-in-time company valuation research rows for offline calibration.",
 )
 def company_valuation_export_research_dataset_command(
@@ -487,14 +506,13 @@ def company_valuation_export_research_dataset_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    default_db = default_database_url()
     if output_format not in {"parquet", "jsonl"}:
         print_command_error(
             f"Unsupported format {output_format!r}; expected parquet or jsonl.",
@@ -512,14 +530,14 @@ def company_valuation_export_research_dataset_command(
                 config_root=config_root,
                 include_market_context=include_market_context,
             ),
-            repository=None if db == default_db else CompanyValuationRepository(db),
+            repository=None if db is None else CompanyValuationRepository(db),
         ).to_payload(),
         renderer=_render_research_export_payload,
         json_output=json_output,
     )
 
 
-@company_valuation_app.command(
+@company_valuation_research_app.command(
     "benchmark-prior-report",
     help="Compare current company valuation outputs against config-backed external benchmark / analyst priors.",
 )
@@ -549,14 +567,13 @@ def company_valuation_benchmark_prior_report_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    default_db = default_database_url()
     _run_company_payload_command(
         builder=lambda: report_company_valuation_benchmark_priors(
             CompanyValuationBenchmarkPriorReportRequest(
@@ -566,15 +583,15 @@ def company_valuation_benchmark_prior_report_command(
                 output_root=output_root,
                 config_root=config_root,
             ),
-            repository=None if db == default_db else CompanyValuationRepository(db),
+            repository=None if db is None else CompanyValuationRepository(db),
         ).to_payload(),
         renderer=_render_benchmark_prior_payload,
         json_output=json_output,
     )
 
 
-@company_valuation_app.command(
-    "cluster-research-dataset",
+@company_valuation_research_app.command(
+    "cluster",
     help="Run offline clustering and template analysis on a valuation research dataset.",
 )
 def company_valuation_cluster_research_dataset_command(
@@ -629,8 +646,8 @@ def company_valuation_cluster_research_dataset_command(
     )
 
 
-@company_valuation_app.command(
-    "taxonomy-sync",
+@company_valuation_taxonomy_app.command(
+    "sync",
     help="Populate taxonomy shadow state without changing active valuation template behavior.",
 )
 def company_valuation_taxonomy_sync_command(
@@ -676,14 +693,13 @@ def company_valuation_taxonomy_sync_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    default_db = default_database_url()
     _run_company_payload_command(
         builder=lambda: sync_company_valuation_taxonomy_state(
             CompanyValuationTaxonomySyncRequest(
@@ -696,14 +712,14 @@ def company_valuation_taxonomy_sync_command(
                 sample_limit=sample_limit,
                 output_root=output_root,
             ),
-            repository=None if db == default_db else CompanyValuationRepository(db),
+            repository=None if db is None else CompanyValuationRepository(db),
         ).to_payload(),
         renderer=_render_taxonomy_sync_payload,
         json_output=json_output,
     )
 
 
-@company_valuation_app.command(
+@company_valuation_taxonomy_app.command(
     "template-refresh",
     help="Refresh stored issuer template assignments from current issuer rows and config overrides.",
 )
@@ -745,14 +761,13 @@ def company_valuation_template_refresh_command(
         "--config-root",
         help="Override the config root passed into company valuation services.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    default_db = default_database_url()
     _run_company_payload_command(
         builder=lambda: refresh_company_valuation_template_assignments(
             CompanyValuationTemplateAssignmentRefreshRequest(
@@ -764,14 +779,14 @@ def company_valuation_template_refresh_command(
                 sample_limit=sample_limit,
                 config_root=config_root,
             ),
-            repository=None if db == default_db else CompanyValuationRepository(db),
+            repository=None if db is None else CompanyValuationRepository(db),
         ).to_payload(),
         renderer=_render_template_refresh_payload,
         json_output=json_output,
     )
 
 
-@company_valuation_app.command(
+@company_valuation_taxonomy_app.command(
     "classification-backfill",
     help="Backfill raw SEC SIC metadata for existing issuers and optionally refresh taxonomy shadow state.",
 )
@@ -823,14 +838,13 @@ def company_valuation_classification_backfill_command(
         min=1,
         help="Maximum sample issuer updates to include in the result payload.",
     ),
-    db: str = typer.Option(
-        default_database_url(),
+    db: str | None = typer.Option(
+        None,
         "--db",
         help="Database URL override.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    default_db = default_database_url()
     _run_company_payload_command(
         builder=lambda: backfill_company_valuation_raw_classification(
             CompanyValuationClassificationBackfillRequest(
@@ -844,11 +858,17 @@ def company_valuation_classification_backfill_command(
                 taxonomy_output_root=taxonomy_output_root,
                 sample_limit=sample_limit,
             ),
-            repository=None if db == default_db else CompanyValuationRepository(db),
+            repository=None if db is None else CompanyValuationRepository(db),
         ).to_payload(),
         renderer=_render_classification_backfill_payload,
         json_output=json_output,
     )
+
+
+company_valuation_app.add_typer(company_valuation_screen_app, name="screen")
+company_valuation_app.add_typer(company_valuation_jobs_app, name="jobs")
+company_valuation_app.add_typer(company_valuation_research_app, name="research")
+company_valuation_app.add_typer(company_valuation_taxonomy_app, name="taxonomy")
 
 
 __all__ = ["company_valuation_app"]
