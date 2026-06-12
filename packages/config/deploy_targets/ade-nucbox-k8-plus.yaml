@@ -9,6 +9,7 @@ compose_project_name: spreads
 bind_host: 100.111.132.114
 api_port: 58080
 postgres_port: 55432
+clickhouse_port: 58123
 redis_port: 56379
 web_port: 53000
 worker_runtime_replicas: 2
@@ -25,6 +26,7 @@ excluded_job_types:
   - company_valuation_screen_materialize
   - company_valuation_resolve_unresolved
 postgres_volume_name: spreads_spreads_postgres_data
+clickhouse_volume_name: spreads_spreads_clickhouse_data
 docker_log_driver: local
 docker_log_max_size: 10m
 docker_log_max_file: 5

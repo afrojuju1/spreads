@@ -87,6 +87,7 @@ export function OpsPageContent() {
   const engineSummary = readRecord(engine.summary);
   const quoteTable = storageTables.find((row) => readString(row.name, "") === "option_quote_ticks") ?? {};
   const tradeTable = storageTables.find((row) => readString(row.name, "") === "option_trade_ticks") ?? {};
+  const marketDataReady = Boolean(storageSummary.market_data_tables_ready);
   const attention = [...readRecordList(tradingState?.attention), ...readRecordList(storageState?.attention)];
   const hasQueryError = tradingOpsQuery.isError || storageOpsQuery.isError;
   const scheduler = readRecord(tradingDetails.scheduler);
@@ -97,7 +98,6 @@ export function OpsPageContent() {
   const availableStrategyCount = firstPresent(tradingSummary.available_strategy_count, strategyBreadthSummary.available_strategy_count);
   const availableShadowStrategyCount = firstPresent(tradingSummary.available_shadow_strategy_count, strategyBreadthSummary.available_shadow_strategy_count);
   const availablePaperStrategyCount = firstPresent(tradingSummary.available_paper_strategy_count, strategyBreadthSummary.available_paper_strategy_count);
-  const futureCoverage = `${readNumber(storageSummary.future_partition_days)}/${readNumber(storageSummary.required_future_partition_days)} days`;
   const tradingLogsUrl = useGrafanaTradingLogsUrl();
 
   const refreshAll = () => {
@@ -188,9 +188,9 @@ export function OpsPageContent() {
           note={formatBytes(readNumber(quoteTable.total_size_bytes))}
         />
         <MetricTile
-          label="Retention"
-          value={humanizeToken(storageSummary.latest_run_status, loading ? "loading" : "unknown")}
-          note={`latest ${formatTimestamp(readString(storageSummary.latest_run_at, ""))}`}
+          label="Storage"
+          value={marketDataReady ? "Ready" : "Review"}
+          note={`capture ${formatTimestamp(readString(storageSummary.latest_captured_at, ""))}`}
         />
       </div>
 
@@ -428,43 +428,37 @@ export function OpsPageContent() {
       <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
         <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
           <Database className="size-4" />
-          Storage Retention
+          Market Data Storage
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <MetricTile label="Partitions" value={storageSummary.partition_ready ? "Ready" : "Review"} note={futureCoverage} />
+          <MetricTile label="ClickHouse" value={marketDataReady ? "Ready" : "Review"} note={readString(storageSummary.market_data_database, "-")} />
           <MetricTile
-            label="Trade Ticks"
-            value={formatBytes(readNumber(tradeTable.total_size_bytes))}
-            note={`${formatCompactNumber(readNumber(tradeTable.estimated_live_rows))} rows`}
+            label="Raw Ticks"
+            value={formatBytes(readNumber(quoteTable.total_size_bytes) + readNumber(tradeTable.total_size_bytes))}
+            note={`${formatCompactNumber(readNumber(quoteTable.estimated_live_rows) + readNumber(tradeTable.estimated_live_rows))} rows`}
           />
           <MetricTile
-            label="Schedule"
-            value={readString(storageSummary.schedule)}
-            note={storageSummary.market_hours_safe ? "market-hours safe" : "review timing"}
+            label="Latest Capture"
+            value={humanizeToken(storageSummary.latest_capture_status, "unknown")}
+            note={`${formatCompactNumber(readNumber(storageSummary.latest_quote_rows_saved))} quotes / ${formatCompactNumber(readNumber(storageSummary.latest_trade_rows_saved))} trades`}
           />
         </div>
         <div className="mt-4 overflow-hidden rounded-lg border border-border/70">
-          <div className="grid grid-cols-[1.2fr_0.7fr_0.7fr_0.8fr_0.8fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+          <div className="grid grid-cols-[1.2fr_0.8fr_0.6fr_0.8fr_0.8fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
             <span>Table</span>
+            <span>Engine</span>
             <span>Parts</span>
-            <span>Current</span>
-            <span>Future</span>
+            <span>Rows</span>
             <span>Size</span>
           </div>
           <div className="divide-y divide-border/60">
             {storageTables.map((row) => {
-              const requiredFutureDays = row.required_future_partition_days;
-              const currentReady = row.current_partition_ready;
               return (
-                <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.7fr_0.7fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
+                <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.8fr_0.6fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
                   <span className="min-w-0 truncate font-medium">{readString(row.name)}</span>
-                  <span>{formatOptionalCompact(row.partition_count)}</span>
-                  <span>{currentReady === undefined || currentReady === null ? "-" : currentReady ? "ready" : "missing"}</span>
-                  <span>
-                    {requiredFutureDays === undefined || requiredFutureDays === null
-                      ? "-"
-                      : `${formatOptionalCompact(row.future_partition_days)}/${formatOptionalCompact(requiredFutureDays)}`}
-                  </span>
+                  <span>{readString(row.engine, "-")}</span>
+                  <span>{formatOptionalCompact(row.active_part_count)}</span>
+                  <span>{formatOptionalCompact(row.estimated_live_rows)}</span>
                   <span>{formatBytes(readNumber(row.total_size_bytes))}</span>
                 </div>
               );

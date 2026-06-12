@@ -10,8 +10,8 @@ from core.storage.db import build_session_factory
 from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
+from core.storage.market_data_store import ClickHouseMarketDataStore
 from core.storage.ops_store import OpsStore
-from core.storage.market_tick_repository import MarketTickRepository
 from core.storage.signal_repository import SignalRepository
 from core.storage.trading_store import TradingStore
 
@@ -68,8 +68,12 @@ class StorageContext:
         return self._build_repository("signals", SignalRepository)  # type: ignore[return-value]
 
     @property
-    def market_ticks(self) -> MarketTickRepository:
-        return self._build_repository("market_ticks", MarketTickRepository)  # type: ignore[return-value]
+    def market_data(self) -> ClickHouseMarketDataStore:
+        store = self._repositories.get("market_data")
+        if store is None:
+            store = ClickHouseMarketDataStore()
+            self._repositories["market_data"] = store
+        return store  # type: ignore[return-value]
 
     @property
     def jobs(self) -> JobRepository:
@@ -87,6 +91,9 @@ class StorageContext:
         return store  # type: ignore[return-value]
 
     def close(self) -> None:
+        market_data = self._repositories.get("market_data")
+        if isinstance(market_data, ClickHouseMarketDataStore):
+            market_data.close()
         return None
 
     def __enter__(self) -> StorageContext:

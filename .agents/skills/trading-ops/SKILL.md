@@ -14,6 +14,7 @@ Use this skill from `/home/ade/Projects/spreads`.
 - Prefer shipped CLIs and Docker service checks.
 - Use `uv run spreads ...` commands. When already on `ade-nucbox-k8-plus` in `/home/ade/Projects/spreads`, run local CLI and Docker commands directly. From another host, use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` for operator reads; command-level `--env` passthrough on non-deploy commands is intentionally not shipped.
 - Do not add or update tests unless Ade explicitly asks. Report live checks and remaining runtime risk instead.
+- `spreads ops storage` reports ClickHouse market-data health plus Postgres capture summaries; do not use removed Postgres tick partition or retention-prune workflows.
 - Treat `momentum_long_calls` as the current active paper flow. It sources tickers dynamically, trades option calls through `alpaca_direct`, and reports through `TradingOpsState`.
 - Nautilus host services and support containers are sunset for live operations. They should remain stopped/disabled unless Ade explicitly asks to re-enable Nautilus as a separate experiment.
 - TradingAgents is the external research AI layer linked from Spreads at `external/TradingAgents`. Spreads owns the orchestration, job config, outputs, alerts, and operator visibility around that layer.

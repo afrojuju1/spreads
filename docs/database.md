@@ -118,5 +118,6 @@ The FastAPI app is DB-backed. Useful active endpoints include:
 - Docker Compose can run `postgres`, `redis`, `api`, `worker`, and `scheduler`.
 - Alembic owns app-schema changes.
 - The runtime stores are SQLAlchemy ORM on Postgres.
-- Ticker source facts, strategy facts, execution facts, capture targets, capture summaries, and market tick partitions all use the same Postgres database and session pattern.
+- Ticker source facts, strategy facts, execution facts, capture targets, and capture summaries use the Postgres database and session pattern.
+- High-volume option quote/trade ticks and compact quote snapshots live in ClickHouse through `storage/market_data_store.py`; they are not Postgres ORM tables.
 - Redis is transport/runtime only for ARQ; Postgres remains the source of truth for job state.

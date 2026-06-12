@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## Top-Level Boundaries
 
@@ -14,14 +14,14 @@ Last updated: 2026-06-11
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
-| Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into option quote/trade ticks plus `capture_summaries`. |
+| Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py`, `storage/market_data_store.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into ClickHouse option quote/trade ticks plus Postgres `capture_summaries`. |
 | Engine data and candidate building | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/strategy_candidate_builders/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. `services/strategy_candidate_builders/` owns market slices, option construction, ranking policy, and diagnostics under engine-owned candidate facts. Candidate generation consumes market data through the `MarketSliceProvider` boundary; live behavior uses `AlpacaMarketSliceProvider` by default. There is no separate candidate-building CLI flow or orchestration boundary. |
 | Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/trading_engine/entry_selection.py`, `services/trading_engine/entry_quality_pipeline.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyRuntime owns entry orchestration and persistence. `EntrySelectionEngine` owns account-agnostic entry quality analysis, candidate filtering, selected/monitored/rejected candidate output, and live signal selection. Admission handoff and intent creation remain after selection. Helper modules are pure policy delegates, not alternate orchestration paths. |
 | Execution and portfolio state | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/execution_intents/`, `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | PortfolioEngine owns close decisions and close-policy evaluation. RiskEngine-owned close admission validates position/reconciliation/order readiness. The manage job refreshes marks, applies close admission, and creates close intents; execution services dispatch intents and persist broker attempts/orders/fills. |
-| Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, retention, and capture state. Operator surfaces should project current domain facts instead of reintroducing removed product pages. |
+| Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, storage, and capture state. Operator surfaces should project current domain facts instead of reintroducing removed product pages. |
 | Company valuation lane | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Company valuation is an offline research/maintenance lane. It can support future analysis, but live strategy selection, admission, execution, and position management must not depend on it by default. |
 | Research AI lane | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, optional `worker-research`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. This lane is disabled by default and is not a live execution dependency. |
-| Persistence and transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
+| Persistence and transport | Postgres, ClickHouse, Redis | Postgres is source of truth for durable domain and ops state. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles queues, leases, and pub/sub fanout. |
 
 ## Non-Negotiable Boundary Rules
 
@@ -63,9 +63,9 @@ Last updated: 2026-06-11
 | Close | Decision, admission, intent, attempt, and fill path that reduces or exits a position. | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/exit_manager.py`, `services/execution_intents/`, `services/execution/` | Direct broker-submit bypasses from management jobs or dashboard-only close decisions. |
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`, `broker_sync_state`, `account_snapshots` | Trading decisions or owner attribution. |
 | Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Candidate diagnostics or broker order truth. |
-| Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade tick retention. |
+| Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade tick storage or retention. |
 | Trading ops state | Operator-facing trading health: market, control, scheduler/workers, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
-| Storage ops state | Operator-facing retention/storage health. | `services/retention.py`, storage ops surfaces | Live trading decisions. |
+| Storage ops state | Operator-facing storage health for ClickHouse market data and Postgres capture summaries. | `services/ops/storage_ops_state.py`, storage ops surfaces | Live trading decisions. |
 | Company valuation | Offline issuer valuation, ownership resolution, and research datasets. | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Live strategy entry, live execution admission, or position close management. |
 | Research scan | Batch TradingAgents research run over a bounded ticker list. | `services/tradingagents_scan.py`, `outputs/tradingagents/`, optional `worker-research`, `external/TradingAgents` | Live strategy entry or live execution admission. |
 
@@ -74,9 +74,9 @@ Last updated: 2026-06-11
 ```text
 Operator
   |
-  +--> Browser -> Next.js web -> FastAPI -> Postgres/Redis
+  +--> Browser -> Next.js web -> FastAPI -> Postgres/ClickHouse/Redis
   |
-  +--> `uv run spreads ...` CLI -> services -> Postgres/Redis/Alpaca
+  +--> `uv run spreads ...` CLI -> services -> Postgres/ClickHouse/Redis/Alpaca
 
 Scheduler
   |
@@ -93,9 +93,10 @@ ARQ workers
 
 Market recorder
   |
-  +--> prioritized capture_targets -> Alpaca option websocket -> option_quote_ticks / option_trade_ticks + capture_summaries
+  +--> prioritized capture_targets -> Alpaca option websocket -> ClickHouse option_quote_ticks / option_trade_ticks + Postgres capture_summaries
 
-Postgres = source of truth
+Postgres = domain and ops source of truth
+ClickHouse = high-volume raw market-data ticks and quote snapshots
 Redis = queues, leases, pub/sub
 ```
 
@@ -124,7 +125,7 @@ The valuation and research lanes are disabled by default in job config and deplo
 
 Always-on runtime:
 
-- Postgres, Redis, API, web, scheduler, and the logging/metrics stack stay up so operator reads, dashboards, leases, queues, and storage maintenance remain available.
+- Postgres, ClickHouse, Redis, API, web, scheduler, and the logging/metrics stack stay up so operator reads, dashboards, leases, queues, and market-data storage remain available.
 - Runtime workers stay up for broker/account sync, intent dispatch, alert reconciliation, and strategy routines, but market-only jobs are expressed in their job schedules instead of waking and skipping all night.
 - `alert_reconcile` is intentionally allowed off-hours so pending notifications can recover without waiting for the next session.
 

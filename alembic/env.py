@@ -16,7 +16,6 @@ from core.storage import engine_models as storage_engine_models  # noqa: F401
 from core.storage import execution_models as storage_execution_models  # noqa: F401
 from core.storage import job_models as storage_job_models  # noqa: F401
 from core.storage import lifecycle_models as storage_lifecycle_models  # noqa: F401
-from core.storage import market_tick_models as storage_market_tick_models  # noqa: F401
 from core.storage import signal_models as storage_signal_models  # noqa: F401
 from core.storage.db import Base
 

@@ -22,7 +22,7 @@ Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the
 Current shipped operator surfaces:
 
 - `spreads ops state` is the canonical live trading, strategy, source, candidate, and decision surface
-- `spreads ops storage` is the canonical storage and retention surface
+- `spreads ops storage` is the canonical storage surface for ClickHouse market data and Postgres capture summaries
 - `spreads jobs` and `spreads jobs lanes` are the canonical scheduler/worker surfaces
 - `spreads execution positions` is the shipped position drilldown
 - `spreads execution list` is the shipped day-level attempts/orders/fills printout

@@ -440,7 +440,7 @@ async def run_market_recorder_iteration(
     with build_storage_context(db_target) as storage:
         jobs_store = storage.jobs
         capture_store = storage.capture
-        market_ticks = storage.market_ticks
+        market_data = storage.market_data
         if jobs_store.schema_ready():
             lease_seconds = _market_recorder_lease_seconds(
                 poll_seconds=poll_seconds,
@@ -511,8 +511,8 @@ async def run_market_recorder_iteration(
         )
         quote_rows = [row for result in group_results for row in list(result.get("quote_rows") or []) if isinstance(row, Mapping)]
         trade_rows = [row for result in group_results for row in list(result.get("trade_rows") or []) if isinstance(row, Mapping)]
-        quote_rows_saved = market_ticks.save_option_quote_tick_rows(rows=[dict(row) for row in quote_rows])
-        trade_rows_saved = market_ticks.save_option_trade_tick_rows(rows=[dict(row) for row in trade_rows])
+        quote_rows_saved = market_data.save_option_quote_tick_rows(rows=[dict(row) for row in quote_rows])
+        trade_rows_saved = market_data.save_option_trade_tick_rows(rows=[dict(row) for row in trade_rows])
         summary = {
             "status": "ok",
             "active_target_count": int(target_refresh.get("active_target_count") or len(target_rows)),

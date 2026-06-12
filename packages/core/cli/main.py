@@ -8,7 +8,6 @@ from core.cli.deploy import deploy_app
 from core.cli.execution import execution_app
 from core.cli.lifecycle import lifecycle_app
 from core.cli.ops import jobs_app, ops_app
-from core.cli.retention import maintenance_app
 from core.cli.runtime import runtime_app
 
 app = typer.Typer(
@@ -25,7 +24,6 @@ app.add_typer(lifecycle_app, name="lifecycle")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(config_app, name="config")
 app.add_typer(company_valuation_app, name="company-valuation")
-app.add_typer(maintenance_app, name="maintenance")
 app.add_typer(runtime_app, name="runtime")
 
 

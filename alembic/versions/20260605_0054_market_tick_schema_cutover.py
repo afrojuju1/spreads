@@ -7,16 +7,12 @@ Create Date: 2026-06-05 11:40:00
 
 from __future__ import annotations
 
+import re
+from datetime import UTC, date, datetime, time, timedelta
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-
-from core.storage.market_tick_partitions import (
-    DEFAULT_FUTURE_PARTITION_DAYS,
-    create_partition_sql,
-    initial_partition_days,
-    market_tick_partition_families,
-)
 
 revision = "20260605_0054"
 down_revision = "20260605_0053"
@@ -24,6 +20,120 @@ branch_labels = None
 depends_on = None
 
 TOMBSTONE_SUFFIX = "old_20260605"
+DEFAULT_OPTION_QUOTE_TICK_RETENTION_DAYS = 7
+DEFAULT_OPTION_TRADE_TICK_RETENTION_DAYS = 30
+DEFAULT_FUTURE_PARTITION_DAYS = 14
+
+_IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+class MarketTickPartitionFamily:
+    def __init__(self, *, name: str, parent_table: str, partition_prefix: str, retention_days: int) -> None:
+        self.name = name
+        self.parent_table = parent_table
+        self.partition_prefix = partition_prefix
+        self.retention_days = retention_days
+
+
+OPTION_QUOTE_TICK_PARTITIONS = MarketTickPartitionFamily(
+    name="option_quote_ticks",
+    parent_table="option_quote_ticks",
+    partition_prefix="option_quote_ticks",
+    retention_days=DEFAULT_OPTION_QUOTE_TICK_RETENTION_DAYS,
+)
+OPTION_TRADE_TICK_PARTITIONS = MarketTickPartitionFamily(
+    name="option_trade_ticks",
+    parent_table="option_trade_ticks",
+    partition_prefix="option_trade_ticks",
+    retention_days=DEFAULT_OPTION_TRADE_TICK_RETENTION_DAYS,
+)
+
+
+def market_tick_partition_families(
+    *,
+    option_quote_tick_days: int | None = None,
+    option_trade_tick_days: int | None = None,
+) -> tuple[MarketTickPartitionFamily, ...]:
+    quote_family = (
+        OPTION_QUOTE_TICK_PARTITIONS
+        if option_quote_tick_days is None
+        else MarketTickPartitionFamily(
+            name=OPTION_QUOTE_TICK_PARTITIONS.name,
+            parent_table=OPTION_QUOTE_TICK_PARTITIONS.parent_table,
+            partition_prefix=OPTION_QUOTE_TICK_PARTITIONS.partition_prefix,
+            retention_days=option_quote_tick_days,
+        )
+    )
+    trade_family = (
+        OPTION_TRADE_TICK_PARTITIONS
+        if option_trade_tick_days is None
+        else MarketTickPartitionFamily(
+            name=OPTION_TRADE_TICK_PARTITIONS.name,
+            parent_table=OPTION_TRADE_TICK_PARTITIONS.parent_table,
+            partition_prefix=OPTION_TRADE_TICK_PARTITIONS.partition_prefix,
+            retention_days=option_trade_tick_days,
+        )
+    )
+    return (quote_family, trade_family)
+
+
+def _validate_identifier(value: str) -> str:
+    if not _IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(f"Unsafe SQL identifier: {value!r}")
+    return value
+
+
+def _utc_day(value: date | datetime | None = None) -> date:
+    if value is None:
+        return datetime.now(UTC).date()
+    if isinstance(value, datetime):
+        normalized = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+        return normalized.date()
+    return value
+
+
+def partition_day_bounds(day: date) -> tuple[datetime, datetime]:
+    start_at = datetime.combine(day, time.min, tzinfo=UTC)
+    return start_at, start_at + timedelta(days=1)
+
+
+def render_partition_bound(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(sep=" ", timespec="seconds").replace("+00:00", "+00")
+
+
+def partition_name_for_day(family: MarketTickPartitionFamily, day: date) -> str:
+    return f"{_validate_identifier(family.partition_prefix)}_{day:%Y_%m_%d}"
+
+
+def _inclusive_days(start_day: date, end_day: date) -> list[date]:
+    days: list[date] = []
+    current_day = start_day
+    while current_day <= end_day:
+        days.append(current_day)
+        current_day += timedelta(days=1)
+    return days
+
+
+def initial_partition_days(
+    family: MarketTickPartitionFamily,
+    *,
+    as_of: date | datetime | None = None,
+    future_days: int = DEFAULT_FUTURE_PARTITION_DAYS,
+) -> list[date]:
+    today = _utc_day(as_of)
+    start_day = today - timedelta(days=family.retention_days)
+    end_day = today + timedelta(days=max(int(future_days), 0))
+    return _inclusive_days(start_day, end_day)
+
+
+def create_partition_sql(family: MarketTickPartitionFamily, day: date) -> str:
+    partition_name = partition_name_for_day(family, day)
+    start_at, end_at = partition_day_bounds(day)
+    return (
+        f"CREATE TABLE IF NOT EXISTS {_validate_identifier(partition_name)} "
+        f"PARTITION OF {_validate_identifier(family.parent_table)} "
+        f"FOR VALUES FROM ('{render_partition_bound(start_at)}') TO ('{render_partition_bound(end_at)}')"
+    )
 
 
 def _jsonb() -> postgresql.JSONB:

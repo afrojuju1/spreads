@@ -8,6 +8,7 @@ compose_project_name: spreads-local
 bind_host: 127.0.0.1
 api_port: 58080
 postgres_port: 55432
+clickhouse_port: 58123
 redis_port: 56379
 web_port: 53000
 worker_runtime_replicas: 1
@@ -17,6 +18,7 @@ worker_research_replicas: 0
 web_enabled: true
 market_recorder_owner_env: ade-nucbox-k8-plus
 postgres_volume_name: spreads_local_postgres_data
+clickhouse_volume_name: spreads_local_clickhouse_data
 docker_log_driver: local
 docker_log_max_size: 10m
 docker_log_max_file: 5

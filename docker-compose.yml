@@ -16,6 +16,27 @@ services:
       start_period: 10s
     volumes:
       - spreads_postgres_data:/var/lib/postgresql/data
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.5-alpine
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "58123:8123"
+    environment:
+      CLICKHOUSE_DB: spreads
+      CLICKHOUSE_USER: spreads
+      CLICKHOUSE_PASSWORD: spreads
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - spreads_clickhouse_data:/var/lib/clickhouse
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -50,10 +71,13 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_OPS_LOG_DIR: /app/logs/ops
       WATCHFILES_FORCE_POLLING: "true"
@@ -94,6 +118,7 @@ services:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
@@ -114,6 +139,7 @@ services:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
     command: ["uv", "run", "arq", "core.jobs.worker.DataWorkerSettings"]
@@ -136,6 +162,7 @@ services:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
     command: ["uv", "run", "arq", "core.jobs.worker.ValuationWorkerSettings"]
@@ -158,6 +185,7 @@ services:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
       SPREADS_TRADINGAGENTS_DIR: /tradingagents
@@ -182,6 +210,7 @@ services:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
     command: ["uv", "run", "spreads", "runtime", "scheduler"]
     volumes:
@@ -193,10 +222,13 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
     command: ["uv", "run", "spreads", "runtime", "market-recorder"]
     volumes:
       - .:/app
@@ -224,6 +256,7 @@ services:
 
 volumes:
   spreads_postgres_data:
+  spreads_clickhouse_data:
   web_node_modules:
   web_next_data:
   web_npm_cache:

@@ -38,6 +38,7 @@ REPO_SYNC_EXCLUDES = (
 REQUIRED_SECRET_KEYS = (
     "APCA_API_KEY_ID",
     "APCA_API_SECRET_KEY",
+    "CLICKHOUSE_PASSWORD",
     "POSTGRES_PASSWORD",
 )
 OPTIONAL_SECRET_KEYS = ("SPREADS_DISCORD_WEBHOOK_URL",)
@@ -62,6 +63,7 @@ class DeployTargetYamlPayload(BaseModel):
     bind_host: str = "127.0.0.1"
     api_port: int = Field(default=58080, gt=0)
     postgres_port: int = Field(default=55432, gt=0)
+    clickhouse_port: int = Field(default=58123, gt=0)
     redis_port: int = Field(default=56379, gt=0)
     web_port: int = Field(default=53000, gt=0)
     worker_runtime_replicas: int = Field(default=1, gt=0)
@@ -70,6 +72,7 @@ class DeployTargetYamlPayload(BaseModel):
     worker_research_replicas: int = Field(default=0, ge=0)
     web_enabled: bool = True
     postgres_volume_name: str | None = None
+    clickhouse_volume_name: str | None = None
     docker_log_driver: str = "local"
     docker_log_max_size: str = "10m"
     docker_log_max_file: int = Field(default=5, gt=0)
@@ -85,6 +88,7 @@ class DeployTargetYamlPayload(BaseModel):
         "env_file",
         "compose_project_name",
         "postgres_volume_name",
+        "clickhouse_volume_name",
         "market_recorder_owner_env",
         "ssh_host",
         mode="before",
@@ -136,6 +140,7 @@ class DeployTarget:
     bind_host: str
     api_port: int
     postgres_port: int
+    clickhouse_port: int
     redis_port: int
     web_port: int
     worker_runtime_replicas: int
@@ -144,6 +149,7 @@ class DeployTarget:
     worker_research_replicas: int
     web_enabled: bool
     postgres_volume_name: str
+    clickhouse_volume_name: str
     docker_log_driver: str
     docker_log_max_size: str
     docker_log_max_file: int
@@ -197,6 +203,7 @@ def _load_target(path: Path) -> DeployTarget:
         bind_host=payload.bind_host,
         api_port=payload.api_port,
         postgres_port=payload.postgres_port,
+        clickhouse_port=payload.clickhouse_port,
         redis_port=payload.redis_port,
         web_port=payload.web_port,
         worker_runtime_replicas=payload.worker_runtime_replicas,
@@ -205,6 +212,7 @@ def _load_target(path: Path) -> DeployTarget:
         worker_research_replicas=payload.worker_research_replicas,
         web_enabled=payload.web_enabled,
         postgres_volume_name=payload.postgres_volume_name or f"spreads_{name.replace('-', '_')}_postgres_data",
+        clickhouse_volume_name=payload.clickhouse_volume_name or f"spreads_{name.replace('-', '_')}_clickhouse_data",
         docker_log_driver=payload.docker_log_driver,
         docker_log_max_size=payload.docker_log_max_size,
         docker_log_max_file=payload.docker_log_max_file,
@@ -287,6 +295,12 @@ def build_deploy_env_values(
         "SPREADS_POSTGRES_PASSWORD",
         default="replace-me",
     )
+    clickhouse_password = _secret_value(
+        merged,
+        "CLICKHOUSE_PASSWORD",
+        "SPREADS_CLICKHOUSE_PASSWORD",
+        default="replace-me",
+    )
     api_key = _secret_value(
         merged,
         "APCA_API_KEY_ID",
@@ -335,9 +349,11 @@ def build_deploy_env_values(
         "SPREADS_BIND_HOST": target.bind_host,
         "SPREADS_API_PORT": str(target.api_port),
         "SPREADS_POSTGRES_PORT": str(target.postgres_port),
+        "SPREADS_CLICKHOUSE_PORT": str(target.clickhouse_port),
         "SPREADS_REDIS_PORT": str(target.redis_port),
         "SPREADS_WEB_PORT": str(target.web_port),
         "SPREADS_POSTGRES_VOLUME_NAME": target.postgres_volume_name,
+        "SPREADS_CLICKHOUSE_VOLUME_NAME": target.clickhouse_volume_name,
         "SPREADS_DOCKER_LOG_DRIVER": target.docker_log_driver,
         "SPREADS_DOCKER_LOG_MAX_SIZE": target.docker_log_max_size,
         "SPREADS_DOCKER_LOG_MAX_FILE": str(target.docker_log_max_file),
@@ -355,7 +371,11 @@ def build_deploy_env_values(
         "POSTGRES_DB": "spreads",
         "POSTGRES_USER": "spreads",
         "POSTGRES_PASSWORD": str(postgres_password),
+        "CLICKHOUSE_DB": "spreads",
+        "CLICKHOUSE_USER": "spreads",
+        "CLICKHOUSE_PASSWORD": str(clickhouse_password),
         "SPREADS_DATABASE_URL": (f"postgresql://spreads:{postgres_password}@postgres:5432/spreads"),
+        "SPREADS_CLICKHOUSE_URL": f"http://spreads:{clickhouse_password}@clickhouse:8123/spreads",
         "REDIS_URL": "redis://redis:6379/0",
         "SPREADS_INTERNAL_API_BASE_URL": "http://api:8000",
         "SPREADS_API_BASE_URL": "http://api:8000",
@@ -402,8 +422,10 @@ def build_host_env_values(
 ) -> dict[str, str]:
     values = build_deploy_env_values(target, require_secrets=require_secrets)
     postgres_password = values["POSTGRES_PASSWORD"]
+    clickhouse_password = values["CLICKHOUSE_PASSWORD"]
     if target.compose_file == "docker-compose.yml":
         postgres_password = "spreads"
+        clickhouse_password = "spreads"
     host_bind_host = values["SPREADS_BIND_HOST"]
     host_database_url = (
         "postgresql://"
@@ -411,6 +433,7 @@ def build_host_env_values(
         f"@{host_bind_host}:{values['SPREADS_POSTGRES_PORT']}/{values['POSTGRES_DB']}"
     )
     host_redis_url = f"redis://{host_bind_host}:{values['SPREADS_REDIS_PORT']}/0"
+    host_clickhouse_url = f"http://{values['CLICKHOUSE_USER']}:{clickhouse_password}@{host_bind_host}:{values['SPREADS_CLICKHOUSE_PORT']}/spreads"
     api_base_url = f"http://{host_bind_host}:{values['SPREADS_API_PORT']}"
     return {
         "SPREADS_DEPLOY_ENV": values["SPREADS_DEPLOY_ENV"],
@@ -426,6 +449,8 @@ def build_host_env_values(
         "SPREADS_HEALTH_CHECK_MINUTES": values["SPREADS_HEALTH_CHECK_MINUTES"],
         "SPREADS_DATABASE_URL": host_database_url,
         "DATABASE_URL": host_database_url,
+        "SPREADS_CLICKHOUSE_URL": host_clickhouse_url,
+        "CLICKHOUSE_URL": host_clickhouse_url,
         "REDIS_URL": host_redis_url,
         "SPREADS_API_BASE_URL": api_base_url,
         "SPREADS_INTERNAL_API_BASE_URL": api_base_url,
@@ -460,6 +485,7 @@ def render_deploy_env_file(
         f"SPREADS_BIND_HOST={values['SPREADS_BIND_HOST']}",
         f"SPREADS_API_PORT={values['SPREADS_API_PORT']}",
         f"SPREADS_POSTGRES_PORT={values['SPREADS_POSTGRES_PORT']}",
+        f"SPREADS_CLICKHOUSE_PORT={values['SPREADS_CLICKHOUSE_PORT']}",
         f"SPREADS_REDIS_PORT={values['SPREADS_REDIS_PORT']}",
         f"SPREADS_WEB_PORT={values['SPREADS_WEB_PORT']}",
         f"SPREADS_WEB_ENABLED={values['SPREADS_WEB_ENABLED']}",
@@ -471,6 +497,7 @@ def render_deploy_env_file(
         f"SPREADS_HEALTH_CHECK_MINUTES={values['SPREADS_HEALTH_CHECK_MINUTES']}",
         f"SPREADS_OPS_LOG_DIR={values['SPREADS_OPS_LOG_DIR']}",
         f"SPREADS_POSTGRES_VOLUME_NAME={values['SPREADS_POSTGRES_VOLUME_NAME']}",
+        f"SPREADS_CLICKHOUSE_VOLUME_NAME={values['SPREADS_CLICKHOUSE_VOLUME_NAME']}",
         f"SPREADS_DOCKER_LOG_DRIVER={values['SPREADS_DOCKER_LOG_DRIVER']}",
         f"SPREADS_DOCKER_LOG_MAX_SIZE={values['SPREADS_DOCKER_LOG_MAX_SIZE']}",
         f"SPREADS_DOCKER_LOG_MAX_FILE={values['SPREADS_DOCKER_LOG_MAX_FILE']}",
@@ -485,7 +512,11 @@ def render_deploy_env_file(
         f"POSTGRES_DB={values['POSTGRES_DB']}",
         f"POSTGRES_USER={values['POSTGRES_USER']}",
         f"POSTGRES_PASSWORD={values['POSTGRES_PASSWORD']}",
+        f"CLICKHOUSE_DB={values['CLICKHOUSE_DB']}",
+        f"CLICKHOUSE_USER={values['CLICKHOUSE_USER']}",
+        f"CLICKHOUSE_PASSWORD={values['CLICKHOUSE_PASSWORD']}",
         f"SPREADS_DATABASE_URL={values['SPREADS_DATABASE_URL']}",
+        f"SPREADS_CLICKHOUSE_URL={values['SPREADS_CLICKHOUSE_URL']}",
         f"REDIS_URL={values['REDIS_URL']}",
         f"SPREADS_INTERNAL_API_BASE_URL={values['SPREADS_INTERNAL_API_BASE_URL']}",
         f"SPREADS_API_BASE_URL={values['SPREADS_API_BASE_URL']}",
@@ -641,7 +672,6 @@ def _repo_ops_script_paths() -> tuple[Path, ...]:
         DEPLOY_OPS_ROOT / "backup_postgres.sh",
         DEPLOY_OPS_ROOT / "health_check.sh",
         DEPLOY_OPS_ROOT / "trading_ops_monitor.sh",
-        DEPLOY_OPS_ROOT / "retention_prune.sh",
         DEPLOY_OPS_ROOT / "rotate_ops_logs.sh",
     )
 
@@ -800,7 +830,6 @@ def _cron_block_text(target: DeployTarget) -> str:
     backup = _ops_root(target) / "backup_postgres.sh"
     health = _ops_root(target) / "health_check.sh"
     trading_ops_monitor = _ops_root(target) / "trading_ops_monitor.sh"
-    retention = _ops_root(target) / "retention_prune.sh"
     rotate_logs = _ops_root(target) / "rotate_ops_logs.sh"
     log_dir = _ops_log_dir(target)
     health_minutes = max(int(target.health_check_minutes), 1)
@@ -811,7 +840,6 @@ def _cron_block_text(target: DeployTarget) -> str:
             f"*/{health_minutes} * * * * {_ops_script_command(target, health)} >> {shlex.quote(str(log_dir / 'health.log'))} 2>&1",
             f"*/15 * * * * {_ops_script_command(target, trading_ops_monitor)} >> {shlex.quote(str(log_dir / 'trading-ops-monitor.log'))} 2>&1",
             f"17 * * * * {_ops_script_command(target, rotate_logs)} >> {shlex.quote(str(log_dir / 'log-rotate.log'))} 2>&1",
-            f"30 22 * * 1-5 {_ops_script_command(target, retention)} >> {shlex.quote(str(log_dir / 'retention.log'))} 2>&1",
             f"0 0 * * * {_ops_script_command(target, backup)} >> {shlex.quote(str(log_dir / 'backup.log'))} 2>&1",
             f"# END {marker}",
             "",
@@ -859,7 +887,6 @@ def install_target_ops_schedule(target: DeployTarget) -> None:
                 f"test -f {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'health_check.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'trading_ops_monitor.sh'))}",
-                f"test -f {shlex.quote(str(ops_root / 'retention_prune.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'rotate_ops_logs.sh'))}",
             ]
         )
@@ -872,7 +899,6 @@ def install_target_ops_schedule(target: DeployTarget) -> None:
                 f"chmod +x {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'health_check.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'trading_ops_monitor.sh'))}",
-                f"chmod +x {shlex.quote(str(ops_root / 'retention_prune.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'rotate_ops_logs.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'compose_up.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'backup_postgres.sh'))}",
@@ -1012,6 +1038,7 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "bind_host": target.bind_host,
         "api_port": target.api_port,
         "postgres_port": target.postgres_port,
+        "clickhouse_port": target.clickhouse_port,
         "redis_port": target.redis_port,
         "web_port": target.web_port,
         "worker_runtime_replicas": target.worker_runtime_replicas,
@@ -1020,6 +1047,7 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "worker_research_replicas": target.worker_research_replicas,
         "web_enabled": target.web_enabled,
         "postgres_volume_name": target.postgres_volume_name,
+        "clickhouse_volume_name": target.clickhouse_volume_name,
         "docker_log_driver": target.docker_log_driver,
         "docker_log_max_size": target.docker_log_max_size,
         "docker_log_max_file": target.docker_log_max_file,

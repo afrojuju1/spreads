@@ -5,6 +5,7 @@ import os
 
 DEFAULT_POSTGRES_URL = "postgresql://spreads:spreads@localhost:55432/spreads"
 DEFAULT_REDIS_URL = "redis://localhost:56379/0"
+DEFAULT_CLICKHOUSE_URL = "http://spreads:spreads@localhost:58123/spreads"
 
 
 def normalize_database_url(url: str) -> str:
@@ -23,6 +24,10 @@ def default_database_url() -> str:
 
 def default_redis_url() -> str:
     return os.environ.get("REDIS_URL") or DEFAULT_REDIS_URL
+
+
+def default_clickhouse_url() -> str:
+    return os.environ.get("SPREADS_CLICKHOUSE_URL") or os.environ.get("CLICKHOUSE_URL") or DEFAULT_CLICKHOUSE_URL
 
 
 def default_alpha_vantage_api_key() -> str | None:

@@ -184,12 +184,12 @@ Authored strategy config
 +-----------+-----------+       +-----------------------+
             |
             v
-+-----------------------+
-| Postgres              |
-| option_quote_ticks    |
-| option_trade_ticks    |
-| capture_summaries     |
-+-----------------------+
++-----------------------+       +-----------------------+
+| ClickHouse            |       | Postgres              |
+| option_quote_ticks    |       | capture_summaries     |
+| option_trade_ticks    |       | capture_targets       |
+| quote snapshots       |       | domain ops facts      |
++-----------------------+       +-----------------------+
 ```
 
 ## Optional Offline Lanes

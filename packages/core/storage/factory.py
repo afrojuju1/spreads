@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
+from core.runtime.config import DEFAULT_POSTGRES_URL, default_clickhouse_url, default_database_url
 from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
@@ -9,8 +9,8 @@ from core.storage.context import StorageContext
 from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
+from core.storage.market_data_store import ClickHouseMarketDataStore
 from core.storage.ops_store import OpsStore
-from core.storage.market_tick_repository import MarketTickRepository
 from core.storage.signal_repository import SignalRepository
 from core.storage.trading_store import TradingStore
 
@@ -28,11 +28,10 @@ def build_storage_context(path_or_url: str | None = None) -> StorageContext:
     return StorageContext(_resolve_postgres_url(path_or_url))
 
 
-def build_market_tick_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+def build_market_data_store(clickhouse_url: str | None = None, *, context: StorageContext | None = None) -> ClickHouseMarketDataStore:
     if context is not None:
-        return context.market_ticks
-    value = _resolve_postgres_url(path_or_url)
-    return MarketTickRepository(value)
+        return context.market_data
+    return ClickHouseMarketDataStore(clickhouse_url or default_clickhouse_url())
 
 
 def build_alert_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

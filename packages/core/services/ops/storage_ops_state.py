@@ -5,9 +5,8 @@ from typing import Any
 
 from sqlalchemy import select, text
 
-from core.services.retention import build_retention_status
 from core.storage.capture_models import CaptureSummaryModel
-from core.storage.factory import build_storage_context
+from core.storage.factory import build_market_data_store, build_storage_context
 from core.storage.serializers import render_value
 
 from .shared import _attention, _combine_statuses
@@ -77,13 +76,11 @@ def _capture_summaries_storage_row(*, db_target: str | None, storage: Any | None
         row = {
             "name": "capture_summaries",
             "physical_table": "capture_summaries",
+            "database": "postgres",
+            "engine": "PostgreSQL",
             "data_class": "capture_summaries",
             "schema_ready": True,
-            "retention_days": None,
-            "partition_count": None,
-            "current_partition_ready": None,
-            "future_partition_days": None,
-            "required_future_partition_days": None,
+            "retention_owner": "postgres_ops_state",
             "latest_capture_summary_id": None if latest_summary is None else latest_summary.get("capture_summary_id"),
             "latest_capture_status": latest_status,
             "latest_captured_at": None if latest_summary is None else latest_summary.get("captured_at"),
@@ -98,6 +95,61 @@ def _capture_summaries_storage_row(*, db_target: str | None, storage: Any | None
             resolved_storage.close()
 
 
+def _market_data_storage_payload() -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, str]]]:
+    store = build_market_data_store()
+    try:
+        payload = store.storage_status()
+    except Exception as exc:
+        return (
+            "blocked",
+            {
+                "market_data_database": None,
+                "market_data_url": None,
+                "retention_owner": "clickhouse_ttl",
+                "market_data_table_count": 0,
+                "market_data_tables_ready": False,
+                "missing_market_data_tables": [],
+                "total_size_bytes": 0,
+                "estimated_live_rows": 0,
+                "estimated_dead_rows": 0,
+                "inactive_part_count": 0,
+            },
+            {
+                "tables": [],
+                "maintenance": {
+                    "retention_owner": "clickhouse_ttl",
+                    "lock_profile": "ClickHouse market-data health could not be read.",
+                    "manual_prune_command": None,
+                    "default_state_uses_partition_catalog": False,
+                },
+                "market_data_error": str(exc),
+            },
+            [
+                _attention(
+                    severity="high",
+                    code="clickhouse_market_data_unavailable",
+                    message=f"ClickHouse market-data storage is unavailable: {exc}",
+                )
+            ],
+        )
+    finally:
+        store.close()
+
+    summary = dict(payload.get("summary") or {})
+    details = dict(payload.get("details") or {})
+    attention: list[dict[str, str]] = []
+    missing_tables = [str(value) for value in list(summary.get("missing_market_data_tables") or [])]
+    if missing_tables:
+        attention.append(
+            _attention(
+                severity="high",
+                code="clickhouse_market_data_tables_missing",
+                message=f"ClickHouse market-data tables are missing: {', '.join(missing_tables)}.",
+            )
+        )
+    return str(payload.get("status") or "unknown"), summary, details, attention
+
+
 def build_storage_ops_state(
     *,
     db_target: str | None = None,
@@ -105,56 +157,41 @@ def build_storage_ops_state(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     resolved_now = now or datetime.now(UTC)
-    payload = build_retention_status(db_target=db_target, now=resolved_now)
-    summary = dict(payload.get("summary") or {})
-    details = dict(payload.get("details") or {})
-    attention: list[dict[str, str]] = []
-
-    missing_current = [str(value) for value in list(summary.get("missing_current_partitions") or [])]
-    if missing_current:
-        attention.append(
-            _attention(
-                severity="high",
-                code="tick_partition_current_missing",
-                message=f"Current-day tick partitions are missing for: {', '.join(missing_current)}.",
-            )
-        )
-
-    future_short = [str(value) for value in list(summary.get("future_partition_short_tables") or [])]
-    if future_short:
-        attention.append(
-            _attention(
-                severity="medium",
-                code="tick_partition_future_short",
-                message=f"Future tick partition coverage is short for: {', '.join(future_short)}.",
-            )
-        )
-
-    if summary.get("latest_run_status") == "failed":
-        attention.append(
-            _attention(
-                severity="medium",
-                code="retention_latest_run_failed",
-                message="The latest tick partition maintenance run failed.",
-            )
-        )
+    market_data_status, summary, details, attention = _market_data_storage_payload()
 
     capture_status, capture_row, capture_attention = _capture_summaries_storage_row(db_target=db_target, storage=storage)
     attention.extend(capture_attention)
     tables = [dict(row) for row in list(details.get("tables") or [])]
     tables.append(capture_row)
     details["tables"] = tables
+
+    latest_capture_status = capture_row.get("latest_capture_status")
+    if latest_capture_status is not None and str(latest_capture_status).lower() not in {"ok", "idle"}:
+        attention.append(
+            _attention(
+                severity="medium",
+                code="latest_capture_summary_degraded",
+                message=f"The latest market-recorder capture summary status is {latest_capture_status}.",
+            )
+        )
+
+    summary["latest_capture_summary_id"] = capture_row.get("latest_capture_summary_id")
+    summary["latest_capture_status"] = latest_capture_status
+    summary["latest_captured_at"] = capture_row.get("latest_captured_at")
+    summary["latest_quote_rows_saved"] = capture_row.get("latest_quote_rows_saved")
+    summary["latest_trade_rows_saved"] = capture_row.get("latest_trade_rows_saved")
     summary["table_count"] = len(tables)
     summary["total_size_bytes"] = sum(int(row.get("total_size_bytes") or 0) for row in tables)
     summary["estimated_live_rows"] = sum(int(row.get("estimated_live_rows") or 0) for row in tables)
     summary["estimated_dead_rows"] = sum(int(row.get("estimated_dead_rows") or 0) for row in tables)
+    summary["schedule"] = "clickhouse_ttl_background"
+    summary["market_hours_safe"] = True
 
     return {
-        **payload,
-        "status": _combine_statuses(str(payload.get("status") or "unknown"), capture_status),
+        "status": _combine_statuses(market_data_status, capture_status),
         "summary": summary,
         "details": details,
-        "generated_at": payload.get("generated_at") or resolved_now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "generated_at": resolved_now.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "attention": attention,
     }
 

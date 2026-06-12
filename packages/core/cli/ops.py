@@ -240,7 +240,7 @@ def strategy_evidence_ledger_command(
     )
 
 
-@ops_app.command("storage", help="Show canonical storage and retention operator state.")
+@ops_app.command("storage", help="Show canonical storage operator state.")
 def storage_ops_state_command(
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),

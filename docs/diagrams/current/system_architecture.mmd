@@ -31,7 +31,7 @@ flowchart TB
     end
 
     subgraph Core["Core Domain Services: packages/core/services"]
-        OpsReadModels["TradingOpsState + StorageOpsState\nservices/ops, retention, positions, execution runtimes"]
+        OpsReadModels["TradingOpsState + StorageOpsState\nservices/ops, positions, execution runtimes"]
         StrategyRuntime["StrategyRuntime\nentry orchestration + decision persistence"]
         PortfolioRuntime["PortfolioEngine + RiskEngine\nclose policy, admission, position readiness"]
         DataEngine["DataEngine\nticker resolution + candidate inputs"]
@@ -48,7 +48,8 @@ flowchart TB
     end
 
     subgraph Persistence["Persistence + Transport"]
-        Postgres[("Postgres\nsource of truth")]
+        Postgres[("Postgres\ndomain + ops source of truth")]
+        ClickHouse[("ClickHouse\nraw option ticks + quote snapshots")]
         Redis[("Redis\nqueues, leases, pub/sub")]
         Artifacts["outputs + logs\nresearch artifacts, alerts, runtime logs"]
     end
@@ -114,6 +115,7 @@ flowchart TB
     MarketRecorder --> CaptureTargets
     MarketRecorder --> AlpacaMarket
     MarketRecorder --> Postgres
+    MarketRecorder --> ClickHouse
 
     Alerts --> AlertTargets
     Alerts --> Postgres
@@ -128,6 +130,7 @@ flowchart TB
     DataEngine --> Postgres
     EntrySelection --> Postgres
     OpsReadModels --> Postgres
+    OpsReadModels --> ClickHouse
     OpsReadModels --> Redis
 
     Browser:::operator
@@ -151,6 +154,7 @@ flowchart TB
     OpsReadModels:::domain
     Alerts:::domain
     Postgres:::storage
+    ClickHouse:::storage
     Redis:::storage
     Artifacts:::storage
     AlpacaAccount:::external

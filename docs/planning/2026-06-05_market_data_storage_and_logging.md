@@ -1,7 +1,9 @@
 # Market Data Storage And Logging Design
 
-Status: final refined design for `spr-zuy.6`; implementation tracked by `spr-4j0`
+Status: superseded by [ClickHouse Market Data Cutover](./2026-06-12_clickhouse_market_data_cutover.md)
 Date: 2026-06-05
+
+This document is retained as historical context for the Postgres partition plan. Active runtime architecture now stores raw option market data in ClickHouse and does not ship Postgres tick partitions or the retention prune CLI.
 
 ## Bottom Line
 
