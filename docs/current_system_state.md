@@ -38,7 +38,7 @@ Last updated: 2026-06-12
 - `execution_intents` is the control-plane handoff boundary. It selects an execution runtime before broker submission.
 - `alpaca_direct` is the active Python-native runtime for equity, single-leg option, and Alpaca order-payload submission.
 - `session_positions` owns day/session position attribution. Broker positions are reconciliation input, not the sole position truth.
-- Spreads is the active trading-ops and research-orchestration home. The old `trading_operator` wrapper repo is not an active hub for future operator guidance.
+- Spreads is the active trading operations and research-orchestration home. The old `trading_operator` wrapper repo is not an active hub for future operator guidance.
 - `external/TradingAgents` is a symlink to `/home/ade/Projects/TradingAgents`. Spreads may orchestrate research jobs against it, but does not own the external repo's internals.
 - Company valuation and TradingAgents research are optional offline lanes. Default trading health, live strategy entry/manage, execution admission, and close management must stay healthy without these workers or jobs enabled.
 

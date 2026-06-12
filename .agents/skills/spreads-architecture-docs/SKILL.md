@@ -90,8 +90,9 @@ When editing repo instructions:
 When editing repo-local skills under `.agents/skills`:
 
 - keep commands aligned with the real CLI surface under `uv run spreads ...`
-- prefer the current shipped CLI surface while it exists, and update this skill when `spr-zuy` replaces fragmented ops commands with canonical state commands
+- prefer the current shipped CLI surface and the canonical `TradingOpsState` / `StorageOpsState` read models
 - keep runtime ownership aligned with `docs/current_system_state.md`
+- keep `spreads-ops`, `spreads-strategy-lab`, `spreads-data-platform`, `spreads-live-rollout`, and `spreads-architecture-docs` as distinct workflows instead of duplicating the same triage guidance across skills
 - refresh stale service references when package splits change ownership
 - keep selection, execution-admission, and alert-projection boundaries explicit instead of letting them collapse into one vague “trading” layer
 

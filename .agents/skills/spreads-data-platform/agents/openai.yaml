@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spreads Data Platform"
+  short_description: "Market-data storage, capture, and retention"
+  default_prompt: "Use $spreads-data-platform to inspect storage health and explain database size or capture issues from the canonical ops surfaces first."

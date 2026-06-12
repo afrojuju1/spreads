@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spreads Strategy Lab"
+  short_description: "Evidence-first strategy design and tuning"
+  default_prompt: "Use $spreads-strategy-lab to explain the strategy outcome from stored ledger evidence before proposing catalog or profile changes."

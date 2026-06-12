@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spreads Ops"
+  short_description: "Live and post-market operations for Spreads"
+  default_prompt: "Use $spreads-ops to check the current Spreads system health from the running stack and summarize only actionable issues."
