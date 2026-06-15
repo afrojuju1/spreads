@@ -102,12 +102,67 @@ class AlphaVantageEarningsCalendarAdapter(BaseCalendarEventAdapter):
                 "when",
                 "time",
             )
-            scheduled_at = _earnings_timestamp(report_date, session_label)
+            try:
+                scheduled_at = _earnings_timestamp(report_date, session_label)
+            except ValueError:
+                continue
             records.append(
                 CalendarEventRecord(
                     event_id=f"{self.source_name}:{symbol}:{report_date}",
                     event_type="earnings",
                     symbol=symbol,
+                    asset_scope=None,
+                    scheduled_at=scheduled_at,
+                    window_start=scheduled_at,
+                    window_end=scheduled_at,
+                    source=self.source_name,
+                    source_confidence=self.source_confidence,
+                    status="scheduled",
+                    payload_json=json.dumps(row, separators=(",", ":")),
+                    ingested_at=fetched_at,
+                    source_updated_at=fetched_at,
+                )
+            )
+        return records
+
+    def fetch_bulk(
+        self,
+        *,
+        window_start: str,
+        window_end: str,
+    ) -> list[CalendarEventRecord]:
+        start_dt = _parse_datetime(window_start)
+        end_dt = _parse_datetime(window_end)
+        params = {
+            "function": "EARNINGS_CALENDAR",
+            "horizon": _horizon_label(start_dt, end_dt),
+            "apikey": self.api_key,
+        }
+        payload = ALPHA_VANTAGE_EARNINGS_HTTP.request_text("GET", self.base_url, "", params=params, headers={"Accept": "text/csv,*/*"})
+
+        rows = list(csv.DictReader(io.StringIO(payload)))
+        fetched_at = _utc_now_iso()
+        records: list[CalendarEventRecord] = []
+        for row in rows:
+            symbol = _row_value(row, "symbol")
+            report_date = _row_value(row, "reportDate", "report_date", "date")
+            if symbol is None or report_date is None:
+                continue
+            try:
+                scheduled_at = _earnings_timestamp(
+                    report_date,
+                    _row_value(row, "reportTime", "report_time", "when", "time"),
+                )
+            except ValueError:
+                continue
+            scheduled_dt = _parse_datetime(scheduled_at)
+            if scheduled_dt < start_dt or scheduled_dt > end_dt:
+                continue
+            records.append(
+                CalendarEventRecord(
+                    event_id=f"{self.source_name}:{symbol.upper()}:{report_date}",
+                    event_type="earnings",
+                    symbol=symbol.upper(),
                     asset_scope=None,
                     scheduled_at=scheduled_at,
                     window_start=scheduled_at,

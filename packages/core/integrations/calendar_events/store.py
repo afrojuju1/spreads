@@ -141,6 +141,51 @@ class CalendarEventStore:
         with self.session_scope() as session:
             session.execute(upsert)
 
+    def latest_provider_fetch_audit(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        params_hash: str,
+        page_key: str | None = None,
+    ) -> dict[str, object] | None:
+        statement = (
+            select(ProviderFetchAuditModel)
+            .where(ProviderFetchAuditModel.provider == provider)
+            .where(ProviderFetchAuditModel.endpoint == endpoint)
+            .where(ProviderFetchAuditModel.params_hash == params_hash)
+            .order_by(ProviderFetchAuditModel.fetched_at.desc())
+            .limit(1)
+        )
+        if page_key is None:
+            statement = statement.where(ProviderFetchAuditModel.page_key.is_(None))
+        else:
+            statement = statement.where(ProviderFetchAuditModel.page_key == page_key)
+        with self.session_factory() as session:
+            row = session.scalar(statement)
+        if row is None:
+            return None
+        return {
+            "audit_id": row.audit_id,
+            "provider": row.provider,
+            "endpoint": row.endpoint,
+            "params_hash": row.params_hash,
+            "params_json": dict(row.params_json or {}),
+            "coverage_start": _render_value(row.coverage_start),
+            "coverage_end": _render_value(row.coverage_end),
+            "page_key": row.page_key,
+            "status": row.status,
+            "cache_hit": row.cache_hit,
+            "payload_hash": row.payload_hash,
+            "row_count": row.row_count,
+            "fetched_at": _render_value(row.fetched_at),
+            "expires_at": _render_value(row.expires_at),
+            "backoff_until": _render_value(row.backoff_until),
+            "error_code": row.error_code,
+            "error_message": row.error_message,
+            "created_at": _render_value(row.created_at),
+        }
+
     def set_refresh_state(
         self,
         *,

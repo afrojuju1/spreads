@@ -16,7 +16,7 @@ from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAH
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
-FINVIZ_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
+FINVIZ_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0", follow_redirects=True)
 _ROUTE_INIT_DATA_PATTERN = re.compile(
     r'<script id="route-init-data" type="application/json">(.*?)</script>',
     re.S,

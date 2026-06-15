@@ -12,9 +12,9 @@ Last updated: 2026-06-15
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Canonical on-box CLI visibility lives under `spreads ops state`, `spreads ops storage`, `spreads jobs`, `spreads execution list`, `spreads execution positions`, and `spreads execution runtimes`. Remote target reads go through `spreads deploy exec --env <target> -- ...`; command-level `--env` passthrough is intentionally not shipped. On-box logs use Docker Compose directly; remote deployment logs live under `spreads deploy logs`. |
 | Trading strategy config | `packages/config/strategies/catalog.yaml`, `packages/config/strategies/profiles.yaml`, `services/trading_strategies.py`, `services/trade_structure_specs.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. Reusable trade-structure construction lives in code; authored strategy runtime config composes from the catalog and profiles only. |
-| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
-| Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls` and filters Finviz rows through the strategy's target-DTE optionability/expected-move requirements before marking symbols selected; filtered observations remain visible with stable reason codes. |
-| Calendar events and earnings consensus | `integrations/calendar_events`, `storage/calendar_models.py`, `CalendarEventStore` | `calendar_events` stores normalized provider event facts. `provider_fetch_audit` stores bounded provider fetch/cache/error summaries. `earnings_event_consensus` stores derived earnings facts separately from provider rows. Strategy runtime must not call yfinance, Alpha Vantage, DoltHub, or Finviz directly. |
+| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources and calendar event refreshes. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
+| Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls` and filters Finviz rows through the strategy's target-DTE optionability/expected-move requirements before marking symbols selected. `earnings_event_window` reads `earnings_event_consensus`, applies Alpaca tradable/optionable/price/volume/target-DTE/expected-move checks, and persists selected plus filtered earnings-event observations for the earnings-source cutover. Filtered observations remain visible with stable reason codes. |
+| Calendar events and earnings consensus | `integrations/calendar_events`, `storage/calendar_models.py`, `CalendarEventStore` | `calendar_events` stores normalized provider event facts. `provider_fetch_audit` stores bounded provider fetch/cache/error summaries. `earnings_event_consensus` stores derived earnings facts separately from provider rows. `calendar_event_refresh:earnings_30d` is the data-lane provider-fetch entrypoint for yfinance, Alpha Vantage, DoltHub, and sparse Finviz enrichment. Strategy runtime must not call yfinance, Alpha Vantage, DoltHub, or Finviz directly. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py`, `storage/market_data_store.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into ClickHouse option quote/trade ticks plus Postgres `capture_summaries`. |
 | Engine data and candidate building | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/strategy_candidate_builders/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. `services/strategy_candidate_builders/` owns market slices, option construction, ranking policy, and diagnostics under engine-owned candidate facts. Candidate generation consumes market data through the `MarketSliceProvider` boundary; live behavior uses `AlpacaMarketSliceProvider` by default. There is no separate candidate-building CLI flow or orchestration boundary. |
 | Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/trading_engine/entry_selection.py`, `services/trading_engine/entry_quality_pipeline.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyRuntime owns entry orchestration and persistence. `EntrySelectionEngine` owns account-agnostic entry quality analysis, candidate filtering, selected/monitored/rejected candidate output, and live signal selection. Admission handoff and intent creation remain after selection. Helper modules are pure policy delegates, not alternate orchestration paths. |
@@ -91,7 +91,7 @@ Scheduler
 ARQ workers
   |
   +--> runtime lane: broker sync, trading strategy entry/manage, intent dispatch, alerts
-  +--> data lane: ticker sources
+  +--> data lane: ticker sources, calendar event refreshes
   +--> optional valuation lane: company valuation jobs when enabled
   +--> optional research lane: TradingAgents jobs when enabled
 
@@ -109,6 +109,7 @@ Redis = queues, leases, pub/sub, short-lived provider cache/backoff
 Default live trading job types:
 
 - `ticker_source`
+- `calendar_event_refresh`
 - `broker_sync`
 - `trading_strategy_entry`
 - `trading_strategy_manage`
@@ -133,9 +134,11 @@ Always-on runtime:
 - Runtime workers stay up for broker/account sync, intent dispatch, alert reconciliation, and strategy routines, but market-only jobs are expressed in their job schedules instead of waking and skipping all night.
 - `alert_reconcile` is intentionally allowed off-hours so pending notifications can recover without waiting for the next session.
 
-Market-window runtime:
+Market-window and data-refresh runtime:
 
 - Ticker sources with `allow_off_hours: false`, including `ticker_source:finviz_momentum`, refresh only inside the configured market calendar window.
+- `ticker_source:earnings_event_window` is allowed off-hours because it is a persisted source refresh over consensus facts and Alpaca actionability checks; strategy entry routines remain market-hours gated separately.
+- `calendar_event_refresh:earnings_30d` is allowed off-hours and uses Redis TTL/backoff plus Postgres provider-fetch audit to avoid provider-call storms.
 - Trading strategy entry and manage routines compile `market_hours_only: true` into generated job payloads with `allow_off_hours: false`.
 - Broker sync and execution dispatch remain schedule-gated with a short close grace period where configured.
 - `market_recorder.py` stays deployed as the sole option-stream owner, but it idles outside regular market hours. It checks the market calendar cheaply, throttles idle logs, and does not refresh capture targets, open the Alpaca option websocket, or write capture summaries while closed unless explicitly run with `--no-market-hours-only`.

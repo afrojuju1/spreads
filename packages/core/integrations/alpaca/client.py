@@ -234,6 +234,29 @@ class AlpacaClient:
             assets.append(item)
         return assets
 
+    def list_active_us_equity_assets(self) -> list[dict[str, Any]]:
+        payload = self.get_json(
+            self.trading_base_url,
+            "/v2/assets",
+            {
+                "status": "active",
+                "asset_class": "us_equity",
+            },
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("Unexpected Alpaca assets response shape")
+
+        assets: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol") or "").upper()
+            status = str(item.get("status") or "").lower()
+            if not symbol or status != "active":
+                continue
+            assets.append(item)
+        return assets
+
     def get_stock_most_actives(
         self,
         *,

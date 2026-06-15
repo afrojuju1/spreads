@@ -12,6 +12,7 @@ EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 TICKER_SOURCE_JOB_TYPE = "ticker_source"
+CALENDAR_EVENT_REFRESH_JOB_TYPE = "calendar_event_refresh"
 TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
 TRADING_STRATEGY_ENTRY_JOB_TYPE = "trading_strategy_entry"
 TRADING_STRATEGY_MANAGE_JOB_TYPE = "trading_strategy_manage"
@@ -73,6 +74,11 @@ JOB_SPECS = {
             queue_name=DATA_QUEUE_NAME,
         ),
         JobSpec(
+            job_type=CALENDAR_EVENT_REFRESH_JOB_TYPE,
+            task_name="run_calendar_event_refresh_job",
+            queue_name=DATA_QUEUE_NAME,
+        ),
+        JobSpec(
             job_type=TRADINGAGENTS_SCAN_JOB_TYPE,
             task_name="run_tradingagents_scan_job",
             queue_name=RESEARCH_QUEUE_NAME,
@@ -128,7 +134,10 @@ WORKER_LANES = (
     WorkerLaneSpec(
         settings_name="DataWorkerSettings",
         queue_name=DATA_QUEUE_NAME,
-        task_names=(JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,),
+        task_names=(
+            JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,
+            JOB_SPECS[CALENDAR_EVENT_REFRESH_JOB_TYPE].task_name,
+        ),
     ),
     WorkerLaneSpec(
         settings_name="ValuationWorkerSettings",

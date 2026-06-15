@@ -1,0 +1,18 @@
+job_key: calendar_event_refresh:earnings_30d
+job_type: calendar_event_refresh
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 60
+payload:
+  refresh_id: earnings_30d
+  window_days: 30
+  allow_off_hours: true
+  yfinance_ttl_seconds: 21600
+  alpha_vantage_ttl_seconds: 21600
+  dolthub_ttl_seconds: 21600
+  finviz_ttl_seconds: 21600
+  provider_backoff_seconds: 3600
+  finviz_max_symbols: 10
+  finviz_near_term_days: 7
+singleton_scope: earnings_30d

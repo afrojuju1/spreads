@@ -7,6 +7,7 @@ from core.jobs.registry import (
     ALERT_DELIVERY_JOB_TYPE,
     ALERT_RECONCILE_JOB_TYPE,
     BROKER_SYNC_JOB_TYPE,
+    CALENDAR_EVENT_REFRESH_JOB_TYPE,
     COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
     COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
@@ -17,6 +18,7 @@ from core.jobs.registry import (
     TRADING_STRATEGY_ENTRY_JOB_TYPE,
     TRADING_STRATEGY_MANAGE_JOB_TYPE,
 )
+from core.integrations.calendar_events.refresh import run_calendar_event_refresh
 from core.services.alert_delivery import (
     ALERT_DELIVERY_STALE_SECONDS,
     reconcile_alert_delivery,
@@ -110,6 +112,25 @@ def _compact_ticker_source_result(result: Mapping[str, Any]) -> dict[str, Any]:
             "summary": result.get("summary"),
             "degradation": result.get("degradation"),
             "persistence": result.get("persistence"),
+        }
+    )
+
+
+def _compact_calendar_event_refresh_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    return render_value(
+        {
+            "status": result.get("status"),
+            "refresh_id": result.get("refresh_id"),
+            "window_start": result.get("window_start"),
+            "window_end": result.get("window_end"),
+            "provider_statuses": result.get("provider_statuses"),
+            "records_upserted": result.get("records_upserted"),
+            "records_by_source": result.get("records_by_source"),
+            "initial_consensus_count": result.get("initial_consensus_count"),
+            "final_consensus_count": result.get("final_consensus_count"),
+            "final_conflict_count": result.get("final_conflict_count"),
+            "finviz_enrichment_symbols": list(result.get("finviz_enrichment_symbols") or []),
+            "providers": result.get("providers"),
         }
     )
 
@@ -359,6 +380,36 @@ async def run_ticker_source_job(
         payload=enriched_payload,
         runner=runner,
         compact_result=_compact_ticker_source_result,
+    )
+
+
+async def run_calendar_event_refresh_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_calendar_event_refresh(
+            refresh_id=str(payload["refresh_id"]),
+            database_url=ctx["database_url"],
+            redis_url=ctx["redis_url"],
+            payload=payload,
+            heartbeat=heartbeat,
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = CALENDAR_EVENT_REFRESH_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=_compact_calendar_event_refresh_result,
     )
 
 

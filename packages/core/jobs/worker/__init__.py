@@ -21,6 +21,7 @@ from .tasks import (
     run_alert_delivery_job,
     run_alert_reconcile_job,
     run_broker_sync_job,
+    run_calendar_event_refresh_job,
     run_company_valuation_bootstrap_job,
     run_company_valuation_resolve_unresolved_job,
     run_company_valuation_screen_materialize_job,
@@ -54,7 +55,7 @@ class RuntimeWorkerSettings:
 
 
 class DataWorkerSettings:
-    functions = [run_ticker_source_job]
+    functions = [run_ticker_source_job, run_calendar_event_refresh_job]
     queue_name = DATA_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
     on_startup = data_startup
@@ -109,6 +110,7 @@ __all__ = [
     "run_alert_delivery_job",
     "run_alert_reconcile_job",
     "run_broker_sync_job",
+    "run_calendar_event_refresh_job",
     "run_company_valuation_bootstrap_job",
     "run_company_valuation_resolve_unresolved_job",
     "run_company_valuation_screen_materialize_job",

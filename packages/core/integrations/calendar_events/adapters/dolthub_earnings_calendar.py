@@ -92,3 +92,51 @@ class DoltHubEarningsCalendarAdapter(BaseCalendarEventAdapter):
                 )
             )
         return records
+
+    def fetch_bulk(
+        self,
+        *,
+        window_start: str,
+        window_end: str,
+    ) -> list[CalendarEventRecord]:
+        start_date = window_start[:10]
+        end_date = window_end[:10]
+        sql = (
+            "select act_symbol, date, `when` "
+            "from earnings_calendar "
+            f"where date >= '{start_date}' "
+            f"and date <= '{end_date}' "
+            "order by date asc, act_symbol asc"
+        )
+        payload = DOLTHUB_EARNINGS_HTTP.request_json("GET", self.base_url, "", params={"q": sql})
+
+        rows = payload.get("rows", [])
+        fetched_at = _utc_now_iso()
+        records: list[CalendarEventRecord] = []
+        for row in rows:
+            symbol = str(row.get("act_symbol") or "").upper().strip()
+            raw_date = row.get("date")
+            if not symbol or raw_date is None:
+                continue
+            raw_date_text = str(raw_date)[:10]
+            when_label = row.get("when")
+            scheduled_at = _earnings_timestamp(raw_date_text, None if when_label is None else str(when_label))
+            record_key = (str(when_label or "unknown")).replace(" ", "_").lower()
+            records.append(
+                CalendarEventRecord(
+                    event_id=f"{self.source_name}:{symbol}:{raw_date_text}:{record_key}",
+                    event_type="earnings",
+                    symbol=symbol,
+                    asset_scope=None,
+                    scheduled_at=scheduled_at,
+                    window_start=scheduled_at,
+                    window_end=scheduled_at,
+                    source=self.source_name,
+                    source_confidence=self.source_confidence,
+                    status="scheduled",
+                    payload_json=json.dumps(row, separators=(",", ":")),
+                    ingested_at=fetched_at,
+                    source_updated_at=fetched_at,
+                )
+            )
+        return records
