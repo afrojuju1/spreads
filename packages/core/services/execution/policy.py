@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from core.common import clamp
 from core.services.deployment_policy import (
     deployment_mode_auto_executes,
     resolve_execution_deployment_mode,
@@ -23,7 +24,6 @@ from .shared import (
     DEFAULT_ENTRY_PRICING_MODE,
     DEFAULT_MAX_CREDIT_CONCESSION,
     DEFAULT_MIN_CREDIT_RETENTION_PCT,
-    _clamp_fraction,
     _policy_ref,
 )
 
@@ -139,7 +139,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         "adaptive",
     }:
         raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
-    min_credit_retention_pct = _clamp_fraction(min_credit_retention_pct, minimum=0.5, maximum=1.0)
+    min_credit_retention_pct = clamp(min_credit_retention_pct, low=0.5, high=1.0)
     max_credit_concession = max(float(max_credit_concession), 0.0)
     if not enabled:
         return {

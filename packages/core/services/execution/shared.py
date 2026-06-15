@@ -104,10 +104,6 @@ def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
     return legs_identity_key(strategy=strategy, legs=legs)
 
 
-def _clamp_fraction(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
-    return max(minimum, min(maximum, float(value)))
-
-
 def _normalize_limit_value(value: Any) -> float | None:
     numeric = coerce_float(value)
     if numeric is None or numeric == 0:

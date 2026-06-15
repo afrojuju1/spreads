@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from core.common import clamp
 from core.money import option_limit_price
 from core.services.account_capacity import estimate_buying_power_requirement
 from core.services.candidate_policy import resolve_candidate_profile, resolve_deployment_quality_thresholds
@@ -32,7 +33,6 @@ from .shared import (
     DEFAULT_ENTRY_PRICING_MODE,
     DEFAULT_MAX_CREDIT_CONCESSION,
     DEFAULT_MIN_CREDIT_RETENTION_PCT,
-    _clamp_fraction,
     _normalize_limit_value,
     _strategy_family_from_payload,
 )
@@ -552,8 +552,8 @@ def _entry_fill_ratio(
     if midpoint_value <= 0 or natural_value <= 0:
         return 0.0
     if premium_kind == "debit":
-        return round(_clamp_fraction(midpoint_value / natural_value, maximum=1.0), 4)
-    return round(_clamp_fraction(natural_value / midpoint_value, maximum=1.0), 4)
+        return round(clamp(midpoint_value / natural_value, high=1.0), 4)
+    return round(clamp(natural_value / midpoint_value, high=1.0), 4)
 
 
 def _execution_retention_bound(
@@ -615,10 +615,10 @@ def _validate_uncapped_debit_live_quality(
         }
 
     candidate_midpoint_value, _ = _resolve_candidate_entry_prices(dict(candidate_payload))
-    min_retention_pct = _clamp_fraction(
+    min_retention_pct = clamp(
         coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
-        minimum=0.5,
-        maximum=1.0,
+        low=0.5,
+        high=1.0,
     )
     live_quote = {
         **dict(live_snapshot),
@@ -800,11 +800,11 @@ def _resolve_open_limit_price(
     if pricing_mode == "midpoint" or natural_value is None or natural_value <= 0:
         return option_limit_price(midpoint_value) or 0.01
 
-    fill_ratio = _clamp_fraction(coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
-    min_credit_retention_pct = _clamp_fraction(
+    fill_ratio = clamp(coerce_float(candidate_payload.get("fill_ratio")) or 0.0, high=1.0)
+    min_credit_retention_pct = clamp(
         coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
-        minimum=0.5,
-        maximum=1.0,
+        low=0.5,
+        high=1.0,
     )
     max_credit_concession = max(
         coerce_float(execution_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION,

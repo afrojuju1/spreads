@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from core.common import clamp
 from core.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     candidate_requires_favorable_setup,
@@ -299,15 +300,11 @@ SIGNAL_METRIC_GATES = (
 )
 
 
-def _clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
-
-
 def _normalize_score(value: Any, *, default: float = 0.0) -> float:
     parsed = _as_float(value)
     if parsed is None:
         return default
-    return _clamp(parsed / 100.0, 0.0, 1.0)
+    return clamp(parsed / 100.0, 0.0, 1.0)
 
 
 def resolve_style_profile(
@@ -668,7 +665,7 @@ def _carry_buffer_ratio(candidate: Mapping[str, Any] | None) -> float | None:
     expected_move = _as_float(candidate.get("expected_move"))
     if short_vs_expected_move is None or expected_move in (None, 0.0):
         return None
-    return _clamp(short_vs_expected_move / expected_move, 0.0, 1.5)
+    return clamp(short_vs_expected_move / expected_move, 0.0, 1.5)
 
 
 def _resolve_tactical_delta_fit_target(
@@ -717,7 +714,7 @@ def profile_specific_score_components(
 
     buffer_ratio = _carry_buffer_ratio(candidate)
     if style_profile == "carry" and buffer_ratio is not None:
-        buffer_delta = _clamp((buffer_ratio - 0.15) * 30.0, 0.0, 6.0)
+        buffer_delta = clamp((buffer_ratio - 0.15) * 30.0, 0.0, 6.0)
         components["carry_buffer_delta"] = round(buffer_delta, 3)
         evidence["buffer_ratio"] = round(buffer_ratio, 4)
 
@@ -752,7 +749,7 @@ def profile_specific_score_components(
                 candidate,
                 cycle=cycle,
             )
-            delta_fit = _clamp(
+            delta_fit = clamp(
                 1.5 - abs(short_delta - delta_fit_target) * 60.0,
                 0.0,
                 1.5,
@@ -765,12 +762,12 @@ def profile_specific_score_components(
         expected_move = _as_float(candidate.get("expected_move"))
         short_vs_expected_move = _as_float(candidate.get("short_vs_expected_move"))
         if expected_move not in (None, 0.0) and short_vs_expected_move is not None:
-            tactical_buffer_ratio = _clamp(
+            tactical_buffer_ratio = clamp(
                 short_vs_expected_move / expected_move,
                 0.0,
                 1.5,
             )
-            buffer_delta = _clamp((tactical_buffer_ratio - 0.6) * 12.0, 0.0, 2.0)
+            buffer_delta = clamp((tactical_buffer_ratio - 0.6) * 12.0, 0.0, 2.0)
             if buffer_delta > 0.0:
                 components["tactical_buffer_delta"] = round(buffer_delta, 3)
             evidence["buffer_ratio"] = round(tactical_buffer_ratio, 4)
@@ -780,7 +777,7 @@ def profile_specific_score_components(
             if expected_value_dollars is not None:
                 evidence["expected_value_dollars"] = round(expected_value_dollars, 2)
                 if expected_value_dollars > 2.0:
-                    ev_delta = _clamp(
+                    ev_delta = clamp(
                         (expected_value_dollars - 2.0) * 0.04,
                         0.0,
                         1.5,
@@ -791,7 +788,7 @@ def profile_specific_score_components(
                             3,
                         )
                 elif expected_value_dollars < -2.0:
-                    ev_penalty = _clamp(
+                    ev_penalty = clamp(
                         (abs(expected_value_dollars) - 2.0) * 0.12,
                         0.0,
                         4.0,
@@ -809,7 +806,7 @@ def profile_specific_score_components(
                     2,
                 )
                 if slippage_adjusted_ev > 1.0:
-                    slippage_ev_delta = _clamp(
+                    slippage_ev_delta = clamp(
                         (slippage_adjusted_ev - 1.0) * 0.08,
                         0.0,
                         2.5,
@@ -817,7 +814,7 @@ def profile_specific_score_components(
                     if slippage_ev_delta > 0.0:
                         components["tactical_slippage_adjusted_ev_delta"] = round(slippage_ev_delta, 3)
                 elif slippage_adjusted_ev < -1.0:
-                    slippage_ev_penalty = _clamp(
+                    slippage_ev_penalty = clamp(
                         (abs(slippage_adjusted_ev) - 1.0) * 0.28,
                         0.0,
                         8.0,
@@ -828,7 +825,7 @@ def profile_specific_score_components(
         if family == "iron_condor":
             side_balance_score = _as_float(candidate.get("side_balance_score"))
             if side_balance_score is not None:
-                balance_delta = _clamp(
+                balance_delta = clamp(
                     (side_balance_score - 0.55) * 9.0,
                     0.0,
                     3.5,
@@ -843,7 +840,7 @@ def profile_specific_score_components(
             bundle = signal_bundle if isinstance(signal_bundle, Mapping) else {}
             neutral_regime_signal = _as_float(bundle.get("neutral_regime_signal") if bundle else candidate.get("neutral_regime_signal"))
             if neutral_regime_signal is not None:
-                regime_delta = _clamp(
+                regime_delta = clamp(
                     (neutral_regime_signal - 0.60) * 12.0,
                     0.0,
                     2.0,
@@ -860,7 +857,7 @@ def profile_specific_score_components(
 
             residual_iv_richness = _as_float(bundle.get("residual_iv_richness") if bundle else candidate.get("residual_iv_richness"))
             if residual_iv_richness is not None:
-                iv_delta = _clamp(
+                iv_delta = clamp(
                     (residual_iv_richness - 0.60) * 10.0,
                     0.0,
                     1.5,
@@ -892,12 +889,12 @@ def profile_specific_score_components(
             evidence["stale_minutes"] = stale_minutes
             if stale_minutes > 20.0:
                 components["reactive_staleness_penalty"] = round(
-                    _clamp((stale_minutes - 20.0) * 0.25, 0.0, 25.0),
+                    clamp((stale_minutes - 20.0) * 0.25, 0.0, 25.0),
                     3,
                 )
         intraday_score = _as_float(candidate.get("setup_intraday_score"))
         if intraday_score is not None:
-            intraday_delta = _clamp((intraday_score - 55.0) * 0.12, -8.0, 6.0)
+            intraday_delta = clamp((intraday_score - 55.0) * 0.12, -8.0, 6.0)
             components["reactive_intraday_delta"] = round(intraday_delta, 3)
             evidence["intraday_score"] = round(intraday_score, 3)
         if candidate.get("selection_source") == "session_history_recovery":
@@ -975,7 +972,7 @@ def dimension_adjustment(
     if row is None:
         return 0.0, None
     average_estimated_pnl = _as_float(row.get("average_estimated_pnl")) or 0.0
-    return _clamp(average_estimated_pnl, -5.0, 5.0) * weight, {
+    return clamp(average_estimated_pnl, -5.0, 5.0) * weight, {
         "dimension": dimension,
         "group_value": group_value,
         "average_estimated_pnl": average_estimated_pnl,
@@ -1181,7 +1178,7 @@ def build_candidate_selection_score(
         penalty += 20.0
 
     raw_promotion_score = base_quality_score + setup_delta + fill_ratio_delta + calibration_delta + component_boost - penalty - component_penalty
-    promotion_score = round(_clamp(raw_promotion_score, 0.0, 100.0), 1)
+    promotion_score = round(clamp(raw_promotion_score, 0.0, 100.0), 1)
     execution_score = promotion_score
     thresholds = family_score_thresholds(
         style_profile=resolved_style,
@@ -1204,7 +1201,7 @@ def build_candidate_selection_score(
         state_reason = "Below provisional retention floor."
 
     confidence = round(
-        _clamp(
+        clamp(
             (execution_score - monitor_floor) / max(100.0 - monitor_floor, 1.0),
             0.0,
             1.0,

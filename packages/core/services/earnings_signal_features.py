@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from core.common import clamp
 from core.services.earnings_signal_evidence import build_earnings_signal_evidence
 from core.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
 
@@ -61,10 +62,6 @@ SETUP_FIELD_ALIASES = {
 }
 
 
-def _clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
-
-
 def _as_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -84,7 +81,7 @@ def _normalize_unit_score(value: Any) -> float | None:
         return None
     if parsed > 1.0:
         parsed = parsed / 100.0
-    return round(_clamp(parsed, 0.0, 1.0), 4)
+    return round(clamp(parsed, 0.0, 1.0), 4)
 
 
 def _first_present_value(candidate: Mapping[str, Any], aliases: tuple[str, ...]) -> Any:
@@ -172,7 +169,7 @@ def _volume_oi_score(candidate: Mapping[str, Any]) -> float | None:
         open_interest = _as_float(candidate.get(oi_key))
         if volume is None or open_interest in (None, 0.0):
             continue
-        scores.append(_clamp(volume / max(open_interest, 1.0), 0.0, 1.0))
+        scores.append(clamp(volume / max(open_interest, 1.0), 0.0, 1.0))
     return _mean_score(scores)
 
 
@@ -427,10 +424,10 @@ def _resolve_residual_iv_richness(
     components: list[float] = []
     average_iv = _average_implied_volatility(candidate)
     if average_iv is not None:
-        components.append(_clamp((average_iv - 0.22) / 0.28, 0.0, 1.0))
+        components.append(clamp((average_iv - 0.22) / 0.28, 0.0, 1.0))
     expected_move_pct = _as_float(candidate.get("expected_move_pct"))
     if expected_move_pct is not None:
-        components.append(_clamp((expected_move_pct - 0.012) / 0.028, 0.0, 1.0))
+        components.append(clamp((expected_move_pct - 0.012) / 0.028, 0.0, 1.0))
     volume_oi_score = _volume_oi_score(candidate)
     if volume_oi_score is not None:
         components.append(volume_oi_score)
@@ -500,16 +497,16 @@ def _derived_jump_risk_signal(
             components.append(item)
     expected_move_pct = _as_float(candidate.get("expected_move_pct"))
     if expected_move_pct is not None:
-        components.append(_clamp((expected_move_pct - 0.01) / 0.025, 0.0, 1.0))
+        components.append(clamp((expected_move_pct - 0.01) / 0.025, 0.0, 1.0))
     volume_oi_score = _volume_oi_score(candidate)
     if volume_oi_score is not None:
         components.append(volume_oi_score)
     quality_score = _normalize_unit_score(candidate.get("quality_score"))
     if quality_score is not None:
-        components.append(_clamp(quality_score * 0.9, 0.0, 1.0))
+        components.append(clamp(quality_score * 0.9, 0.0, 1.0))
     average_iv = _average_implied_volatility(candidate)
     if average_iv is not None:
-        components.append(_clamp((average_iv - 0.18) / 0.32, 0.0, 1.0))
+        components.append(clamp((average_iv - 0.18) / 0.32, 0.0, 1.0))
     score = _mean_score(components)
     if score is None:
         return None, None
@@ -527,16 +524,16 @@ def _derived_pricing_signal(
         components.append(evidence_quote_quality)
     fill_ratio = _as_float(candidate.get("fill_ratio"))
     if fill_ratio is not None:
-        components.append(_clamp((fill_ratio - 0.6) / 0.35, 0.0, 1.0))
+        components.append(clamp((fill_ratio - 0.6) / 0.35, 0.0, 1.0))
     debit_width_ratio = _as_float(candidate.get("debit_width_ratio"))
     if debit_width_ratio is not None:
-        components.append(_clamp((0.70 - debit_width_ratio) / 0.25, 0.0, 1.0))
+        components.append(clamp((0.70 - debit_width_ratio) / 0.25, 0.0, 1.0))
     modeled_move_vs_implied_move = _resolve_modeled_move_vs_implied_move(candidate)
     if modeled_move_vs_implied_move is not None:
-        components.append(_clamp((modeled_move_vs_implied_move - 0.9) / 0.3, 0.0, 1.0))
+        components.append(clamp((modeled_move_vs_implied_move - 0.9) / 0.3, 0.0, 1.0))
     modeled_move_vs_break_even_move = _resolve_modeled_move_vs_break_even_move(candidate)
     if modeled_move_vs_break_even_move is not None:
-        components.append(_clamp((modeled_move_vs_break_even_move - 0.9) / 0.25, 0.0, 1.0))
+        components.append(clamp((modeled_move_vs_break_even_move - 0.9) / 0.25, 0.0, 1.0))
     score = _mean_score(components)
     if score is None:
         return None, None

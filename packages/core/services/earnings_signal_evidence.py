@@ -3,12 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from core.common import clamp
 from core.services.option_structures import candidate_legs, leg_role
 from core.value_coercion import as_text as _as_text, coerce_float as _as_float
-
-
-def _clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
 
 
 def _strategy_family(strategy: str | None) -> str:
@@ -67,19 +64,19 @@ def _candidate_quote_quality(candidate: Mapping[str, Any]) -> dict[str, Any]:
             quoted_leg_count += 1
         if relative_spread is not None:
             average_relative_spread_values.append(relative_spread)
-            quality_components.append(_clamp((0.18 - relative_spread) / 0.18, 0.0, 1.0))
+            quality_components.append(clamp((0.18 - relative_spread) / 0.18, 0.0, 1.0))
         if bid_size is not None and ask_size is not None:
             leg_min_size = min(bid_size, ask_size)
             min_quote_size = leg_min_size if min_quote_size is None else min(min_quote_size, leg_min_size)
-            quality_components.append(_clamp(leg_min_size / 10.0, 0.0, 1.0))
+            quality_components.append(clamp(leg_min_size / 10.0, 0.0, 1.0))
             if leg_min_size >= 1.0:
                 liquid_leg_count += 1
         if open_interest is not None:
             min_open_interest = open_interest if min_open_interest is None else min(min_open_interest, open_interest)
-            quality_components.append(_clamp(open_interest / 500.0, 0.0, 1.0))
+            quality_components.append(clamp(open_interest / 500.0, 0.0, 1.0))
         if volume is not None:
             min_volume = volume if min_volume is None else min(min_volume, volume)
-            quality_components.append(_clamp(volume / 100.0, 0.0, 1.0))
+            quality_components.append(clamp(volume / 100.0, 0.0, 1.0))
 
     quality_score = round(sum(quality_components) / float(len(quality_components)), 4) if quality_components else None
     average_relative_spread = (
