@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core.services.live_selection import select_live_signals
-from core.services.option_structures import payload_structure_identity
+from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality_evidence import EntryQualityAnalysis, build_entry_quality_analysis
 from core.services.trading_strategy_runtime import EntryRuntime
@@ -37,18 +37,14 @@ def group_candidate_rows(candidates: tuple[Any, ...]) -> dict[str, list[dict[str
     return grouped
 
 
-def _candidate_identity(candidate: Mapping[str, Any]) -> str:
-    return str(candidate.get("candidate_identity") or candidate.get("structure_identity") or payload_structure_identity(dict(candidate)) or "")
-
-
 def _selected_keys(candidates: tuple[Mapping[str, Any], ...]) -> set[tuple[str, str]]:
     return {
         (
             str(candidate.get("underlying_symbol") or "").upper(),
-            _candidate_identity(candidate),
+            resolve_candidate_identity(candidate),
         )
         for candidate in candidates
-        if str(candidate.get("underlying_symbol") or "").strip() and _candidate_identity(candidate)
+        if str(candidate.get("underlying_symbol") or "").strip() and resolve_candidate_identity(candidate)
     }
 
 
@@ -62,7 +58,7 @@ def _rejected_candidates(
     rejected: list[dict[str, Any]] = []
     for rows in symbol_candidates.values():
         for row in rows:
-            key = (str(row.get("underlying_symbol") or "").upper(), _candidate_identity(row))
+            key = (str(row.get("underlying_symbol") or "").upper(), resolve_candidate_identity(row))
             if not key[0] or not key[1] or key in selected:
                 continue
             rejected.append(

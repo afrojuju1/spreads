@@ -14,7 +14,7 @@ from core.services.execution_intents.shared import (
     issue_pending_execution_intent,
 )
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
-from core.services.option_structures import candidate_legs, payload_structure_identity
+from core.services.option_structures import candidate_legs
 from core.services.candidate_fields import (
     candidate_economics,
     candidate_evidence_metrics,
@@ -39,6 +39,7 @@ from core.services.trading_engine.data_runtime import (
     entry_runtime_with_symbols,
     ticker_source_spec_from_strategy_source,
 )
+from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.entry_selection import EntrySelectionEngine, candidate_result_summary
 from core.services.trading_engine.facts import entry_trade_signal_id, persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
@@ -165,20 +166,6 @@ def _quality_evidence_summary(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _candidate_identity(candidate: dict[str, Any]) -> str:
-    return str(
-        candidate.get("candidate_identity")
-        or candidate.get("structure_identity")
-        or payload_structure_identity(candidate, strategy=candidate.get("strategy"))
-        or ""
-    ).strip()
-
-
-def _candidate_identity_from_signal(signal: dict[str, Any]) -> str:
-    candidate = _candidate_payload(signal)
-    return str(signal.get("candidate_identity") or _candidate_identity(candidate)).strip()
-
-
 def _trade_signal_refs(candidate_generation: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     engine_facts = candidate_generation.get("engine_facts") if isinstance(candidate_generation.get("engine_facts"), dict) else {}
     refs = engine_facts.get("trade_signals") if isinstance(engine_facts, dict) else None
@@ -195,7 +182,11 @@ def _trade_signal_id_for_signal(
     signal: dict[str, Any],
 ) -> str | None:
     symbol = str(signal.get("underlying_symbol") or "").upper()
-    candidate_identity = _candidate_identity_from_signal(signal)
+    candidate = _candidate_payload(signal)
+    candidate_identity = str(
+        signal.get("candidate_identity")
+        or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
+    ).strip()
     for ref in _trade_signal_refs(candidate_generation):
         if (
             symbol
@@ -237,6 +228,11 @@ def _persist_trade_admission(
     signal: dict[str, Any],
     expires_at: str,
 ) -> dict[str, Any]:
+    candidate = _candidate_payload(signal)
+    candidate_identity = str(
+        signal.get("candidate_identity")
+        or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
+    ).strip()
     normalized = normalize_lifecycle_admission(
         admission_snapshot,
         admission_kind="entry_open",
@@ -259,7 +255,7 @@ def _persist_trade_admission(
             "execution_intent_id": execution_intent_id,
             "slot_key": slot_key,
             "underlying_symbol": signal.get("underlying_symbol"),
-            "candidate_identity": _candidate_identity_from_signal(signal),
+            "candidate_identity": candidate_identity,
             "admission_boundary": admission_snapshot.get("admission_boundary"),
             "capacity_admission_kind": admission_snapshot.get("capacity_admission_kind"),
             "capacity_admission_status": admission_snapshot.get("capacity_admission_status"),
@@ -297,7 +293,7 @@ def _persist_trade_admission(
         superseded_by_intent_id=None,
         payload={
             "underlying_symbol": signal.get("underlying_symbol"),
-            "candidate_identity": _candidate_identity_from_signal(signal),
+            "candidate_identity": candidate_identity,
             "execution_runtime": runtime.strategy.execution.runtime,
         },
         policy_snapshot=policy_ref,
@@ -399,7 +395,7 @@ def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
         "strategy_family": candidate.get("strategy_family") or candidate.get("strategy") or candidate.get("trade_structure"),
         "profile": candidate.get("profile"),
         "expiration_date": candidate.get("expiration_date"),
-        "structure_identity": _candidate_identity(candidate),
+        "structure_identity": resolve_candidate_identity(candidate, strategy=candidate.get("strategy")),
         "legs": legs,
         "order_payload": order_payload,
         "order_class": order_payload.get("order_class") or ("mleg" if len(legs) > 1 else "single"),
@@ -522,7 +518,7 @@ def _signal_row_from_selection(
         "risk_hints": risk_hints(candidate),
         "source_cycle_id": strategy_run_id,
         "source_selection_state": row.get("selection_state"),
-        "candidate_identity": _candidate_identity(candidate),
+        "candidate_identity": resolve_candidate_identity(candidate, strategy=candidate.get("strategy")),
         "candidate": candidate,
     }
 
@@ -727,7 +723,12 @@ def _refresh_entry_runtime_signals(
     }
     signals = []
     for row in selected_rows:
-        key = (str(row.get("underlying_symbol") or "").upper(), _candidate_identity_from_signal(row))
+        candidate = _candidate_payload(row)
+        candidate_identity = str(
+            row.get("candidate_identity")
+            or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
+        ).strip()
+        key = (str(row.get("underlying_symbol") or "").upper(), candidate_identity)
         signal_ref = signal_refs_by_key.get(key)
         trade_signal_id = (
             str(signal_ref["trade_signal_id"])
@@ -948,6 +949,11 @@ def _run_trading_strategy_entry(
     selected_execution_admission: dict[str, Any] | None = None
     dispatch_job_run_id: str | None = None
     for decision_plan, signal in zip(plan["decisions"], signals, strict=False):
+        candidate = _candidate_payload(signal)
+        candidate_identity = str(
+            signal.get("candidate_identity")
+            or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
+        ).strip()
         slot_key = _slot_key(
             runtime.trading_strategy_id,
             str(signal.get("underlying_symbol") or ""),
@@ -965,7 +971,7 @@ def _run_trading_strategy_entry(
         evidence = {
             "policy_ref": policy_ref,
             "decision_plan": dict(decision_plan["payload"]),
-            "candidate_identity": _candidate_identity_from_signal(signal),
+            "candidate_identity": candidate_identity,
             "underlying_symbol": signal.get("underlying_symbol"),
             **_quality_evidence_summary(signal),
             "candidate_generation": {
@@ -1095,7 +1101,7 @@ def _run_trading_strategy_entry(
                 "underlying_symbol": signal.get("underlying_symbol"),
                 "trade_structure": runtime.trade_structure,
                 "strategy_family": runtime.trade_structure,
-                "candidate_identity": _candidate_identity_from_signal(signal),
+                "candidate_identity": candidate_identity,
                 "legs": signal_legs,
                 "execution_shape": signal_execution_shape,
                 "order_payload": signal_order_payload,

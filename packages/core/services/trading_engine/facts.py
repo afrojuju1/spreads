@@ -6,8 +6,9 @@ import hashlib
 import json
 from typing import Any
 
-from core.services.option_structures import candidate_legs, payload_structure_identity
+from core.services.option_structures import candidate_legs
 from core.services.candidate_fields import candidate_economics, risk_hints
+from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality_evidence import EntryQualityAnalysis, quality_key
 from core.services.trading_strategy_runtime import EntryRuntime
@@ -53,10 +54,6 @@ def _score(row: Mapping[str, Any]) -> float | None:
         if value is not None:
             return value
     return None
-
-
-def _candidate_identity(candidate: Mapping[str, Any]) -> str:
-    return str(candidate.get("candidate_identity") or candidate.get("structure_identity") or payload_structure_identity(dict(candidate)) or "")
 
 
 def _blockers(row: Mapping[str, Any]) -> list[str]:
@@ -282,7 +279,7 @@ def persist_entry_engine_facts(
     trade_candidate_ids_by_identity: dict[str, str] = {}
     if candidate_run_id is not None:
         for rank, candidate in enumerate(candidate_rows, start=1):
-            identity = _candidate_identity(candidate)
+            identity = resolve_candidate_identity(candidate)
             if not identity:
                 continue
             symbol = str(candidate.get("underlying_symbol") or "").upper()
@@ -331,7 +328,7 @@ def persist_entry_engine_facts(
     trade_signal_refs: list[dict[str, Any]] = []
     for signal_row in signal_rows:
         candidate = _candidate_payload(signal_row)
-        identity = str(signal_row.get("candidate_identity") or _candidate_identity(candidate))
+        identity = str(signal_row.get("candidate_identity") or resolve_candidate_identity(candidate))
         if not identity:
             continue
         symbol = str(signal_row.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()

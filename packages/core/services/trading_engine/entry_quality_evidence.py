@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from core.services.option_structures import payload_structure_identity
+from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality import EntryQualityContext, EntryQualityWaterfall, FeatureSnapshot
 from core.services.trading_engine.entry_quality_pipeline import PRE_SELECTION_ENTRY_QUALITY_STAGES, evaluate_entry_quality_snapshot
@@ -22,10 +22,6 @@ def _candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
-def _candidate_identity(candidate: Mapping[str, Any]) -> str:
-    return str(candidate.get("candidate_identity") or candidate.get("structure_identity") or payload_structure_identity(dict(candidate)) or "")
-
-
 def quality_key(
     *,
     symbol: str,
@@ -38,14 +34,14 @@ def quality_key_for_candidate(candidate: Mapping[str, Any]) -> tuple[str, str] |
     symbol = str(candidate.get("underlying_symbol") or "").upper()
     if not symbol:
         return None
-    return quality_key(symbol=symbol, candidate_identity=_candidate_identity(candidate))
+    return quality_key(symbol=symbol, candidate_identity=resolve_candidate_identity(candidate))
 
 
 def quality_key_for_snapshot(snapshot: FeatureSnapshot) -> tuple[str, str]:
     candidate = snapshot.candidate if isinstance(snapshot.candidate, Mapping) else {}
     return quality_key(
         symbol=snapshot.symbol,
-        candidate_identity=_candidate_identity(candidate) if candidate else snapshot.metadata.get("candidate_identity"),
+        candidate_identity=resolve_candidate_identity(candidate) if candidate else snapshot.metadata.get("candidate_identity"),
     )
 
 
