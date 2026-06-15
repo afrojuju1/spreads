@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 import html
 import math
 import os
@@ -12,7 +14,9 @@ from typing import Any
 from core.common import parse_float, parse_int, pick
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.integrations.http_client import VendorHttpClient
+from core.services.market_dates import NEW_YORK
 from core.services.alpaca import create_alpaca_client_from_env
+from core.services.strategy_candidate_builders.market_data import build_expected_move_estimates, group_contracts_by_expiration
 from core.services.trading_strategies import build_entry_strategy_symbols, load_universe_symbols
 from core.value_coercion import utc_now_iso as _iso_now
 
@@ -59,6 +63,125 @@ def _as_bool(value: Any, default: bool) -> bool:
     if rendered in {"0", "false", "no", "n", "off"}:
         return False
     return default
+
+
+@dataclass(frozen=True)
+class TargetDteOptionFilterConfig:
+    enabled: bool
+    min_dte: int
+    max_dte: int
+    feed: str
+    stock_feed: str
+    require_expected_move: bool
+    min_expected_move_count: int
+
+
+def _target_dte_option_filter_config(recipe_args: Mapping[str, Any]) -> TargetDteOptionFilterConfig:
+    raw = recipe_args.get("target_dte_options") or recipe_args.get("target_dte_option_filter")
+    mapping = raw if isinstance(raw, Mapping) else {}
+    enabled = _as_bool(mapping.get("enabled"), False) if isinstance(raw, Mapping) else _as_bool(raw, False)
+    min_dte = max(_as_int(mapping.get("min_dte", recipe_args.get("min_dte")), 7), 0)
+    max_dte = max(_as_int(mapping.get("max_dte", recipe_args.get("max_dte")), 21), min_dte)
+    return TargetDteOptionFilterConfig(
+        enabled=enabled,
+        min_dte=min_dte,
+        max_dte=max_dte,
+        feed=_as_optional_text(mapping.get("feed") or recipe_args.get("feed")) or "opra",
+        stock_feed=_as_optional_text(mapping.get("stock_feed") or recipe_args.get("stock_feed")) or "sip",
+        require_expected_move=_as_bool(mapping.get("require_expected_move"), True),
+        min_expected_move_count=max(_as_int(mapping.get("min_expected_move_count"), 1), 1),
+    )
+
+
+def _target_dte_option_filter_result(
+    *,
+    client: Any,
+    symbol: str,
+    config: TargetDteOptionFilterConfig,
+) -> dict[str, Any]:
+    reference_date = datetime.now(NEW_YORK).date()
+    min_expiration = (reference_date + timedelta(days=config.min_dte)).isoformat()
+    max_expiration = (reference_date + timedelta(days=config.max_dte)).isoformat()
+    result: dict[str, Any] = {
+        "status": "passed",
+        "reason": None,
+        "min_dte": config.min_dte,
+        "max_dte": config.max_dte,
+        "min_expiration": min_expiration,
+        "max_expiration": max_expiration,
+        "feed": config.feed,
+        "require_expected_move": config.require_expected_move,
+        "min_expected_move_count": config.min_expected_move_count,
+    }
+
+    call_contracts = client.list_option_contracts(
+        symbol,
+        min_expiration,
+        max_expiration,
+        option_type="call",
+    )
+    put_contracts = client.list_option_contracts(
+        symbol,
+        min_expiration,
+        max_expiration,
+        option_type="put",
+    )
+    call_contracts_by_expiration = group_contracts_by_expiration(call_contracts)
+    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
+    expirations = sorted(set(call_contracts_by_expiration) | set(put_contracts_by_expiration))
+    common_expirations = sorted(set(call_contracts_by_expiration) & set(put_contracts_by_expiration))
+    result.update(
+        {
+            "call_contract_count": len(call_contracts),
+            "put_contract_count": len(put_contracts),
+            "contract_count": len(call_contracts) + len(put_contracts),
+            "expiration_count": len(expirations),
+            "common_expiration_count": len(common_expirations),
+            "expirations": expirations,
+        }
+    )
+    if not call_contracts or not put_contracts:
+        result.update({"status": "filtered_out", "reason": "target_dte_contracts_missing"})
+        return result
+    if not common_expirations:
+        result.update({"status": "filtered_out", "reason": "target_dte_common_expiration_missing"})
+        return result
+    if not config.require_expected_move:
+        return result
+
+    spot_price = client.get_underlying_price(symbol, config.stock_feed)
+    call_snapshots_by_expiration = {}
+    put_snapshots_by_expiration = {}
+    for expiration_date in common_expirations:
+        call_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
+            symbol,
+            expiration_date,
+            "call",
+            config.feed,
+        )
+        put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
+            symbol,
+            expiration_date,
+            "put",
+            config.feed,
+        )
+    expected_moves = build_expected_move_estimates(
+        spot_price=spot_price,
+        call_contracts_by_expiration=call_contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=call_snapshots_by_expiration,
+        put_snapshots_by_expiration=put_snapshots_by_expiration,
+    )
+    result.update(
+        {
+            "spot_price": round(float(spot_price), 4),
+            "expected_move_count": len(expected_moves),
+            "expected_move_expirations": sorted(expected_moves),
+        }
+    )
+    if len(expected_moves) < config.min_expected_move_count:
+        result.update({"status": "filtered_out", "reason": "target_dte_expected_move_missing"})
+    return result
 
 
 _ENV_TOKEN_REGEX = re.compile(r"\$\{([A-Z0-9_]+)\}")
@@ -667,6 +790,7 @@ def _run_finviz_screener_feed(
     )
     exclude_industries = _finviz_text_list_arg(recipe_args.get("exclude_industries"))
     exclude_company_keywords = _finviz_text_list_arg(recipe_args.get("exclude_company_keywords"))
+    target_option_filter = _target_dte_option_filter_config(recipe_args)
     timeout_seconds = max(_as_int(recipe_args.get("timeout_seconds"), 20), 1)
     cookie_env = _as_optional_text(recipe_args.get("cookie_env")) or "FINVIZ_COOKIE"
     source_kind, source_value = _finviz_source_config(recipe_args)
@@ -708,6 +832,8 @@ def _run_finviz_screener_feed(
     below_min_market_cap_count = 0
     below_min_volume_count = 0
     excluded_instrument_reason_counts: dict[str, int] = {}
+    target_option_filter_reason_counts: dict[str, int] = {}
+    target_option_filter_client: Any | None = None
     for index, row in enumerate(rows):
         symbol = _normalize_symbol(pick(row, "ticker", "symbol"))
         if symbol is None:
@@ -796,6 +922,39 @@ def _run_finviz_screener_feed(
                 }
             )
             continue
+        target_option_filter_result: dict[str, Any] | None = None
+        if target_option_filter.enabled:
+            if target_option_filter_client is None:
+                target_option_filter_client = create_alpaca_client_from_env()
+            try:
+                target_option_filter_result = _target_dte_option_filter_result(
+                    client=target_option_filter_client,
+                    symbol=symbol,
+                    config=target_option_filter,
+                )
+            except AlpacaRequestError as exc:
+                target_option_filter_result = {
+                    "status": "filtered_out",
+                    "reason": "target_dte_option_filter_error",
+                    "error": str(exc),
+                    "min_dte": target_option_filter.min_dte,
+                    "max_dte": target_option_filter.max_dte,
+                    "feed": target_option_filter.feed,
+                }
+            filter_status = str(target_option_filter_result.get("status") or "").strip().lower()
+            if filter_status != "passed":
+                reason = str(target_option_filter_result.get("reason") or "target_dte_option_filter_failed")
+                target_option_filter_reason_counts[reason] = target_option_filter_reason_counts.get(reason, 0) + 1
+                filtered_observations.append(
+                    {
+                        **base_observation,
+                        "observation_state": "filtered_out",
+                        "reason_codes": ["finviz_screen", reason],
+                        "source_tags": [*base_observation["source_tags"], "filter:target_dte_options"],
+                        "target_dte_option_filter": target_option_filter_result,
+                    }
+                )
+                continue
         reason_codes = ["finviz_screen"]
         if change_percent is not None:
             if change_percent > 0:
@@ -806,11 +965,19 @@ def _run_finviz_screener_feed(
             reason_codes.append("relative_volume")
         if min_market_cap > 0:
             reason_codes.append("market_cap_filter")
+        source_tags = list(base_observation["source_tags"])
+        if target_option_filter_result is not None:
+            reason_codes.append("target_dte_options_available")
+            source_tags.append("filter:target_dte_options")
+            if int(target_option_filter_result.get("expected_move_count") or 0) > 0:
+                reason_codes.append("target_dte_expected_move_available")
         candidates.append(
             {
                 **base_observation,
                 "observation_state": "observed",
                 "reason_codes": reason_codes,
+                "source_tags": source_tags,
+                "target_dte_option_filter": target_option_filter_result,
             }
         )
 
@@ -890,6 +1057,16 @@ def _run_finviz_screener_feed(
             "below_min_volume_count": below_min_volume_count,
             "excluded_instrument_count": sum(excluded_instrument_reason_counts.values()),
             "excluded_instrument_reason_counts": dict(sorted(excluded_instrument_reason_counts.items())),
+            "target_dte_option_filter": {
+                "enabled": target_option_filter.enabled,
+                "min_dte": target_option_filter.min_dte,
+                "max_dte": target_option_filter.max_dte,
+                "feed": target_option_filter.feed,
+                "require_expected_move": target_option_filter.require_expected_move,
+                "min_expected_move_count": target_option_filter.min_expected_move_count,
+                "filtered_count": sum(target_option_filter_reason_counts.values()),
+                "reason_counts": dict(sorted(target_option_filter_reason_counts.items())),
+            },
         },
         "degradation": {
             "status": "ok" if symbols else "empty",

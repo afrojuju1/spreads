@@ -12,6 +12,14 @@ recipe_args:
   min_price: 10
   min_market_cap: 1000000000
   min_volume: 1000000
+  target_dte_options:
+    enabled: true
+    min_dte: 7
+    max_dte: 21
+    feed: opra
+    stock_feed: sip
+    require_expected_move: true
+    min_expected_move_count: 1
   exclude_industries:
     - Exchange Traded Fund
   exclude_company_keywords:

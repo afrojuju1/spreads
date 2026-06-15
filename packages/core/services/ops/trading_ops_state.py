@@ -89,6 +89,12 @@ NO_ENTRY_REASON_GROUPS = (
         (),
     ),
     (
+        "expected_move_coverage",
+        "partial expected-move coverage",
+        (),
+        ("partial_expected_move_coverage_gap",),
+    ),
+    (
         "option_liquidity",
         "option liquidity",
         ("open_interest_", "relative_spread_", "bid_ask_", "quote_size_"),
@@ -1248,7 +1254,24 @@ def _reason_matches_group(reason: str, prefixes: tuple[str, ...], exact: tuple[s
     return reason in exact or any(reason.startswith(prefix) for prefix in prefixes)
 
 
-def _entry_blocker_groups(candidate_state: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _expected_move_coverage(candidate_state: Mapping[str, Any]) -> dict[str, int]:
+    counts: list[int] = []
+    for diagnostic in as_list(candidate_state.get("diagnostics")):
+        if not isinstance(diagnostic, Mapping):
+            continue
+        market_data = as_mapping(diagnostic.get("market_data"))
+        count = coerce_int(market_data.get("expected_move_count") or diagnostic.get("expected_move_count"))
+        if count is not None:
+            counts.append(int(count))
+    return {
+        "diagnostic_count": len(counts),
+        "positive_symbol_count": sum(1 for count in counts if count > 0),
+        "zero_symbol_count": sum(1 for count in counts if count <= 0),
+        "expected_move_count": sum(max(count, 0) for count in counts),
+    }
+
+
+def _entry_blocker_counts(candidate_state: Mapping[str, Any]) -> Counter[str]:
     counts: Counter[str] = Counter()
     for source_key in ("top_quality_blockers", "top_rejection_counts"):
         for reason, raw_count in as_mapping(candidate_state.get(source_key)).items():
@@ -1256,6 +1279,19 @@ def _entry_blocker_groups(candidate_state: Mapping[str, Any]) -> list[dict[str, 
             count = coerce_int(raw_count) or 0
             if reason_text and count > 0:
                 counts[reason_text] += count
+
+    coverage = _expected_move_coverage(candidate_state)
+    if coverage["diagnostic_count"] > 0 and coverage["positive_symbol_count"] > 0 and coverage["zero_symbol_count"] == 0:
+        partial_count = 0
+        for reason in ("no_expected_move", "target_dte_expected_move_missing"):
+            partial_count += counts.pop(reason, 0)
+        if partial_count > 0:
+            counts["partial_expected_move_coverage_gap"] += partial_count
+    return counts
+
+
+def _entry_blocker_groups(candidate_state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    counts = _entry_blocker_counts(candidate_state)
 
     groups: list[dict[str, Any]] = []
     matched_reasons: set[str] = set()
