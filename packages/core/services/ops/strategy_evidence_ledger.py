@@ -135,6 +135,13 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "candidate_run_count": 0,
             "candidate_count": 0,
             "trade_candidate_count": 0,
+            "diagnostic_symbol_count": 0,
+            "diagnostic_status_counts": {},
+            "raw_candidate_count": 0,
+            "postprocess_candidate_count": 0,
+            "runtime_candidate_count": 0,
+            "returned_candidate_count": 0,
+            "candidate_productivity_state": "not_evaluated",
             "latest_candidate_run_id": None,
             "latest_generated_at": None,
         },
@@ -171,6 +178,43 @@ def _finalize_state_counts(payload: dict[str, Any], key: str, count_key: str) ->
     state_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload[key].get(count_key)).items()))
     payload[key][count_key] = state_counts
     payload[key][key[:-1] + "_count"] = int(sum(state_counts.values()))
+
+
+def _candidate_productivity_state(candidate_payload: Mapping[str, Any]) -> str:
+    if coerce_int(candidate_payload.get("candidate_run_count")) in (None, 0):
+        return "not_evaluated"
+    candidate_count = int(coerce_int(candidate_payload.get("candidate_count")) or 0)
+    trade_candidate_count = int(coerce_int(candidate_payload.get("trade_candidate_count")) or 0)
+    returned_candidate_count = int(coerce_int(candidate_payload.get("returned_candidate_count")) or 0)
+    if candidate_count > 0 or trade_candidate_count > 0 or returned_candidate_count > 0:
+        return "candidates_available"
+
+    raw_candidate_count = int(coerce_int(candidate_payload.get("raw_candidate_count")) or 0)
+    postprocess_candidate_count = int(coerce_int(candidate_payload.get("postprocess_candidate_count")) or 0)
+    runtime_candidate_count = int(coerce_int(candidate_payload.get("runtime_candidate_count")) or 0)
+    if raw_candidate_count > 0:
+        diagnostic_status_counts = as_mapping(candidate_payload.get("diagnostic_status_counts"))
+        if int(coerce_int(diagnostic_status_counts.get("ranking_rejected")) or 0) > 0:
+            return "ranking_policy_filtered"
+        if int(coerce_int(diagnostic_status_counts.get("postprocess_rejected")) or 0) > 0 or postprocess_candidate_count == 0:
+            return "postprocess_filtered"
+        if runtime_candidate_count == 0:
+            return "runtime_filtered"
+        return "selection_filtered"
+
+    diagnostic_symbol_count = int(coerce_int(candidate_payload.get("diagnostic_symbol_count")) or 0)
+    if diagnostic_symbol_count <= 0:
+        return "diagnostics_missing"
+    diagnostic_status_counts = as_mapping(candidate_payload.get("diagnostic_status_counts"))
+    data_unavailable_count = int(coerce_int(diagnostic_status_counts.get("data_unavailable")) or 0)
+    no_raw_count = int(coerce_int(diagnostic_status_counts.get("no_raw_candidates")) or 0)
+    if data_unavailable_count >= diagnostic_symbol_count:
+        return "data_unavailable"
+    if no_raw_count > 0 and data_unavailable_count > 0:
+        return "mixed_data_and_no_raw_candidates"
+    if no_raw_count > 0:
+        return "no_raw_candidates"
+    return "no_candidate_output"
 
 
 def _build_engine_strategy_ledgers(
@@ -293,14 +337,35 @@ def _build_engine_strategy_ledgers(
         diagnostic_rows = session.execute(
             select(
                 CandidateSymbolDiagnosticModel.candidate_run_id,
+                CandidateSymbolDiagnosticModel.diagnostic_status,
+                CandidateSymbolDiagnosticModel.raw_candidate_count,
+                CandidateSymbolDiagnosticModel.postprocess_candidate_count,
+                CandidateSymbolDiagnosticModel.runtime_candidate_count,
+                CandidateSymbolDiagnosticModel.returned_candidate_count,
                 CandidateSymbolDiagnosticModel.rejection_counts_json,
                 CandidateSymbolDiagnosticModel.evidence_json,
             ).where(CandidateSymbolDiagnosticModel.candidate_run_id.in_(list(candidate_run_strategy)))
         )
-        for candidate_run_id, rejection_counts_json, evidence_json in diagnostic_rows:
+        for (
+            candidate_run_id,
+            diagnostic_status,
+            raw_candidate_count,
+            postprocess_candidate_count,
+            runtime_candidate_count,
+            returned_candidate_count,
+            rejection_counts_json,
+            evidence_json,
+        ) in diagnostic_rows:
             strategy_key = candidate_run_strategy.get(str(candidate_run_id))
             if strategy_key is None:
                 continue
+            candidate_payload = payloads[strategy_key]["candidates"]
+            candidate_payload["diagnostic_symbol_count"] += 1
+            _bump_count(candidate_payload["diagnostic_status_counts"], diagnostic_status)
+            candidate_payload["raw_candidate_count"] += int(raw_candidate_count or 0)
+            candidate_payload["postprocess_candidate_count"] += int(postprocess_candidate_count or 0)
+            candidate_payload["runtime_candidate_count"] += int(runtime_candidate_count or 0)
+            candidate_payload["returned_candidate_count"] += int(returned_candidate_count or 0)
             _add_count_mapping(blockers_by_strategy[strategy_key], rejection_counts_json)
             _add_quality_waterfall_reasons(blockers_by_strategy[strategy_key], as_mapping(evidence_json).get("quality_waterfall"))
 
@@ -416,6 +481,11 @@ def _build_engine_strategy_ledgers(
         _finalize_state_counts(payload, "signals", "signal_state_counts")
         _finalize_state_counts(payload, "decisions", "decision_state_counts")
         _finalize_state_counts(payload, "admissions", "admission_state_counts")
+        candidate_payload = payload["candidates"]
+        candidate_payload["diagnostic_status_counts"] = dict(
+            sorted((str(state), int(count)) for state, count in as_mapping(candidate_payload.get("diagnostic_status_counts")).items())
+        )
+        candidate_payload["candidate_productivity_state"] = _candidate_productivity_state(candidate_payload)
         payload["decisions"]["selected_count"] = int(payload["decisions"]["decision_state_counts"].get("selected", 0))
         payload["top_blocker_reasons"] = _top_blockers(blockers_by_strategy[strategy_id])
         payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))

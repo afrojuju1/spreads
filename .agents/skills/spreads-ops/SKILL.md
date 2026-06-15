@@ -79,6 +79,7 @@ Use these splits:
 - `capture_status=empty`, `baseline_only`, or `recovery_only` is a data capture problem.
 - stale source or candidate state during market hours points at ticker source, data worker, scheduler, or strategy-entry orchestration.
 - healthy source and candidate state with no selected decisions is usually strategy output, not a runtime outage.
+- For strategy-output diagnosis, use `spreads ops strategy-ledger --date YYYY-MM-DD --json` and inspect `candidates.candidate_productivity_state`, `diagnostic_status_counts`, and raw/postprocess/runtime/returned counts before calling a strategy barren.
 - selected decisions without active or filled intents point at admission, dispatch, or broker submission.
 - stale open executions or unknown submit status point at execution lifecycle reconciliation.
 - historical failed jobs are not live blockers when canonical state recovered and `actionable_failed_count=0`.

@@ -47,22 +47,23 @@ uv run spreads ops state --json
 
 1. Scope the strategy, market date, symbol set, and exact question.
 2. Collect source, candidate, signal, decision, admission, intent, attempt, fill, position, and close evidence.
-3. Classify the blocker as data completeness, option-chain viability, structure filter, quality filter, strategy selection, portfolio admission, execution admission, dispatch/broker submission, or management/exit logic.
-4. Propose the smallest catalog/profile/runtime change that fixes the real blocker.
-5. Validate config before rollout:
+3. In `spreads ops strategy-ledger`, read `candidates.candidate_productivity_state`, `diagnostic_status_counts`, and raw/postprocess/runtime/returned candidate counts before tuning. Separate no raw candidates from postprocess/ranking filtering and from selected candidates that later fail admission or execution.
+4. Classify the blocker as data completeness, option-chain viability, structure filter, quality filter, strategy selection, portfolio admission, execution admission, dispatch/broker submission, or management/exit logic.
+5. Propose the smallest catalog/profile/runtime change that fixes the real blocker.
+6. Validate config before rollout:
 
 ```bash
 uv run spreads config validate --json
 ```
 
-6. If code or live config changed, hand off to `spreads-live-rollout` for Docker restart and live verification.
+7. If code or live config changed, hand off to `spreads-live-rollout` for Docker restart and live verification.
 
 ## Research Bar
 
 Do not tune from vibes. A strategy recommendation should name:
 
 - the market date or date range
-- current selected/rejected counts
+- current raw/postprocess/runtime/returned, selected/rejected, and persisted trade-candidate counts
 - top blockers and thresholds
 - expected effect of the change
 - downside risk

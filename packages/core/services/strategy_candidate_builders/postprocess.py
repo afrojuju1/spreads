@@ -19,6 +19,8 @@ from core.services.strategy_candidate_builders.settings import normalize_calenda
 
 _CONSENSUS_BACKED_EARNINGS_STATUSES = {"consensus", "date_only"}
 _RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE = {"medium", "high"}
+_EARNINGS_CONFIDENCE_REQUIRED_STRATEGIES = {"call_debit_spread", "put_debit_spread", "long_straddle", "long_strangle"}
+_CLEAN_EARNINGS_PHASES = {"", "clean", "post_event_settled"}
 
 
 def _calendar_confidence_reason(
@@ -30,6 +32,14 @@ def _calendar_confidence_reason(
     if underlying_type != "single_name_equity":
         return None
     if str(candidate.calendar_confidence or "").strip().lower() != "low":
+        return None
+    earnings_phase = str(candidate.earnings_phase or "").strip().lower()
+    earnings_context_matters = (
+        candidate.strategy in _EARNINGS_CONFIDENCE_REQUIRED_STRATEGIES
+        or bool(candidate.earnings_horizon_crosses_report)
+        or earnings_phase not in _CLEAN_EARNINGS_PHASES
+    )
+    if not earnings_context_matters:
         return None
 
     policy = normalize_calendar_confidence_policy(getattr(args, "calendar_confidence_policy", None))

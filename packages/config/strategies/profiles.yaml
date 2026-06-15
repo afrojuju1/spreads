@@ -70,8 +70,8 @@ routine_profiles:
 
 liquidity_profiles:
   liquid_momentum_options:
-    min_open_interest: 500
-    max_leg_spread_pct_mid: 0.10
+    min_open_interest: 200
+    max_leg_spread_pct_mid: 0.12
     max_quote_age_seconds: 180
   short_dated_liquid_options:
     min_open_interest: 200
@@ -89,6 +89,13 @@ structure_models:
         min: 0.45
         max: 0.75
         target: 0.55
+      ranking:
+        max_entry_slippage_dollars: 20
+        weights:
+          probability_of_profit: 0.12
+          expected_value_dollars: 0.20
+          slippage_adjusted_expected_value_dollars: 0.24
+          entry_slippage_dollars: 0.24
   index_call_credit_4_10d:
     quality_profile: call_credit_spread_v1
     build:
