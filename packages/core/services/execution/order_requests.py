@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from core.money import option_limit_price
 from core.services.account_capacity import estimate_buying_power_requirement
 from core.services.candidate_policy import resolve_candidate_profile, resolve_deployment_quality_thresholds
 from core.services.execution_portfolio import build_structure_quote_snapshot
@@ -786,7 +787,7 @@ def _resolve_open_limit_price(
     premium_kind = net_premium_kind(_strategy_family_from_payload(candidate_payload))
     explicit_value = _normalize_limit_value(explicit_limit_price)
     if explicit_value is not None:
-        return round(max(explicit_value, 0.01), 2)
+        return option_limit_price(explicit_value) or 0.01
 
     midpoint_value, natural_value = _resolve_candidate_entry_prices(candidate_payload)
     if midpoint_value is None:
@@ -797,7 +798,7 @@ def _resolve_open_limit_price(
 
     pricing_mode = str(execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE)
     if pricing_mode == "midpoint" or natural_value is None or natural_value <= 0:
-        return round(max(midpoint_value, 0.01), 2)
+        return option_limit_price(midpoint_value) or 0.01
 
     fill_ratio = _clamp_fraction(coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
     min_credit_retention_pct = _clamp_fraction(
@@ -818,20 +819,19 @@ def _resolve_open_limit_price(
         max_concession_to_ceiling = max(debit_ceiling - midpoint_value, 0.0)
         fill_ratio_concession = max(natural_value - midpoint_value, 0.0) * max(1.0 - fill_ratio, 0.0)
         concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_ceiling)
-        return round(
+        return option_limit_price(
             min(
                 max(midpoint_value + concession, 0.01),
                 max(natural_value, 0.01),
                 debit_ceiling,
-            ),
-            2,
-        )
+            )
+        ) or 0.01
 
     credit_floor = max(natural_value, midpoint_value * min_credit_retention_pct, 0.01)
     max_concession_to_floor = max(midpoint_value - credit_floor, 0.0)
     fill_ratio_concession = max(midpoint_value - natural_value, 0.0) * max(1.0 - fill_ratio, 0.0)
     concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_floor)
-    return round(max(midpoint_value - concession, credit_floor, 0.01), 2)
+    return option_limit_price(max(midpoint_value - concession, credit_floor, 0.01)) or 0.01
 
 
 def _build_close_order_request(
@@ -854,6 +854,9 @@ def _build_close_order_request(
     resolved_limit_price = _normalize_limit_value(resolved_limit_price)
     if resolved_limit_price is None or resolved_limit_price <= 0:
         raise ValueError("Close execution requires a positive limit price or a quoted close mark")
+    order_limit_price = option_limit_price(resolved_limit_price)
+    if order_limit_price is None:
+        raise ValueError("Close execution requires a positive limit price or a quoted close mark")
 
     strategy_family = _strategy_family_from_payload(position)
     resolved_legs = normalize_legs(position.get("legs"))
@@ -863,13 +866,13 @@ def _build_close_order_request(
         raise ValueError("Close execution requires canonical position legs")
     request = build_order_payload(
         legs=closing_legs(resolved_legs),
-        limit_price=float(resolved_limit_price),
+        limit_price=order_limit_price,
         strategy_family=strategy_family,
         trade_intent=CLOSE_TRADE_INTENT,
         quantity=resolved_quantity,
     )
     request["client_order_id"] = client_order_id
-    return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
+    return request, int(resolved_quantity), order_limit_price
 
 
 def _normalize_submit_order_request(

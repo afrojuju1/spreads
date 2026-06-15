@@ -5,8 +5,9 @@ from typing import Any
 
 import pandas_market_calendars as mcal
 
+from core.money import option_limit_price, premium_float
 from core.services.option_structures import net_premium_kind
-from core.value_coercion import as_text, coerce_bool, coerce_float, coerce_int
+from core.value_coercion import as_text, coerce_bool, coerce_float, coerce_int, utc_iso
 from core.storage.serializers import parse_datetime
 
 DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE = 10
@@ -59,15 +60,8 @@ def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] |
         policy["force_close_at"] = None
         return policy
     force_close_at = market_close - timedelta(minutes=force_close_minutes)
-    policy["force_close_at"] = force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+    policy["force_close_at"] = utc_iso(force_close_at)
     return policy
-
-
-def _round_money(value: Any) -> float | None:
-    parsed = coerce_float(value)
-    if parsed is None:
-        return None
-    return round(parsed, 4)
 
 
 def _profit_target_mark(
@@ -82,8 +76,8 @@ def _profit_target_mark(
     if profit_target_pct is None:
         return None
     if premium_kind == "debit":
-        return round(entry_value * (1.0 + profit_target_pct), 4)
-    return round(entry_value * max(1.0 - profit_target_pct, 0.0), 4)
+        return premium_float(entry_value * (1.0 + profit_target_pct))
+    return premium_float(entry_value * max(1.0 - profit_target_pct, 0.0))
 
 
 def _stop_mark(
@@ -98,8 +92,8 @@ def _stop_mark(
     if stop_multiple is None:
         return None
     if premium_kind == "debit":
-        return round(max(entry_value / max(stop_multiple, 1.0), 0.0), 4)
-    return round(entry_value * stop_multiple, 4)
+        return premium_float(max(entry_value / max(stop_multiple, 1.0), 0.0))
+    return premium_float(entry_value * stop_multiple)
 
 
 def _exit_policy_details(
@@ -113,10 +107,10 @@ def _exit_policy_details(
 ) -> dict[str, Any]:
     return {
         "policy": dict(policy),
-        "mark": _round_money(mark),
-        "effective_mark": _round_money(effective_mark),
+        "mark": premium_float(mark),
+        "effective_mark": premium_float(effective_mark),
         "mark_state": mark_state,
-        "entry_value": _round_money(entry_value),
+        "entry_value": premium_float(entry_value),
         "premium_kind": premium_kind,
         "profit_target_mark": _profit_target_mark(
             entry_value=entry_value,
@@ -163,14 +157,14 @@ def _resolve_force_close_limit_price(
     fallback_mark: float | None,
 ) -> tuple[float | None, str | None]:
     if mark is not None and mark > 0:
-        return round(max(mark, 0.01), 2), "mark"
+        return option_limit_price(mark), "mark"
 
     width = coerce_float(position.get("width"))
     if width is not None and width > 0:
-        return round(max(width, 0.01), 2), "width"
+        return option_limit_price(width), "width"
 
     if fallback_mark is not None and fallback_mark > 0:
-        return round(max(fallback_mark, 0.01), 2), "stale_mark"
+        return option_limit_price(fallback_mark), "stale_mark"
     return None, None
 
 
@@ -226,7 +220,7 @@ def evaluate_exit_policy(
             "should_close": True,
             "reason": "profit_target",
             "recipe_ref": None,
-            "limit_price": round(max(effective_mark, 0.01), 2),
+            "limit_price": option_limit_price(effective_mark),
             "limit_price_source": "mark",
             **details,
         }
@@ -243,7 +237,7 @@ def evaluate_exit_policy(
             "should_close": True,
             "reason": "stop_multiple",
             "recipe_ref": None,
-            "limit_price": round(max(effective_mark, 0.01), 2),
+            "limit_price": option_limit_price(effective_mark),
             "limit_price_source": "mark",
             **details,
         }

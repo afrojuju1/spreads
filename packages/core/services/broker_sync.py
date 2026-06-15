@@ -14,7 +14,7 @@ from core.services.option_structures import position_legs, unique_leg_symbols
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.session_positions import sync_session_position_from_attempt
-from core.value_coercion import as_text, coerce_float, utc_now_iso
+from core.value_coercion import as_text, coerce_float, utc_iso, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 BROKER_SYNC_KEY = "broker_sync:alpaca"
@@ -147,7 +147,7 @@ def _sync_recent_fill_activities(
     if activities:
         timestamps = [timestamp for timestamp in (_parse_activity_timestamp(activity) for activity in activities) if timestamp]
         if timestamps:
-            latest_activity_timestamp = max(timestamps).isoformat(timespec="seconds").replace("+00:00", "Z")
+            latest_activity_timestamp = utc_iso(max(timestamps))
 
     summary = {
         "activity_dates": activity_dates,

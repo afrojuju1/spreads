@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from core.money import money_sum_float
 from core.services.execution_intents.shared import OPEN_POSITION_STATES
 from core.services.trading_strategies import TradingStrategyConfig
 from core.value_coercion import coerce_float
@@ -71,8 +72,8 @@ def build_trading_strategy_metrics(
     daily_positions = [
         row for row in positions if row.get("market_date_opened") == resolved_market_date or row.get("market_date_closed") == resolved_market_date
     ]
-    daily_realized_pnl = sum(coerce_float(row.get("realized_pnl")) or 0.0 for row in daily_positions)
-    open_unrealized_pnl = sum(coerce_float(row.get("unrealized_pnl")) or 0.0 for row in open_positions)
+    daily_realized_pnl = money_sum_float(coerce_float(row.get("realized_pnl")) for row in daily_positions)
+    open_unrealized_pnl = money_sum_float(coerce_float(row.get("unrealized_pnl")) for row in open_positions)
 
     return {
         "trading_strategy_id": trading_strategy_id,
@@ -88,9 +89,9 @@ def build_trading_strategy_metrics(
         "daily_close_fill_count": sum(1 for row in close_intents if str(row.get("state") or "") == "filled"),
         "position_count": len(positions),
         "open_position_count": len(open_positions),
-        "daily_realized_pnl": round(daily_realized_pnl, 2),
-        "open_unrealized_pnl": round(open_unrealized_pnl, 2),
-        "daily_total_pnl": round(daily_realized_pnl + open_unrealized_pnl, 2),
+        "daily_realized_pnl": daily_realized_pnl,
+        "open_unrealized_pnl": open_unrealized_pnl,
+        "daily_total_pnl": money_sum_float([daily_realized_pnl, open_unrealized_pnl]),
     }
 
 

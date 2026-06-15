@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from core.db.decorators import with_storage
+from core.money import money_float, money_sum_float
 from core.jobs.orchestration import NEW_YORK
 from core.jobs.specs import get_declared_job_row
 from core.services.broker_sync import BROKER_SYNC_KEY
@@ -44,6 +45,8 @@ from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,
+    utc_iso,
+    utc_now,
     utc_now_iso,
 )
 
@@ -278,8 +281,8 @@ def _top_positions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "position_id": row.get("position_id"),
                 "underlying_symbol": row.get("underlying_symbol") or row.get("root_symbol"),
                 "status": row.get("status") or row.get("position_status"),
-                "exposure": 0.0 if exposure is None else round(abs(exposure), 2),
-                "net_pnl": None if net_pnl is None else round(net_pnl, 2),
+                "exposure": 0.0 if exposure is None else money_float(abs(exposure)),
+                "net_pnl": None if net_pnl is None else money_float(net_pnl),
                 "risk_status": row.get("risk_status"),
             }
         )
@@ -380,8 +383,8 @@ def _broker_exposure_state(
         "external_manual_option_position_count": external_option_count,
         "owner_counts": dict(sorted(owner_counts.items())),
         "option_owner_counts": dict(sorted(option_owner_counts.items())),
-        "total_market_value": round(total_market_value, 2),
-        "option_market_value": round(option_market_value, 2),
+        "total_market_value": money_float(total_market_value),
+        "option_market_value": money_float(option_market_value),
         "broker_sync_orphan_position_count": coerce_int(broker_sync_summary.get("orphan_broker_position_count")) or 0,
         "positions": classified[:25],
     }
@@ -491,9 +494,7 @@ def _symbols_from_ticker_source_run(ticker_source_run: Mapping[str, Any] | None)
 
 
 def _render_datetime(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_iso(value)
 
 
 def _normalize_broker_environment(value: Any) -> str:
@@ -1443,17 +1444,17 @@ def _flow_position_summary(
     ]
     closed_positions = [row for row in day_positions if str(row.get("status") or "") == "closed"]
     closed_positions.sort(key=lambda row: str(row.get("closed_at") or ""), reverse=True)
-    realized = sum(coerce_float(row.get("realized_pnl")) or 0.0 for row in day_positions)
-    unrealized = sum(coerce_float(row.get("unrealized_pnl")) or 0.0 for row in open_positions)
+    realized = money_sum_float(coerce_float(row.get("realized_pnl")) for row in day_positions)
+    unrealized = money_sum_float(coerce_float(row.get("unrealized_pnl")) for row in open_positions)
     return {
         "status": "healthy",
         "position_count": len(day_positions),
         "open_position_count": len(open_positions),
         "closed_position_count": len(closed_positions),
         "latest_exit_reason": None if not closed_positions else as_text(closed_positions[0].get("last_exit_reason")),
-        "realized_pnl": round(realized, 2),
-        "unrealized_pnl": round(unrealized, 2),
-        "net_pnl": round(realized + unrealized, 2),
+        "realized_pnl": realized,
+        "unrealized_pnl": unrealized,
+        "net_pnl": money_sum_float([realized, unrealized]),
     }
 
 
@@ -2192,7 +2193,7 @@ def _project_positions(
                     "risk_status": risk.get("status"),
                     "risk_note": risk.get("note"),
                     "mark_age_seconds": None if mark_age_seconds is None else round(mark_age_seconds, 2),
-                    "net_pnl": round(realized_pnl + unrealized_pnl, 2),
+                    "net_pnl": money_sum_float([realized_pnl, unrealized_pnl]),
                     "exit_status": describe_position_exit_state(
                         position=position,
                         now=now,
@@ -2427,8 +2428,8 @@ def build_trading_ops_state(
     market_date: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = utc_now_iso()
-    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    now = utc_now()
+    generated_at = utc_iso(now) or utc_now_iso()
     market_control = _project_market_control(storage=storage, market_date=market_date, now=now)
     jobs = _project_jobs(db_target=db_target, storage=storage)
     account = _project_account(storage=storage, now=now, market_session=market_control.market_session)

@@ -6,18 +6,13 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.orchestration import NEW_YORK
+from core.money import money_float
 from core.services.close_lifecycle import build_close_lifecycle_summary
 from core.services.option_structures import position_legs, primary_short_long_symbols
 from core.services.runtime_identity import build_live_run_scope_id
 from core.value_coercion import as_text as _as_text, coerce_float as _coerce_float
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
-
-
-def _round_money(value: float | None) -> float | None:
-    if value is None:
-        return None
-    return round(float(value), 2)
 
 
 def _derive_position_legs(
@@ -141,8 +136,8 @@ def _serialize_position(
         **public_row,
         "market_date": str(row.get("market_date_opened")),
         "position_status": row.get("status"),
-        "closed_quantity": _round_money(total_closed_quantity),
-        "net_pnl": _round_money(realized_pnl + (unrealized_pnl or 0.0)),
+        "closed_quantity": round(total_closed_quantity, 2),
+        "net_pnl": money_float(realized_pnl + (unrealized_pnl or 0.0)),
         "open_execution_attempt": _serialize_attempt_ref(open_attempt),
         "closes": closes,
     }

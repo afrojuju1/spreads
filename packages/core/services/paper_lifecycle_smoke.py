@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.db.decorators import with_storage
+from core.money import money_float, option_contract_notional, option_limit_price, option_premium_from_notional
 from core.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
 from core.services.control_plane import (
     OPEN_ACTIVITY_MANUAL,
@@ -28,6 +29,8 @@ from core.value_coercion import (
     as_text,
     coerce_float,
     safe_component,
+    utc_expiry_iso,
+    utc_iso,
     utc_now,
     utc_now_iso,
 )
@@ -102,15 +105,11 @@ def _money(value: Any, *, field_name: str) -> float:
     parsed = coerce_float(value)
     if parsed is None or parsed <= 0:
         raise ValueError(f"{field_name} must be positive")
-    return round(float(parsed), 2)
+    return money_float(parsed) or 0.0
 
 
 def _has_blocker(blockers: list[dict[str, str]], code: str) -> bool:
     return any(row.get("code") == code for row in blockers)
-
-
-def _expires_at(ttl_minutes: int) -> str:
-    return (utc_now() + timedelta(minutes=max(int(ttl_minutes), 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _market_date() -> str:
@@ -176,7 +175,7 @@ def _base_safety_snapshot(
 
     return (
         {
-            "observed_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "observed_at": utc_iso(now),
             "market_session": market_session,
             "control_gate": control_gate,
             "broker_environment": f"alpaca_{broker_environment}" if broker_environment in {"paper", "live"} else broker_environment,
@@ -211,7 +210,7 @@ def _select_contract(
     )
     contracts_by_symbol = {contract.symbol: contract for contract in contracts}
     expirations = sorted({contract.expiration_date for contract in contracts})
-    notional_cap_per_contract = max_debit_dollars / (max(int(quantity), 1) * 100.0)
+    notional_cap_per_contract = option_premium_from_notional(max_debit_dollars, max(int(quantity), 1)) or 0.0
     candidates: list[dict[str, Any]] = []
     for expiration in expirations:
         snapshots = client.get_option_chain_snapshots(
@@ -226,7 +225,7 @@ def _select_contract(
                 continue
             if snapshot.ask_size <= 0 or snapshot.bid_size <= 0:
                 continue
-            notional = round(snapshot.ask * max(int(quantity), 1) * 100.0, 2)
+            notional = option_contract_notional(snapshot.ask, max(int(quantity), 1)) or 0.0
             candidates.append(
                 {
                     "symbol": symbol,
@@ -234,7 +233,7 @@ def _select_contract(
                     "expiration_date": contract.expiration_date,
                     "option_type": option_type,
                     "strike": contract.strike_price,
-                    "limit_price": round(snapshot.ask, 2),
+                    "limit_price": option_limit_price(snapshot.ask) or 0.01,
                     "notional": notional,
                     "open_interest": contract.open_interest,
                     "quote_metrics": asdict(snapshot),
@@ -268,7 +267,7 @@ def _open_request_payload(
     allow_contracts: tuple[str, ...],
     option_selection: dict[str, Any],
 ) -> dict[str, Any]:
-    notional = round(limit_price * quantity * 100.0, 2)
+    notional = option_contract_notional(limit_price, quantity) or 0.0
     return {
         "asset_class": "option",
         "symbol": contract_symbol,
@@ -468,7 +467,7 @@ def create_synthetic_paper_open_smoke(
     if limit_price is None:
         raise ValueError("limit_price is required unless --auto-select is used")
     normalized_limit_price = _money(limit_price, field_name="limit_price")
-    requested_notional = round(normalized_limit_price * normalized_quantity * 100.0, 2)
+    requested_notional = option_contract_notional(normalized_limit_price, normalized_quantity) or 0.0
     if requested_notional > normalized_max_debit:
         blockers.append(
             {
@@ -542,7 +541,7 @@ def create_synthetic_paper_open_smoke(
             "version": "1",
         },
         config_hash="synthetic_validation",
-        expires_at=_expires_at(ttl_minutes),
+        expires_at=utc_expiry_iso(minutes=ttl_minutes, minimum_seconds=60),
         payload=request_payload,
         created_event_payload={
             "validation_provenance": SYNTHETIC_VALIDATION_PROVENANCE,
@@ -691,7 +690,7 @@ def create_synthetic_paper_close_smoke(
             "version": "1",
         },
         config_hash="synthetic_validation",
-        expires_at=_expires_at(ttl_minutes),
+        expires_at=utc_expiry_iso(minutes=ttl_minutes, minimum_seconds=60),
         payload=close_payload,
         created_event_payload={
             "validation_provenance": SYNTHETIC_VALIDATION_PROVENANCE,

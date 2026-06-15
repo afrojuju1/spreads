@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from core.money import premium_float
 from core.services.positions import enrich_position_row
 from core.services.position_lifecycle import build_close_decision_lifecycle
 from core.services.trading_engine.close_policy import evaluate_exit_policy
@@ -13,20 +14,13 @@ from core.services.trading_strategy_runtime import (
     find_management_runtime_for_position,
     resolve_management_runtimes,
 )
-from core.value_coercion import as_text, coerce_float
+from core.value_coercion import as_text, coerce_float, utc_iso
 
 from .kernel import EngineComponentRole, EngineRunRef
 from .portfolio import CloseDecisionResult, PositionSnapshot
 from .risk_runtime import OPEN_POSITION_STATUSES
 
 NEW_YORK = ZoneInfo("America/New_York")
-
-
-def _round_money(value: Any) -> float | None:
-    parsed = coerce_float(value)
-    if parsed is None:
-        return None
-    return round(parsed, 4)
 
 
 def _time_reached(time_value: str | None, *, now: datetime) -> bool:
@@ -246,7 +240,7 @@ def describe_position_exit_state(
         position=position,
         decision=decision,
         decision_source=decision_source,
-        decided_at=current_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        decided_at=utc_iso(current_time),
     )
     details = dict(decision.get("decision_details") or {}) if isinstance(decision.get("decision_details"), dict) else {}
     if not details:
@@ -282,13 +276,13 @@ def describe_position_exit_state(
         "recipe_ref": as_text(decision.get("recipe_ref")),
         "limit_price": coerce_float(decision.get("limit_price")),
         "limit_price_source": as_text(decision.get("limit_price_source")),
-        "current_mark": _round_money(details.get("mark")),
-        "effective_mark": _round_money(details.get("effective_mark")),
+        "current_mark": premium_float(details.get("mark")),
+        "effective_mark": premium_float(details.get("effective_mark")),
         "mark_state": as_text(details.get("mark_state")),
-        "entry_value": _round_money(details.get("entry_value")),
+        "entry_value": premium_float(details.get("entry_value")),
         "premium_kind": as_text(details.get("premium_kind")),
-        "profit_target_mark": _round_money(details.get("profit_target_mark")),
-        "stop_mark": _round_money(details.get("stop_mark")),
+        "profit_target_mark": premium_float(details.get("profit_target_mark")),
+        "stop_mark": premium_float(details.get("stop_mark")),
         "force_close_at": as_text(details.get("force_close_at")),
     }
 
@@ -333,7 +327,7 @@ class PostgresPortfolioEngine:
             position=dict(position.payload),
             decision=decision,
             decision_source=decision_source,
-            decided_at=self.now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            decided_at=utc_iso(self.now),
         )
         reason = str(decision.get("reason") or close_decision.get("reason") or "unknown")
         return CloseDecisionResult(
@@ -357,7 +351,7 @@ def build_portfolio_run_ref(
     job_run_id: str | None = None,
     now: datetime | None = None,
 ) -> EngineRunRef:
-    timestamp = (now or datetime.now(UTC)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    timestamp = utc_iso(now or datetime.now(UTC))
     return EngineRunRef(
         role=EngineComponentRole.PORTFOLIO,
         run_id=f"portfolio:manage:{timestamp}",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.money import OPTION_PREMIUM_QUANTUM, option_contract_notional
 from core.services.option_quote_records import build_option_symbol_metadata
 
 SCOREABLE_OPTION_TRADE_CONDITIONS = frozenset({"I", "J", "S", "a", "b"})
@@ -49,7 +50,7 @@ def build_trade_records(
                 "leg_role": metadata.get("leg_role", "contract"),
                 "price": trade.price,
                 "size": trade.size,
-                "premium": round(trade.price * trade.size * 100.0, 4),
+                "premium": option_contract_notional(trade.price, trade.size, quantum=OPTION_PREMIUM_QUANTUM),
                 "exchange_code": trade.exchange_code,
                 "conditions": conditions,
                 "source_timestamp": trade.timestamp,

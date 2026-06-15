@@ -9,6 +9,7 @@ from core.domain.models import (
     OptionSnapshot,
     SpreadCandidate,
 )
+from core.money import option_contract_notional
 from core.services.option_structures import net_premium_kind
 from core.services.trade_structure_specs import trade_structure_option_type
 
@@ -128,11 +129,11 @@ def build_vertical_spreads(
                     continue
 
                 if premium_kind == "debit":
-                    max_profit = (width - midpoint_credit) * 100.0
-                    max_loss = midpoint_credit * 100.0
+                    max_profit = option_contract_notional(width - midpoint_credit, 1.0) or 0.0
+                    max_loss = option_contract_notional(midpoint_credit, 1.0) or 0.0
                 else:
-                    max_profit = midpoint_credit * 100.0
-                    max_loss = (width - midpoint_credit) * 100.0
+                    max_profit = option_contract_notional(midpoint_credit, 1.0) or 0.0
+                    max_loss = option_contract_notional(width - midpoint_credit, 1.0) or 0.0
                 if max_loss <= 0 or max_profit <= 0:
                     continue
 

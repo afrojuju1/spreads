@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from core.common import clamp
 from core.domain.models import OptionSnapshot, SpreadCandidate
+from core.money import money_float, option_contract_notional
 from core.services.option_structures import (
     normalize_legs,
     signed_net_limit_price,
@@ -279,8 +280,8 @@ def _structure_lattice_metrics(
             legs=legs,
             terminal_spot=terminal_spot,
         )
-        midpoint_pnl = (terminal_value - midpoint_entry_cost) * 100.0
-        natural_pnl = (terminal_value - natural_entry_cost) * 100.0
+        midpoint_pnl = option_contract_notional(terminal_value - midpoint_entry_cost, 1.0) or 0.0
+        natural_pnl = option_contract_notional(terminal_value - natural_entry_cost, 1.0) or 0.0
         if midpoint_pnl > 0:
             probability_of_profit += terminal_probability
         expected_value_dollars += midpoint_pnl * terminal_probability
@@ -295,8 +296,8 @@ def _structure_lattice_metrics(
 
     return (
         round(clamp(probability_of_profit, 0.0, 1.0), 4),
-        round(expected_value_dollars, 2),
-        round(slippage_adjusted_expected_value_dollars, 2),
+        money_float(expected_value_dollars) or 0.0,
+        money_float(slippage_adjusted_expected_value_dollars) or 0.0,
         touch_probability,
     )
 
@@ -315,7 +316,7 @@ def _entry_slippage_dollars(
         strategy_family=candidate.strategy,
         trade_intent="open",
     )
-    return round(abs(natural_entry_cost - midpoint_entry_cost) * 100.0, 2)
+    return option_contract_notional(abs(natural_entry_cost - midpoint_entry_cost), 1.0) or 0.0
 
 
 def build_structure_analytics(

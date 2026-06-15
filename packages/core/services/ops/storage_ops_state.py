@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from core.storage.capture_models import CaptureSummaryModel
 from core.storage.factory import build_market_data_store, build_storage_context
 from core.storage.serializers import render_value
+from core.value_coercion import utc_iso
 
 from .shared import _attention, _combine_statuses
 
@@ -199,7 +200,7 @@ def build_storage_ops_state(
         "status": _combine_statuses(market_data_status, capture_status),
         "summary": summary,
         "details": details,
-        "generated_at": resolved_now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "generated_at": utc_iso(resolved_now),
         "attention": attention,
     }
 

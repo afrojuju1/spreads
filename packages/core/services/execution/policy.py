@@ -14,6 +14,7 @@ from core.value_coercion import (
     as_text,
     coerce_float,
     coerce_int,
+    utc_iso,
 )
 from core.storage.factory import build_job_repository
 from core.storage.serializers import parse_datetime
@@ -54,12 +55,13 @@ def _validate_open_timing_window(
         max((force_close_at - current_time).total_seconds(), 0.0) / 60.0,
         1,
     )
+    force_close_at_iso = utc_iso(force_close_at)
     if current_time >= force_close_at:
         return {
             "allowed": False,
             "reason": "force_close_window_started",
             "message": ("Open execution is blocked because the exit force-close window has already started."),
-            "force_close_at": force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "force_close_at": force_close_at_iso,
             "minutes_to_force_close": minutes_to_force_close,
             "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
         }
@@ -70,10 +72,10 @@ def _validate_open_timing_window(
             "message": (
                 "Open execution is blocked because only "
                 f"{minutes_to_force_close:.1f} minutes remain before force-close at "
-                f"{force_close_at.isoformat(timespec='seconds').replace('+00:00', 'Z')}, "
+                f"{force_close_at_iso}, "
                 f"below the {minimum_minutes_to_force_close:.1f}-minute deployment threshold."
             ),
-            "force_close_at": force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "force_close_at": force_close_at_iso,
             "minutes_to_force_close": minutes_to_force_close,
             "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
         }
@@ -81,7 +83,7 @@ def _validate_open_timing_window(
         "allowed": True,
         "reason": None,
         "message": None,
-        "force_close_at": force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "force_close_at": force_close_at_iso,
         "minutes_to_force_close": minutes_to_force_close,
         "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
     }

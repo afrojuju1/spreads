@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select
 
 from core.db.decorators import with_storage
+from core.money import money_float, money_sum_float
 from core.jobs.orchestration import NEW_YORK
 from core.services.trading_strategies import load_active_trading_strategies
 from core.storage.engine_models import (
@@ -27,7 +28,7 @@ from core.storage.execution_models import (
 )
 from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionModel, TradeSignalModel
 from core.storage.serializers import parse_date
-from core.value_coercion import as_list, as_mapping, as_text, coerce_float, coerce_int, utc_now_iso
+from core.value_coercion import as_list, as_mapping, as_text, coerce_float, coerce_int, utc_iso, utc_now_iso
 
 LEDGER_MARK_STALE_AFTER_SECONDS = 15 * 60
 SOURCE_SYMBOL_LIMIT = 25
@@ -58,10 +59,7 @@ def _window(market_date: str) -> tuple[date, datetime, datetime]:
 
 
 def _render_datetime(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    rendered = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
-    return rendered.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_iso(value)
 
 
 def _add_count_mapping(counter: Counter[str], value: Any) -> None:
@@ -865,12 +863,12 @@ def _build_execution_strategy_ledgers(
         payload["positions"]["open_position_count"] = int(sum(count for state, count in position_status_counts.items() if state in OPEN_POSITION_STATUSES))
         payload["positions"]["closed_position_count"] = int(position_status_counts.get("closed", 0))
 
-        realized_pnl = round(coerce_float(payload["pnl"]["realized_pnl"]) or 0.0, 2)
-        unrealized_pnl = round(coerce_float(payload["pnl"]["unrealized_pnl"]) or 0.0, 2)
+        realized_pnl = money_float(coerce_float(payload["pnl"]["realized_pnl"]) or 0.0) or 0.0
+        unrealized_pnl = money_float(coerce_float(payload["pnl"]["unrealized_pnl"]) or 0.0) or 0.0
         payload["pnl"] = {
             "realized_pnl": realized_pnl,
             "unrealized_pnl": unrealized_pnl,
-            "net_pnl": round(realized_pnl + unrealized_pnl, 2),
+            "net_pnl": money_sum_float([realized_pnl, unrealized_pnl]),
         }
         payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))
     return payloads
@@ -980,8 +978,8 @@ def build_strategy_evidence_ledger(
                 )
             )
 
-    total_realized = round(sum(coerce_float(as_mapping(row.get("pnl")).get("realized_pnl")) or 0.0 for row in rows), 2)
-    total_unrealized = round(sum(coerce_float(as_mapping(row.get("pnl")).get("unrealized_pnl")) or 0.0 for row in rows), 2)
+    total_realized = money_sum_float(coerce_float(as_mapping(row.get("pnl")).get("realized_pnl")) for row in rows)
+    total_unrealized = money_sum_float(coerce_float(as_mapping(row.get("pnl")).get("unrealized_pnl")) for row in rows)
     schema = {
         "engine_facts": "ready" if engine_schema_ready else "blocked",
         "execution": "ready" if execution_schema_ready else "blocked",
@@ -1012,7 +1010,7 @@ def build_strategy_evidence_ledger(
             "close_count": sum(coerce_int(as_mapping(row.get("closes")).get("close_count")) or 0 for row in rows),
             "realized_pnl": total_realized,
             "unrealized_pnl": total_unrealized,
-            "net_pnl": round(total_realized + total_unrealized, 2),
+            "net_pnl": money_sum_float([total_realized, total_unrealized]),
         },
         "strategies": rows,
     }

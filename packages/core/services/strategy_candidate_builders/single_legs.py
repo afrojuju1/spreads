@@ -9,6 +9,7 @@ from core.domain.models import (
     OptionSnapshot,
     SpreadCandidate,
 )
+from core.money import option_contract_notional
 from core.services.option_structures import net_premium_kind
 from core.services.trade_structure_specs import trade_structure_option_type
 
@@ -140,8 +141,8 @@ def _evaluate_single_leg_contract(
         modeled_profit = modeled_intrinsic - midpoint_credit
         if modeled_profit <= 0:
             return "expected_move_profit_not_positive", {}
-        max_profit = round(modeled_profit * 100.0, 2)
-        max_loss = round(midpoint_credit * 100.0, 2)
+        max_profit = option_contract_notional(modeled_profit, 1.0) or 0.0
+        max_loss = option_contract_notional(midpoint_credit, 1.0) or 0.0
         return_on_risk = round(modeled_profit / midpoint_credit, 4)
         short_vs_expected_move = (
             expected_move_boundary - contract.strike_price if option_type == "call" else contract.strike_price - expected_move_boundary
@@ -158,8 +159,8 @@ def _evaluate_single_leg_contract(
         )
         if stress_loss <= 0:
             return "stress_loss_not_positive", {}
-        max_profit = round(midpoint_credit * 100.0, 2)
-        max_loss = round(stress_loss * 100.0, 2)
+        max_profit = option_contract_notional(midpoint_credit, 1.0) or 0.0
+        max_loss = option_contract_notional(stress_loss, 1.0) or 0.0
         return_on_risk = round(midpoint_credit / stress_loss, 4)
         short_vs_expected_move = (
             contract.strike_price - expected_move_boundary if option_type == "call" else expected_move_boundary - contract.strike_price

@@ -24,7 +24,7 @@ from core.services.option_stream_broker import (
 )
 from core.services.option_trade_records import build_trade_records
 from core.services.trading_engine.capture_targets import refresh_engine_capture_targets
-from core.value_coercion import as_text as _as_text
+from core.value_coercion import as_text as _as_text, utc_iso
 from core.storage.factory import build_storage_context
 
 DEFAULT_POLL_SECONDS = 25.0
@@ -108,8 +108,8 @@ def _market_session_payload(*, now: datetime, calendar_name: str = "NYSE") -> di
         "calendar": calendar_name,
         "status": "open" if is_open else "closed",
         "is_open": is_open,
-        "market_open_at": market_open.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "market_close_at": market_close.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "market_open_at": utc_iso(market_open),
+        "market_close_at": utc_iso(market_close),
     }
 
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.money import premium_float
 from core.services.trading_strategy_runtime import resolve_management_runtimes
 from core.services.trading_engine.portfolio_runtime import (
     PostgresPortfolioEngine,
@@ -24,16 +25,12 @@ from core.services.trading_engine.risk_runtime import (
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
-from core.value_coercion import as_text, coerce_float, utc_now, utc_now_iso
+from core.value_coercion import as_text, utc_expiry_iso, utc_iso, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
 BROKER_SYNC_KEY = "broker_sync:alpaca"
 BROKER_SYNC_IN_FLIGHT_STATUSES = {"queued", "running", "leased"}
-
-
-def _expires_in(minutes: int) -> str:
-    return (utc_now() + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _latest_broker_sync_run(storage: Any) -> dict[str, Any] | None:
@@ -48,9 +45,7 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     latest_run = _latest_broker_sync_run(storage)
     latest_run_status = None if latest_run is None else str(latest_run.get("status") or "").lower()
     latest_run_started_at = None if latest_run is None else parse_datetime(latest_run.get("started_at"))
-    latest_run_started_at_text = (
-        None if latest_run_started_at is None else latest_run_started_at.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    latest_run_started_at_text = utc_iso(latest_run_started_at)
     broker_sync_in_flight = latest_run_status in BROKER_SYNC_IN_FLIGHT_STATUSES
     snapshot: dict[str, Any] = {
         "sync_key": BROKER_SYNC_KEY,
@@ -90,7 +85,7 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     )
     snapshot.update(
         {
-            "updated_at": None if updated_at is None else updated_at.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "updated_at": utc_iso(updated_at),
             "age_seconds": None if age_seconds is None else round(age_seconds, 1),
             "state_status": state_status,
             "summary": dict(state.get("summary") or {}),
@@ -117,13 +112,6 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     return snapshot
 
 
-def _round_money(value: Any) -> float | None:
-    parsed = coerce_float(value)
-    if parsed is None:
-        return None
-    return round(parsed, 4)
-
-
 def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, Any]:
     details = dict(decision.get("decision_details") or {}) if isinstance(decision.get("decision_details"), dict) else {}
     exit_context: dict[str, Any] = {}
@@ -134,7 +122,7 @@ def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, A
         "profit_target_mark",
         "stop_mark",
     ):
-        rounded = _round_money(details.get(key))
+        rounded = premium_float(details.get(key))
         if rounded is not None:
             exit_context[key] = rounded
     for key in ("mark_state", "force_close_at"):
@@ -189,7 +177,7 @@ def _create_close_intent(
         },
         config_hash=runtime.config_hash,
         state="pending",
-        expires_at=_expires_in(MANAGED_CLOSE_INTENT_TTL_MINUTES),
+        expires_at=utc_expiry_iso(minutes=MANAGED_CLOSE_INTENT_TTL_MINUTES, minimum_seconds=60),
         superseded_by_id=None,
         payload={
             "position_id": position_id,
@@ -310,7 +298,7 @@ def run_trading_strategy_manage(
         }
     if broker_sync.get("status") != "current":
         broker_reason = str(broker_sync.get("reason") or "broker_sync_not_current")
-        decided_at = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        decided_at = utc_iso(now)
         broker_decisions = [
             blocked_close_decision_projection(
                 position=position,
@@ -368,7 +356,7 @@ def run_trading_strategy_manage(
     skipped = 0
     failures: list[dict[str, str]] = []
     decisions: list[dict[str, Any]] = []
-    now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+    now_iso = utc_iso(now)
     for position_snapshot in refreshed_position_snapshots:
         position = dict(position_snapshot.payload)
         position_id = str(position_snapshot.position_id)

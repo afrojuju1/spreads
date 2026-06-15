@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from core.services.strategy_builders import build_entry_runtime_candidates_with_diagnostics, runtime_owner_key
@@ -22,6 +22,7 @@ from core.services.trading_engine.feature_snapshots import build_feature_snapsho
 from core.services.trading_engine.kernel import EngineContext
 from core.services.trading_strategies import StrategySource, load_universe_symbols
 from core.services.trading_strategy_runtime import EntryRuntime
+from core.value_coercion import utc_expiry_iso
 
 DEFAULT_ENTRY_CANDIDATE_LIMIT = 10
 DEFAULT_GREEKS_SOURCE = "auto"
@@ -234,7 +235,7 @@ class PostgresDataEngine:
         counts: dict[str, int] = {}
         now = datetime.now(UTC)
         for request in request_rows:
-            expires_at = (now + timedelta(seconds=max(int(request.ttl_seconds), 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
+            expires_at = utc_expiry_iso(from_time=now, seconds=request.ttl_seconds)
             rows = [
                 {
                     "option_symbol": symbol,

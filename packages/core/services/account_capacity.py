@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from core.money import money_float, money_scaled_float, option_contract_notional
 from core.services.option_structures import (
     candidate_legs,
     net_premium_kind,
@@ -71,7 +72,7 @@ def _resolve_max_loss_per_contract(
 ) -> float | None:
     max_loss = _coerce_float(payload.get("max_loss"))
     if max_loss is not None and max_loss > 0:
-        return round(max_loss, 2)
+        return money_float(max_loss)
 
     premium_kind = net_premium_kind(strategy_family)
     entry_price = _resolve_entry_price(
@@ -87,11 +88,11 @@ def _resolve_max_loss_per_contract(
         )
     if width is not None and width > 0 and entry_price is not None and entry_price > 0:
         if premium_kind == "credit":
-            return round(max(width - entry_price, 0.0) * 100.0, 2)
+            return option_contract_notional(max(width - entry_price, 0.0), 1.0)
         if premium_kind == "debit":
-            return round(entry_price * 100.0, 2)
+            return option_contract_notional(entry_price, 1.0)
     if entry_price is not None and entry_price > 0:
-        return round(entry_price * 100.0, 2)
+        return option_contract_notional(entry_price, 1.0)
     return None
 
 
@@ -141,8 +142,8 @@ def estimate_buying_power_requirement(
             candidate_legs(payload),
             strategy=strategy_family,
         )
-        secured_requirement = None if barrier_strike is None or barrier_strike <= 0 else round(barrier_strike * 100.0 * resolved_quantity, 2)
-        max_loss_requirement = None if max_loss_per_contract is None else round(max_loss_per_contract * resolved_quantity, 2)
+        secured_requirement = None if barrier_strike is None or barrier_strike <= 0 else option_contract_notional(barrier_strike, resolved_quantity)
+        max_loss_requirement = None if max_loss_per_contract is None else money_scaled_float(max_loss_per_contract, resolved_quantity)
         requirement = None
         if secured_requirement is not None:
             requirement = secured_requirement
@@ -157,10 +158,7 @@ def estimate_buying_power_requirement(
     if strategy_family == "short_call":
         if max_loss_per_contract is not None:
             return {
-                "required_buying_power": round(
-                    max_loss_per_contract * resolved_quantity,
-                    2,
-                ),
+                "required_buying_power": money_scaled_float(max_loss_per_contract, resolved_quantity),
                 "basis": "short_call_max_loss",
                 "strategy_family": strategy_family,
             }
@@ -173,7 +171,7 @@ def estimate_buying_power_requirement(
             reference_price or 0.0,
             barrier_strike or 0.0,
         )
-        requirement = None if collateral_price <= 0 else round(collateral_price * 100.0 * resolved_quantity, 2)
+        requirement = None if collateral_price <= 0 else option_contract_notional(collateral_price, resolved_quantity)
         return {
             "required_buying_power": requirement,
             "basis": "short_call_conservative",
@@ -185,7 +183,7 @@ def estimate_buying_power_requirement(
         "put_credit_spread",
         "iron_condor",
     }:
-        requirement = None if max_loss_per_contract is None else round(max_loss_per_contract * resolved_quantity, 2)
+        requirement = None if max_loss_per_contract is None else money_scaled_float(max_loss_per_contract, resolved_quantity)
         return {
             "required_buying_power": requirement,
             "basis": "defined_risk_max_loss",
@@ -202,14 +200,11 @@ def estimate_buying_power_requirement(
     }:
         if entry_price is not None and entry_price > 0:
             return {
-                "required_buying_power": round(
-                    entry_price * 100.0 * resolved_quantity,
-                    2,
-                ),
+                "required_buying_power": option_contract_notional(entry_price, resolved_quantity),
                 "basis": "net_debit",
                 "strategy_family": strategy_family,
             }
-        requirement = None if max_loss_per_contract is None else round(max_loss_per_contract * resolved_quantity, 2)
+        requirement = None if max_loss_per_contract is None else money_scaled_float(max_loss_per_contract, resolved_quantity)
         return {
             "required_buying_power": requirement,
             "basis": "max_loss",
@@ -249,7 +244,7 @@ def resolve_available_buying_power(
         if value is None:
             continue
         return {
-            "available_buying_power": round(max(value, 0.0), 2),
+            "available_buying_power": money_float(max(value, 0.0)),
             "source_field": key,
         }
     return {

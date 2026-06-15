@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.money import close_pnl, money_float, money_sum_or_none, premium_float
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.option_structures import (
     net_premium_kind,
@@ -15,17 +16,11 @@ from core.services.option_structures import (
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import assess_position_risk
 from core.services.runtime_identity import parse_live_run_scope_id
-from core.value_coercion import as_text, coerce_float, utc_now_iso
+from core.value_coercion import as_text, coerce_float, coerce_utc_datetime, utc_iso, utc_now_iso
 from core.domain.models import LiveOptionQuote
 
 QUOTE_FEEDS = ("opra", "indicative")
 OPEN_POSITION_STATUSES = {"open", "partial_close"}
-
-
-def _round_money(value: float | None) -> float | None:
-    if value is None:
-        return None
-    return round(float(value), 2)
 
 
 def _max_timestamp(*values: str | None) -> str | None:
@@ -35,17 +30,12 @@ def _max_timestamp(*values: str | None) -> str | None:
         text = as_text(value)
         if text is None:
             continue
-        normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
-        try:
-            parsed = datetime.fromisoformat(normalized)
-        except ValueError:
+        parsed = coerce_utc_datetime(text)
+        if parsed is None:
             continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        parsed = parsed.astimezone(UTC)
         if best_timestamp is None or parsed > best_timestamp:
             best_timestamp = parsed
-            best_value = parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+            best_value = utc_iso(parsed)
     return best_value
 
 
@@ -166,13 +156,6 @@ def build_credit_spread_quote_snapshot(
         client=client,
         feeds=feeds,
     )
-
-
-def _sum_or_none(values: list[float | None]) -> float | None:
-    resolved = [value for value in values if value is not None]
-    if not resolved:
-        return None
-    return round(sum(resolved), 2)
 
 
 def _position_matches_session_id(
@@ -298,16 +281,18 @@ def refresh_session_position_marks(
         spread_mark_close = coerce_float(live_snapshot.get("close_mark"))
         if spread_mark_close is None:
             continue
-        if premium_kind == "debit":
-            unrealized_pnl = (spread_mark_close - entry_value) * 100.0 * remaining_quantity
-        else:
-            unrealized_pnl = (entry_value - spread_mark_close) * 100.0 * remaining_quantity
+        unrealized_pnl = close_pnl(
+            entry_value=entry_value,
+            exit_value=spread_mark_close,
+            quantity=remaining_quantity,
+            premium_kind=premium_kind,
+        )
         execution_store.update_position(
             position_id=str(position["position_id"]),
-            close_mark=_round_money(spread_mark_close),
+            close_mark=premium_float(spread_mark_close),
             close_mark_source=as_text(live_snapshot.get("quote_source")),
             close_marked_at=as_text(live_snapshot.get("captured_at")),
-            unrealized_pnl=_round_money(unrealized_pnl),
+            unrealized_pnl=money_float(unrealized_pnl),
             updated_at=retrieved_at,
         )
         updated_position_count += 1
@@ -368,10 +353,12 @@ def build_session_execution_portfolio(
             mark_source = as_text(persisted.get("close_mark_source"))
 
             if status in OPEN_POSITION_STATUSES and entry_credit is not None and spread_mark_close is not None:
-                if net_premium_kind(strategy_family) == "debit":
-                    unrealized_pnl = (spread_mark_close - entry_credit) * 100.0 * remaining_quantity
-                else:
-                    unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
+                unrealized_pnl = close_pnl(
+                    entry_value=entry_credit,
+                    exit_value=spread_mark_close,
+                    quantity=remaining_quantity,
+                    premium_kind=net_premium_kind(strategy_family),
+                )
             elif status == "closed":
                 unrealized_pnl = 0.0
 
@@ -394,8 +381,10 @@ def build_session_execution_portfolio(
                     "opened_quantity": persisted.get("opened_quantity"),
                     "filled_quantity": persisted.get("opened_quantity"),
                     "remaining_quantity": persisted.get("remaining_quantity"),
-                    "closed_quantity": _round_money(
-                        (coerce_float(persisted.get("opened_quantity")) or 0.0) - (coerce_float(persisted.get("remaining_quantity")) or 0.0)
+                    "closed_quantity": round(
+                        (coerce_float(persisted.get("opened_quantity")) or 0.0)
+                        - (coerce_float(persisted.get("remaining_quantity")) or 0.0),
+                        2,
                     ),
                     "entry_credit": coerce_float(persisted.get("entry_credit")),
                     "entry_notional": coerce_float(persisted.get("entry_notional")),
@@ -405,13 +394,13 @@ def build_session_execution_portfolio(
                     "opened_at": as_text(persisted.get("opened_at")),
                     "completed_at": as_text(persisted.get("closed_at")),
                     "closed_at": as_text(persisted.get("closed_at")),
-                    "realized_pnl": _round_money(realized_pnl),
-                    "unrealized_pnl": _round_money(unrealized_pnl),
-                    "net_pnl": _round_money(realized_pnl + (unrealized_pnl or 0.0)),
-                    "spread_mark_midpoint": _round_money(spread_mark_midpoint),
-                    "spread_mark_close": _round_money(spread_mark_close),
-                    "estimated_midpoint_pnl": _round_money(estimated_midpoint_pnl),
-                    "estimated_close_pnl": _round_money(unrealized_pnl),
+                    "realized_pnl": money_float(realized_pnl),
+                    "unrealized_pnl": money_float(unrealized_pnl),
+                    "net_pnl": money_float(realized_pnl + (unrealized_pnl or 0.0)),
+                    "spread_mark_midpoint": premium_float(spread_mark_midpoint),
+                    "spread_mark_close": premium_float(spread_mark_close),
+                    "estimated_midpoint_pnl": money_float(estimated_midpoint_pnl),
+                    "estimated_close_pnl": money_float(unrealized_pnl),
                     "mark_source": mark_source or as_text(persisted.get("close_mark_source")),
                     "mark_timestamp": mark_timestamp,
                     "risk_status": str(position_risk["status"]),
@@ -442,11 +431,11 @@ def build_session_execution_portfolio(
         closed_positions = [item for item in positions if item["position_status"] == "closed"]
         mismatch_positions = [item for item in positions if as_text(item.get("reconciliation_status")) == "mismatch"]
         mark_sources = {str(item["mark_source"]) for item in positions if item.get("mark_source")}
-        realized_total = _sum_or_none([coerce_float(item.get("realized_pnl")) for item in positions])
-        unrealized_total = _sum_or_none([coerce_float(item.get("unrealized_pnl")) for item in positions])
+        realized_total = money_sum_or_none(coerce_float(item.get("realized_pnl")) for item in positions)
+        unrealized_total = money_sum_or_none(coerce_float(item.get("unrealized_pnl")) for item in positions)
         net_total = None
         if realized_total is not None or unrealized_total is not None:
-            net_total = round((realized_total or 0.0) + (unrealized_total or 0.0), 2)
+            net_total = money_float((realized_total or 0.0) + (unrealized_total or 0.0))
 
         return {
             "summary": {
@@ -466,13 +455,13 @@ def build_session_execution_portfolio(
                     sum(coerce_float(item.get("remaining_quantity")) or 0.0 for item in positions),
                     2,
                 ),
-                "entry_notional_total": _sum_or_none([coerce_float(item.get("entry_notional")) for item in positions]),
-                "max_profit_total": _sum_or_none([coerce_float(item.get("max_profit")) for item in positions]),
-                "max_loss_total": _sum_or_none([coerce_float(item.get("max_loss")) for item in positions]),
+                "entry_notional_total": money_sum_or_none(coerce_float(item.get("entry_notional")) for item in positions),
+                "max_profit_total": money_sum_or_none(coerce_float(item.get("max_profit")) for item in positions),
+                "max_loss_total": money_sum_or_none(coerce_float(item.get("max_loss")) for item in positions),
                 "realized_pnl_total": realized_total,
                 "unrealized_pnl_total": unrealized_total,
                 "net_pnl_total": net_total,
-                "estimated_midpoint_pnl_total": _sum_or_none([coerce_float(item.get("estimated_midpoint_pnl")) for item in positions]),
+                "estimated_midpoint_pnl_total": money_sum_or_none(coerce_float(item.get("estimated_midpoint_pnl")) for item in positions),
                 "estimated_close_pnl_total": unrealized_total,
                 "quoted_position_count": quoted_position_count,
                 "unquoted_position_count": len(open_positions) + len(partial_positions) - quoted_position_count,

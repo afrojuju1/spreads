@@ -30,6 +30,8 @@ dependencies = [
   "pydantic>=2.12.5",
   "clickhouse-connect>=1.3.0",
   "yfinance>=1.4.1",
+  "py-moneyed>=3.0",
+  "whenever>=0.10.0",
 ]
 
 [project.scripts]

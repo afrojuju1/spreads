@@ -5,6 +5,7 @@ from typing import Any
 
 from core.domain.profiles import zero_dte_session_bucket
 from core.services.market_dates import NEW_YORK
+from core.value_coercion import coerce_utc_datetime
 
 
 def coerce_evaluation_datetime(value: Any) -> datetime | None:
@@ -15,10 +16,10 @@ def coerce_evaluation_datetime(value: Any) -> datetime | None:
     normalized = str(value).strip()
     if not normalized:
         return None
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    parsed = coerce_utc_datetime(normalized)
+    if parsed is None:
+        raise ValueError(f"Invalid evaluation datetime: {value!r}")
+    return parsed
 
 
 def candidate_reference_datetime(context: Any) -> datetime | None:

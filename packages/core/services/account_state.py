@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -15,6 +14,7 @@ from core.value_coercion import (
     coerce_bool,
     coerce_float,
     coerce_int,
+    coerce_utc_iso,
     utc_now_iso,
 )
 from core.storage.broker_models import AccountSnapshotModel, BrokerSyncStateModel
@@ -44,20 +44,11 @@ ACCOUNT_OVERVIEW_LIVE_TIMEOUT_SECONDS = 5.0
 
 def _parse_history_timestamp(value: Any) -> str | None:
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return coerce_utc_iso(value)
     text = as_text(value)
     if text is None:
         return None
-    if text.isdigit():
-        return datetime.fromtimestamp(float(text), UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return text
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return coerce_utc_iso(text) or text
 
 
 def normalize_history_range(value: str | None) -> AccountHistoryRange:

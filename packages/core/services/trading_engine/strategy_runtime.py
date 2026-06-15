@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from core.alerts.runtime import plan_runtime_entry_selected_alert
@@ -45,16 +45,12 @@ from core.services.trading_engine.kernel import EngineComponentRole, EngineConte
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
 from core.services.trading_strategies import routine_should_run_now
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_observation_runtime, resolve_entry_runtime
-from core.value_coercion import unique_text_list, utc_now, utc_now_iso as _utc_now
+from core.value_coercion import unique_text_list, utc_expiry_iso, utc_now, utc_now_iso as _utc_now
 
 ENTRY_INTENT_TTL_MINUTES = 5
 ENTRY_MONITOR_LIMIT = 12
 NATURAL_ENTRY_PROVENANCE = "natural_strategy"
 OBSERVATION_ENTRY_PROVENANCE = "strategy_observation"
-
-
-def _expires_in(minutes: int) -> str:
-    return (utc_now() + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _market_date_today() -> str:
@@ -1036,7 +1032,7 @@ def _run_trading_strategy_entry(
             market_date=resolved_market_date,
         )
         execution_intent_id = _intent_id(str(decision["trade_decision_id"]))
-        intent_expires_at = _expires_in(ENTRY_INTENT_TTL_MINUTES)
+        intent_expires_at = utc_expiry_iso(minutes=ENTRY_INTENT_TTL_MINUTES, minimum_seconds=60)
         selected_admission = _persist_trade_admission(
             engine_facts=engine_facts,
             runtime=runtime,

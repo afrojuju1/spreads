@@ -16,7 +16,7 @@ from core.services.option_structures import (
     structure_width,
     unique_leg_symbols,
 )
-from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, unique_text_list
+from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, coerce_utc_datetime, unique_text_list
 
 from .data import CandidateBuildResult, ResolvedTickerSet
 from .entry_quality import FeatureSnapshot
@@ -175,10 +175,9 @@ def _observed_at(*values: Any) -> datetime | None:
         rendered = as_text(value)
         if rendered is None:
             continue
-        try:
-            return datetime.fromisoformat(rendered.replace("Z", "+00:00"))
-        except ValueError:
-            continue
+        parsed = coerce_utc_datetime(rendered)
+        if parsed is not None:
+            return parsed
     return None
 
 

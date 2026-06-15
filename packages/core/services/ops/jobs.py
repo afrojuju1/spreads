@@ -25,6 +25,8 @@ from core.storage.serializers import parse_datetime
 from core.value_coercion import (
     as_text,
     coerce_int,
+    utc_iso,
+    utc_now,
     utc_now_iso,
 )
 
@@ -745,8 +747,8 @@ def build_jobs_overview(
     limit: int = 25,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = utc_now_iso()
-    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    now = utc_now()
+    generated_at = utc_iso(now) or utc_now_iso()
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)]
@@ -958,8 +960,8 @@ def build_jobs_compact_state(
     limit: int = 25,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = utc_now_iso()
-    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    now = utc_now()
+    generated_at = utc_iso(now) or utc_now_iso()
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=None)]
@@ -1127,8 +1129,8 @@ def build_job_run_view(
     db_target: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    generated_at = utc_now_iso()
-    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    now = utc_now()
+    generated_at = utc_iso(now) or utc_now_iso()
     job_store = storage.jobs
     if not job_store.schema_ready():
         raise OpsLookupError("Job storage is not available yet.")

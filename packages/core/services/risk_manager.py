@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from core.money import money_float, money_scaled_float, money_sum_float, option_contract_notional
 from core.services.account_capacity import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
@@ -216,7 +217,7 @@ def _candidate_entry_notional(candidate: dict[str, Any], quantity: float, price:
         entry_price = coerce_float(payload.get("midpoint_credit") or payload.get("midpoint_debit") or payload.get("midpoint_value"))
     if entry_price is None or entry_price <= 0:
         return None
-    return round(entry_price * 100.0 * quantity, 2)
+    return option_contract_notional(entry_price, quantity)
 
 
 def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | None:
@@ -230,12 +231,12 @@ def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | N
         premium_kind = net_premium_kind(candidate_payload.get("strategy"))
         if width is not None and midpoint_value is not None:
             if premium_kind == "debit":
-                max_loss = midpoint_value * 100.0
+                return option_contract_notional(midpoint_value, quantity)
             else:
-                max_loss = max(width - midpoint_value, 0.0) * 100.0
+                return option_contract_notional(max(width - midpoint_value, 0.0), quantity)
     if max_loss is None:
         return None
-    return round(max_loss * quantity, 2)
+    return money_scaled_float(max_loss, quantity)
 
 
 def _max_contracts_for_budget(
@@ -376,8 +377,8 @@ def build_candidate_position_sizing(
             key=lambda item: (item[1], item[0]),
         )
 
-    recommended_entry_notional = None if per_contract_entry_notional is None else round(per_contract_entry_notional * recommended_quantity, 2)
-    recommended_max_loss = None if per_contract_max_loss is None else round(per_contract_max_loss * recommended_quantity, 2)
+    recommended_entry_notional = None if per_contract_entry_notional is None else money_scaled_float(per_contract_entry_notional, recommended_quantity)
+    recommended_max_loss = None if per_contract_max_loss is None else money_scaled_float(per_contract_max_loss, recommended_quantity)
     return {
         "applies": applies,
         "strategy_family": strategy_family or None,
@@ -890,11 +891,8 @@ def build_portfolio_admission_snapshot(
     same_correlation_group = [
         row for row in active_exposures if candidate_correlation_group is not None and row.get("correlation_group") == candidate_correlation_group
     ]
-    strategy_max_loss_before = round(
-        sum(coerce_float(row.get("max_loss")) or 0.0 for row in same_strategy),
-        2,
-    )
-    strategy_max_loss_after = None if candidate_max_loss is None else round(strategy_max_loss_before + float(candidate_max_loss), 2)
+    strategy_max_loss_before = money_sum_float(coerce_float(row.get("max_loss")) for row in same_strategy)
+    strategy_max_loss_after = None if candidate_max_loss is None else money_sum_float([strategy_max_loss_before, candidate_max_loss])
     same_strategy_daily_entries = [row for row in daily_entries if as_text(row.get("trading_strategy_id")) == trading_strategy_id]
 
     metrics = {
@@ -1034,7 +1032,7 @@ def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
             "status": "unavailable",
             "source_field": None,
             "available_buying_power": None,
-            "reserved_buying_power": round(reserved_buying_power, 2),
+            "reserved_buying_power": money_float(reserved_buying_power),
             "remaining_buying_power": None,
             "reservation_count": reservation_count,
             "unsupported_reservation_count": unsupported_reservation_count,
@@ -1048,7 +1046,7 @@ def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
             "status": "unavailable",
             "source_field": as_text(available_snapshot.get("source_field")),
             "available_buying_power": None,
-            "reserved_buying_power": round(reserved_buying_power, 2),
+            "reserved_buying_power": money_float(reserved_buying_power),
             "remaining_buying_power": None,
             "reservation_count": reservation_count,
             "unsupported_reservation_count": unsupported_reservation_count,
@@ -1058,12 +1056,9 @@ def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
     return {
         "status": "ok",
         "source_field": as_text(available_snapshot.get("source_field")),
-        "available_buying_power": round(available_buying_power, 2),
-        "reserved_buying_power": round(reserved_buying_power, 2),
-        "remaining_buying_power": round(
-            max(available_buying_power - reserved_buying_power, 0.0),
-            2,
-        ),
+        "available_buying_power": money_float(available_buying_power),
+        "reserved_buying_power": money_float(reserved_buying_power),
+        "remaining_buying_power": money_float(max(available_buying_power - reserved_buying_power, 0.0)),
         "reservation_count": reservation_count,
         "unsupported_reservation_count": unsupported_reservation_count,
         "error_text": None,
@@ -1596,10 +1591,10 @@ def evaluate_open_execution(
         "candidate_age_seconds": candidate_age_seconds,
         "position_notional": position_notional,
         "position_max_loss": position_max_loss,
-        "session_notional_before": round(session_notional, 2),
-        "session_notional_after": (None if position_notional is None else round(session_notional + position_notional, 2)),
-        "session_max_loss_before": round(session_max_loss, 2),
-        "session_max_loss_after": (None if position_max_loss is None else round(session_max_loss + position_max_loss, 2)),
+        "session_notional_before": money_float(session_notional),
+        "session_notional_after": (None if position_notional is None else money_sum_float([session_notional, position_notional])),
+        "session_max_loss_before": money_float(session_max_loss),
+        "session_max_loss_after": (None if position_max_loss is None else money_sum_float([session_max_loss, position_max_loss])),
         "matching_underlying_count": (len(matching_underlyings) + len(matching_pending_underlyings)),
         "matching_underlying_strategy_count": (len(matching_strategy) + len(matching_pending_strategy)),
         "strategy_risk_budget": strategy_risk_budget,

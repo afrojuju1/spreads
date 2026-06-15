@@ -9,6 +9,7 @@ from core.domain.models import (
     OptionSnapshot,
     SpreadCandidate,
 )
+from core.money import option_contract_notional
 
 from .analytics import attach_structure_analytics
 from .shared import days_from_reference, relative_spread, relative_spread_exceeds
@@ -138,11 +139,8 @@ def build_long_straddles(
                 long_ask=call_snapshot.ask,
                 midpoint_credit=midpoint_credit,
                 natural_credit=natural_credit,
-                max_profit=round(
-                    max((expected_move_amount or midpoint_credit) - midpoint_credit, 0.01) * 100.0,
-                    2,
-                ),
-                max_loss=round(midpoint_credit * 100.0, 2),
+                max_profit=option_contract_notional(max((expected_move_amount or midpoint_credit) - midpoint_credit, 0.01), 1.0) or 0.0,
+                max_loss=option_contract_notional(midpoint_credit, 1.0) or 0.0,
                 return_on_risk=return_on_risk,
                 breakeven=strike,
                 breakeven_cushion_pct=breakeven_cushion_pct,
@@ -322,15 +320,15 @@ def build_long_strangles(
                     long_ask=call_snapshot.ask,
                     midpoint_credit=midpoint_credit,
                     natural_credit=natural_credit,
-                    max_profit=round(
+                    max_profit=option_contract_notional(
                         max(
                             (expected_move_amount or break_even_move) - break_even_move,
                             0.01,
-                        )
-                        * 100.0,
-                        2,
-                    ),
-                    max_loss=round(midpoint_credit * 100.0, 2),
+                        ),
+                        1.0,
+                    )
+                    or 0.0,
+                    max_loss=option_contract_notional(midpoint_credit, 1.0) or 0.0,
                     return_on_risk=return_on_risk,
                     breakeven=spot_price,
                     breakeven_cushion_pct=breakeven_cushion_pct,

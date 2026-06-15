@@ -9,6 +9,7 @@ from core.domain.models import (
     OptionSnapshot,
     SpreadCandidate,
 )
+from core.money import option_contract_notional
 
 from .analytics import attach_structure_analytics
 from .shared import (
@@ -138,8 +139,8 @@ def build_iron_condors(
                     if midpoint_credit >= width or natural_credit <= 0:
                         continue
 
-                    max_profit = midpoint_credit * 100.0
-                    max_loss = (width - midpoint_credit) * 100.0
+                    max_profit = option_contract_notional(midpoint_credit, 1.0) or 0.0
+                    max_loss = option_contract_notional(width - midpoint_credit, 1.0) or 0.0
                     if max_profit <= 0 or max_loss <= 0:
                         continue
                     return_on_risk = midpoint_credit / (width - midpoint_credit)

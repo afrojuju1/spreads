@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from core.services.option_structures import normalize_legs, position_legs
 from core.services.positions import enrich_position_row
-from core.value_coercion import as_text, utc_now
+from core.value_coercion import as_text, utc_expiry_iso, utc_iso, utc_now
 
 CAPTURE_OWNER_POSITION = "position"
 CAPTURE_OWNER_WORKING_INTENT = "working_intent"
@@ -40,10 +40,6 @@ SELECTED_CANDIDATE_TTL_SECONDS = 5 * 60
 WATCH_CANDIDATE_TTL_SECONDS = 2 * 60
 DEFAULT_SELECTED_LIMIT = 50
 DEFAULT_WATCH_LIMIT = 100
-
-
-def _expires_at(now: datetime, ttl_seconds: int) -> str:
-    return (now + timedelta(seconds=max(int(ttl_seconds), 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _as_session_date(value: Any) -> str | None:
@@ -123,7 +119,7 @@ def _position_capture_rows(position: Mapping[str, Any], *, now: datetime) -> lis
         underlying_symbol=as_text(payload.get("underlying_symbol")) or as_text(payload.get("root_symbol")),
         strategy=as_text(payload.get("strategy_family")) or as_text(payload.get("strategy")),
         priority=CAPTURE_PRIORITY_OPEN_POSITION,
-        expires_at=_expires_at(now, DEFAULT_ROLLING_TTL_SECONDS),
+        expires_at=utc_expiry_iso(from_time=now, seconds=DEFAULT_ROLLING_TTL_SECONDS),
         metadata={
             "source": "portfolio_position",
             "position_id": payload.get("position_id"),
@@ -139,7 +135,7 @@ def _attempt_capture_rows(attempt: Mapping[str, Any], *, now: datetime) -> list[
         underlying_symbol=as_text(attempt.get("underlying_symbol")),
         strategy=as_text(attempt.get("strategy")) or as_text(attempt.get("strategy_family")),
         priority=CAPTURE_PRIORITY_WORKING_INTENT,
-        expires_at=_expires_at(now, DEFAULT_ROLLING_TTL_SECONDS),
+        expires_at=utc_expiry_iso(from_time=now, seconds=DEFAULT_ROLLING_TTL_SECONDS),
         metadata={
             "source": "execution_attempt",
             "execution_attempt_id": attempt.get("execution_attempt_id"),
@@ -166,7 +162,7 @@ def _signal_capture_rows(
         underlying_symbol=as_text(signal.get("underlying_symbol")),
         strategy=as_text(signal.get("trade_structure")),
         priority=priority,
-        expires_at=_expires_at(now, ttl_seconds),
+        expires_at=utc_expiry_iso(from_time=now, seconds=ttl_seconds),
         metadata={
             "source": reason,
             "trade_signal_id": signal.get("trade_signal_id"),
@@ -333,7 +329,7 @@ def refresh_engine_capture_targets(
     selected_owner_keys: list[str] = []
     watch_owner_keys: list[str] = []
     if engine_facts.schema_ready():
-        now_iso = resolved_now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        now_iso = utc_iso(resolved_now)
         selected_rows = engine_facts.list_trade_decisions_with_signals(
             decision_states=["selected"],
             routine="entry",

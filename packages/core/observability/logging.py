@@ -5,8 +5,10 @@ import logging
 import os
 import sys
 import traceback
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+
+from core.value_coercion import utc_iso, utc_now_iso
 
 _RESERVED_LOG_RECORD_KEYS = frozenset(
     {
@@ -37,12 +39,12 @@ _RESERVED_LOG_RECORD_KEYS = frozenset(
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _json_default(value: Any) -> str:
     if isinstance(value, datetime):
-        return value.isoformat().replace("+00:00", "Z")
+        return utc_iso(value) or value.isoformat()
     return str(value)
 
 

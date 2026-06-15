@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from core.services.positions import enrich_position_row
 from core.services.trading_strategies import load_active_trading_strategies
-from core.value_coercion import as_text
+from core.value_coercion import as_text, utc_iso
 from core.storage.capture_models import CaptureSummaryModel
 from core.storage.engine_models import (
     CandidateRunModel,
@@ -43,9 +43,7 @@ def _count_rows(rows: list[Mapping[str, Any]], field_name: str) -> dict[str, int
 
 
 def _render_datetime(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_iso(value)
 
 
 def _ticker_source_run_row(row: TickerSourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
@@ -254,7 +252,7 @@ def _engine_fact_summary(
                 if len(symbols) < SOURCE_SYMBOL_LIMIT:
                     symbols.append(str(symbol))
 
-    now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+    now_iso = utc_iso(now)
     selected_decisions = [
         _decision_row(row)
         for row in engine_facts.list_trade_decisions_with_signals(

@@ -4,8 +4,9 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
+from core.money import money_float, premium_float
 from core.services.position_lifecycle import build_position_lifecycle
-from core.value_coercion import as_list, as_mapping, as_text, coerce_float
+from core.value_coercion import as_list, as_mapping, as_text
 
 ACTIVE_CLOSE_ATTEMPT_STATUSES = {
     "accepted",
@@ -36,11 +37,6 @@ INTENT_MISMATCH_REASONS = {
     "position_intent_mismatch",
     "intent_mismatch",
 }
-
-
-def _round_money(value: Any) -> float | None:
-    parsed = coerce_float(value)
-    return None if parsed is None else round(parsed, 2)
 
 
 def _is_close_attempt(row: Mapping[str, Any]) -> bool:
@@ -88,8 +84,8 @@ def _latest_close(closes: list[Any]) -> dict[str, Any] | None:
         "execution_attempt_id": row.get("execution_attempt_id"),
         "broker_order_id": row.get("broker_order_id"),
         "closed_quantity": row.get("closed_quantity"),
-        "exit_value": _round_money(row.get("exit_value")),
-        "realized_pnl": _round_money(row.get("realized_pnl")),
+        "exit_value": premium_float(row.get("exit_value")),
+        "realized_pnl": money_float(row.get("realized_pnl")),
         "closed_at": row.get("closed_at"),
     }
 

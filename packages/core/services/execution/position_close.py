@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.money import option_contract_notional
 from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_STATUS,
 )
@@ -40,7 +41,6 @@ from .admission import (
     _admission_source_from_metadata,
     _approved_execution_admission,
     _attempt_ref_kwargs,
-    _execution_notional,
 )
 from .order_requests import _build_close_order_request
 
@@ -138,10 +138,7 @@ def submit_position_close_by_id(
             source_object_id=close_source_id,
             session_date=market_date,
             requested_quantity=resolved_quantity,
-            requested_notional=_execution_notional(
-                quantity=resolved_quantity,
-                limit_price=resolved_limit_price,
-            ),
+            requested_notional=option_contract_notional(resolved_limit_price, resolved_quantity),
             reason="close_validation_passed",
             message="Close order passed position and order validation.",
             policy_snapshot=(metadata.get("risk_policy") if isinstance(metadata.get("risk_policy"), Mapping) else {}),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.money import repriced_limit_price
 from core.services.option_structures import (
     net_premium_kind,
     normalize_strategy_family,
@@ -390,19 +391,11 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
             premium_kind = "debit"
         elif premium_kind == "debit":
             premium_kind = "credit"
-    if premium_kind == "debit":
-        ceiling = original_limit + max_credit_concession
-        target = min(round(current_limit + step, 2), round(ceiling, 2))
-        if natural_value is not None:
-            target = min(target, round(max(natural_value, current_limit), 2))
-        if target <= current_limit:
-            return None
-        return target
-
-    floor = round(max(original_limit - max_credit_concession, 0.01), 2)
-    target = max(round(current_limit - step, 2), floor)
-    if natural_value is not None:
-        target = min(target, round(current_limit - step, 2))
-    if target >= current_limit:
-        return None
-    return max(target, 0.01)
+    return repriced_limit_price(
+        current_limit=current_limit,
+        original_limit=original_limit,
+        step=step,
+        max_concession=max_credit_concession,
+        premium_kind=premium_kind,
+        natural_value=natural_value,
+    )

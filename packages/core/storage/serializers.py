@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Any
+
+from core.value_coercion import coerce_utc_datetime
 
 
 def parse_datetime(value: str | datetime | None) -> datetime | None:
     if value is None:
         return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    parsed = coerce_utc_datetime(value)
+    if parsed is None:
+        raise ValueError(f"Invalid datetime value: {value!r}")
+    return parsed
 
 
 def parse_date(value: str | date) -> date:

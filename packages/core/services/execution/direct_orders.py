@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.money import equity_notional, option_contract_notional
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.integrations.alpaca.errors import classify_alpaca_request_error
 from core.services.execution_lifecycle import (
@@ -63,7 +64,6 @@ from .admission import (
     _attempt_ref_kwargs,
     _direct_order_execution_policy,
     _execution_admission_payload_from_risk_evaluation,
-    _execution_notional,
     _metadata_policy,
     _raise_if_admission_blocks,
     _strategy_position_size_policy,
@@ -158,11 +158,7 @@ def submit_equity_order(
         source_object_id=equity_source_id,
         session_date=resolved_market_date,
         requested_quantity=resolved_quantity,
-        requested_notional=_execution_notional(
-            quantity=resolved_quantity,
-            limit_price=resolved_limit_price,
-            multiplier=1.0,
-        ),
+        requested_notional=equity_notional(resolved_limit_price, resolved_quantity),
         reason="direct_equity_request_validated",
         message="Direct equity order passed request validation.",
         policy_snapshot={
@@ -422,7 +418,7 @@ def submit_option_order(
         "midpoint_credit": resolved_limit_price,
         "natural_credit": resolved_limit_price,
         "max_profit": None,
-        "max_loss": round(resolved_limit_price * 100.0, 2),
+        "max_loss": option_contract_notional(resolved_limit_price, 1.0),
         "option_selection": option_selection,
     }
     option_source_type, option_source_id = _admission_source_from_metadata(
@@ -430,10 +426,7 @@ def submit_option_order(
         fallback_type="direct_option_order",
         fallback_id=attempt_id,
     )
-    requested_option_notional = _execution_notional(
-        quantity=resolved_quantity,
-        limit_price=resolved_limit_price,
-    )
+    requested_option_notional = option_contract_notional(resolved_limit_price, resolved_quantity)
     option_risk_policy = _metadata_policy(metadata, "risk_policy")
     option_execution_policy = _direct_order_execution_policy(
         metadata,
@@ -519,7 +512,7 @@ def submit_option_order(
                 "midpoint_credit": resolved_limit_price,
                 "natural_credit": resolved_limit_price,
                 "max_profit": None,
-                "max_loss": round(resolved_limit_price * 100.0, 2),
+                "max_loss": option_contract_notional(resolved_limit_price, 1.0),
             },
             trade_intent=resolved_trade_intent,
             position_id=position_id,
@@ -800,10 +793,7 @@ def submit_option_structure_order(
         fallback_type="direct_option_structure_order",
         fallback_id=attempt_id,
     )
-    requested_option_notional = _execution_notional(
-        quantity=resolved_quantity,
-        limit_price=resolved_limit_price,
-    )
+    requested_option_notional = option_contract_notional(resolved_limit_price, resolved_quantity)
     option_risk_policy = _metadata_policy(metadata, "risk_policy")
     option_execution_policy = _direct_order_execution_policy(
         metadata,

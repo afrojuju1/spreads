@@ -7,10 +7,11 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 
 from core.db.decorators import with_storage
+from core.money import money_sum_float
 from core.jobs.orchestration import NEW_YORK
 from core.storage.execution_models import ExecutionAttemptModel, ExecutionFillModel, ExecutionOrderModel, PositionCloseModel
 from core.storage.serializers import parse_date
-from core.value_coercion import coerce_float, utc_now_iso
+from core.value_coercion import coerce_float, utc_iso, utc_now_iso
 
 TERMINAL_ATTEMPT_STATUSES = {
     "canceled",
@@ -39,10 +40,7 @@ def _activity_window(activity_date: str) -> tuple[date, datetime, datetime]:
 
 
 def _render_datetime(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    rendered = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
-    return rendered.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_iso(value)
 
 
 def _date_text(value: date | None) -> str | None:
@@ -153,7 +151,7 @@ def _activity_at(attempt: dict[str, Any]) -> str | None:
 
 def _summarize_attempts(attempts: list[dict[str, Any]], orders: list[dict[str, Any]], fills: list[dict[str, Any]], closes: list[dict[str, Any]]) -> dict[str, Any]:
     parent_order_count = sum(1 for row in orders if row.get("parent_broker_order_id") is None)
-    realized_pnl = round(sum(coerce_float(row.get("realized_pnl")) or 0.0 for row in closes), 2)
+    realized_pnl = money_sum_float(coerce_float(row.get("realized_pnl")) for row in closes)
     terminal_attempt_count = sum(1 for row in attempts if str(row.get("status") or "").strip().lower() in TERMINAL_ATTEMPT_STATUSES)
     error_attempt_count = sum(
         1
@@ -270,7 +268,7 @@ def list_execution_activity(
         attempt["order_count"] = len(attempt_orders)
         attempt["fill_count"] = len(attempt_fills)
         attempt["position_close_count"] = len(attempt_closes)
-        attempt["realized_pnl"] = round(sum(coerce_float(close.get("realized_pnl")) or 0.0 for close in attempt_closes), 2)
+        attempt["realized_pnl"] = money_sum_float(coerce_float(close.get("realized_pnl")) for close in attempt_closes)
         attempts.append(attempt)
         orders.extend(attempt_orders)
         fills.extend(attempt_fills)

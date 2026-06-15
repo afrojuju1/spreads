@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from core.money import money_float, option_contract_notional
 from core.services.account_capacity import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
@@ -57,10 +58,7 @@ def _execution_admission_payload_from_risk_evaluation(
     reserved_buying_power = coerce_float(metrics.get("broker_reserved_buying_power"))
     account_available_buying_power = None
     if available_buying_power is not None:
-        account_available_buying_power = round(
-            available_buying_power + max(reserved_buying_power or 0.0, 0.0),
-            2,
-        )
+        account_available_buying_power = money_float(available_buying_power + max(reserved_buying_power or 0.0, 0.0))
     reason_codes = [str(value).strip() for value in risk_evaluation.get("reason_codes") or [] if str(value).strip()]
     resolved_status = str(risk_evaluation.get("status") or "unknown").strip().lower()
     resolved_reason = None if reason_codes[:1] == ["approved"] else reason_codes[0] if reason_codes else None
@@ -157,9 +155,9 @@ def _execution_admission_payload_from_account_capacity(
         source_object_id=source_object_id,
         session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
         requested_quantity=None if requested_quantity <= 0 else int(requested_quantity),
-        requested_notional=_execution_notional(
-            quantity=None if requested_quantity <= 0 else int(requested_quantity),
-            limit_price=coerce_float(attempt.get("limit_price")),
+        requested_notional=option_contract_notional(
+            coerce_float(attempt.get("limit_price")),
+            None if requested_quantity <= 0 else int(requested_quantity),
         ),
         policy_snapshot=request.get("risk_policy") if isinstance(request.get("risk_policy"), Mapping) else {},
         capability_snapshot=account_capacity,
@@ -221,9 +219,9 @@ def _execution_admission_payload_from_broker_rejection(
         source_object_id=source_object_id,
         session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
         requested_quantity=None if quantity <= 0 else int(quantity),
-        requested_notional=_execution_notional(
-            quantity=None if quantity <= 0 else int(quantity),
-            limit_price=coerce_float(attempt.get("limit_price")),
+        requested_notional=option_contract_notional(
+            coerce_float(attempt.get("limit_price")),
+            None if quantity <= 0 else int(quantity),
         ),
         policy_snapshot=request.get("risk_policy") if isinstance(request.get("risk_policy"), Mapping) else {},
         capability_snapshot=classified_error,
@@ -263,9 +261,9 @@ def _execution_admission_payload_from_submission_guard(
         source_object_id=source_object_id,
         session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
         requested_quantity=None if quantity <= 0 else int(quantity),
-        requested_notional=_execution_notional(
-            quantity=None if quantity <= 0 else int(quantity),
-            limit_price=coerce_float(attempt.get("limit_price")),
+        requested_notional=option_contract_notional(
+            coerce_float(attempt.get("limit_price")),
+            None if quantity <= 0 else int(quantity),
         ),
         policy_snapshot=request.get("risk_policy") if isinstance(request.get("risk_policy"), Mapping) else {},
         capability_snapshot={"submission_guard": dict(guard)},
@@ -281,12 +279,6 @@ def _execution_admission_payload_from_submission_guard(
         reason_codes=[str(value) for value in guard.get("reason_codes") or [reason] if str(value).strip()],
         blockers=[str(value) for value in guard.get("blockers") or [reason] if str(value).strip()],
     )
-
-
-def _execution_notional(*, quantity: int | None, limit_price: float | None, multiplier: float = 100.0) -> float | None:
-    if quantity is None or quantity <= 0 or limit_price is None or limit_price <= 0:
-        return None
-    return round(float(quantity) * float(limit_price) * multiplier, 2)
 
 
 def _metadata_policy(metadata: Mapping[str, Any], key: str) -> dict[str, Any]:
@@ -479,7 +471,7 @@ def _pending_open_attempt_buying_power(
         if required_buying_power is None:
             continue
         reserved_buying_power += required_buying_power
-    return round(reserved_buying_power, 2)
+    return money_float(reserved_buying_power)
 
 
 def _validate_submit_account_capacity(

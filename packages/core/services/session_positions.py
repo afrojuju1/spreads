@@ -18,6 +18,16 @@ from core.services.option_structures import (
 from core.services.runtime_identity import (
     resolve_runtime_policy_fields,
 )
+from core.money import (
+    close_pnl,
+    equity_notional,
+    money_float,
+    money_scaled_float,
+    money_sum_float,
+    option_long_exposure,
+    option_spread_exposure,
+    premium_float,
+)
 from core.value_coercion import (
     as_text,
     coerce_float,
@@ -28,12 +38,6 @@ from core.value_coercion import (
 OPEN_TRADE_INTENT = "open"
 CLOSE_TRADE_INTENT = "close"
 SUPPORTED_TRADE_INTENTS = {OPEN_TRADE_INTENT, CLOSE_TRADE_INTENT}
-
-
-def _round_money(value: float | None) -> float | None:
-    if value is None:
-        return None
-    return round(float(value), 2)
 
 
 def _derive_live_exposure(
@@ -51,35 +55,18 @@ def _derive_live_exposure(
             "max_loss": 0.0,
         }
 
-    entry_notional = None if entry_value is None else round(entry_value * 100.0 * normalized_quantity, 2)
     normalized_family = str(strategy_family or "").strip().lower()
     if normalized_family.startswith("equity_"):
-        return {
-            "entry_notional": None if entry_value is None else round(entry_value * normalized_quantity, 2),
-            "max_profit": None,
-            "max_loss": None if entry_value is None else round(entry_value * normalized_quantity, 2),
-        }
-    if normalized_family in {"long_call", "long_put", "long_straddle", "long_strangle"}:
+        entry_notional = equity_notional(entry_value, normalized_quantity)
         return {
             "entry_notional": entry_notional,
             "max_profit": None,
             "max_loss": entry_notional,
         }
+    if normalized_family in {"long_call", "long_put", "long_straddle", "long_strangle"}:
+        return option_long_exposure(entry_value=entry_value, quantity=normalized_quantity)
     premium_kind = net_premium_kind(normalized_family)
-    max_profit = entry_notional
-    max_loss = None
-    if entry_value is not None and width is not None:
-        if premium_kind == "debit":
-            max_profit = round(max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2)
-            max_loss = entry_notional
-        else:
-            max_profit = entry_notional
-            max_loss = round(max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2)
-    return {
-        "entry_notional": entry_notional,
-        "max_profit": max_profit,
-        "max_loss": max_loss,
-    }
+    return option_spread_exposure(entry_value=entry_value, width=width, quantity=normalized_quantity, premium_kind=premium_kind)
 
 
 def _explicit_candidate_exposure(
@@ -93,8 +80,8 @@ def _explicit_candidate_exposure(
     max_profit = coerce_float(candidate.get("max_profit"))
     max_loss = coerce_float(candidate.get("max_loss"))
     return {
-        "max_profit": None if max_profit is None else round(max_profit * normalized_quantity, 2),
-        "max_loss": None if max_loss is None else round(max_loss * normalized_quantity, 2),
+        "max_profit": money_scaled_float(max_profit, normalized_quantity) if max_profit is not None else None,
+        "max_loss": money_scaled_float(max_loss, normalized_quantity) if max_loss is not None else None,
     }
 
 
@@ -237,7 +224,7 @@ def _resolve_spread_amount(
             long_total += leg_price * ratio_qty
         resolved_leg_count += 1
     if resolved_leg_count == len(legs) and resolved_leg_count > 0:
-        return round(abs(short_total - long_total), 4)
+        return premium_float(abs(short_total - long_total))
 
     # Alpaca returns parent multi-leg fills as a signed net price:
     # credit opens are negative, debit closes are positive. Session
@@ -246,7 +233,7 @@ def _resolve_spread_amount(
     if primary_order is not None:
         price = coerce_float(primary_order.get("filled_avg_price"))
         if price is not None and filled_quantity > 0:
-            return round(abs(price), 4)
+            return premium_float(abs(price))
 
     limit_price = coerce_float(attempt.get("limit_price"))
     if limit_price is not None and filled_quantity > 0:
@@ -280,7 +267,7 @@ def _close_state_for_open_sync(
     closes = execution_store.list_position_closes(position_id=position_id)
     total_closed_quantity = sum(coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
-    realized_pnl = round(sum(coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2)
+    realized_pnl = money_sum_float(coerce_float(close.get("realized_pnl")) for close in closes)
 
     if total_closed_quantity <= 0:
         return {
@@ -439,11 +426,9 @@ def _realized_close_pnl(
     if entry_value is None or exit_value is None or quantity <= 0:
         return 0.0
     if str(strategy_family or "").strip().lower().startswith("equity_"):
-        return round((exit_value - entry_value) * quantity, 2)
+        return close_pnl(entry_value=entry_value, exit_value=exit_value, quantity=quantity, premium_kind=strategy_family, equity=True)
     premium_kind = net_premium_kind(strategy_family)
-    if premium_kind == "debit":
-        return round((exit_value - entry_value) * 100.0 * quantity, 2)
-    return round((entry_value - exit_value) * 100.0 * quantity, 2)
+    return close_pnl(entry_value=entry_value, exit_value=exit_value, quantity=quantity, premium_kind=premium_kind)
 
 
 def _position_common_payload(
@@ -542,8 +527,8 @@ def _position_common_payload(
         "status": status,
         "legs": persisted_legs,
         "economics": {
-            "entry_credit": _round_money(entry_credit),
-            "entry_value": _round_money(entry_credit),
+            "entry_credit": money_float(entry_credit),
+            "entry_value": money_float(entry_credit),
             "entry_value_kind": net_premium_kind(strategy_family),
             "entry_notional": exposure["entry_notional"],
             "max_profit": exposure["max_profit"],
@@ -556,7 +541,7 @@ def _position_common_payload(
         "requested_quantity": requested_quantity,
         "opened_quantity": opened_quantity,
         "remaining_quantity": remaining_quantity,
-        "entry_value": _round_money(entry_credit),
+        "entry_value": money_float(entry_credit),
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
         "close_mark": close_mark,
@@ -594,7 +579,7 @@ def _recalculate_position(
     opened_quantity = coerce_float(position.get("opened_quantity")) or 0.0
     total_closed_quantity = sum(coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
-    realized_pnl = round(sum(coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2)
+    realized_pnl = money_sum_float(coerce_float(close.get("realized_pnl")) for close in closes)
     entry_credit = _position_entry_value(position)
     width = _position_width(position)
     strategy_family = as_text(position.get("strategy_family")) or as_text(position.get("strategy"))
@@ -628,8 +613,8 @@ def _recalculate_position(
         market_date_closed=market_date_closed,
         remaining_quantity=remaining_quantity,
         economics={
-            "entry_credit": _round_money(entry_credit),
-            "entry_value": _round_money(entry_credit),
+            "entry_credit": money_float(entry_credit),
+            "entry_value": money_float(entry_credit),
             "entry_value_kind": net_premium_kind(strategy_family),
             "entry_notional": exposure["entry_notional"],
             "max_profit": exposure["max_profit"],
@@ -789,7 +774,7 @@ def _sync_close_position(
         position_id=position_id,
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         closed_quantity=filled_quantity,
-        exit_value=_round_money(exit_value),
+        exit_value=premium_float(exit_value),
         realized_pnl=realized_pnl,
         broker_order_id=as_text(attempt.get("broker_order_id")),
         closed_at=_resolve_closed_at(attempt),

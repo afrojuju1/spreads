@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 
 from core.db.decorators import with_storage
+from core.money import money_float, money_sum_float
 from core.services.ops.strategy_evidence_ledger import build_strategy_evidence_ledger
 from core.services.trading_strategies import TradingStrategyConfig, load_active_trading_strategies, load_trading_strategies
 from core.storage.engine_models import TradeCandidateModel
@@ -129,7 +130,7 @@ def _sum_int(rows: Iterable[Mapping[str, Any]], section: str, field: str) -> int
 
 
 def _sum_money(rows: Iterable[Mapping[str, Any]], section: str, field: str) -> float:
-    return round(sum(coerce_float(as_mapping(row.get(section)).get(field)) or 0.0 for row in rows), 2)
+    return money_sum_float(coerce_float(as_mapping(row.get(section)).get(field)) for row in rows)
 
 
 def _latest_text(rows: Iterable[Mapping[str, Any]], section: str, field: str) -> str | None:
@@ -361,7 +362,7 @@ def _aggregate_strategy_days(
         "pnl": {
             "realized_pnl": realized_pnl,
             "unrealized_pnl": unrealized_pnl,
-            "net_pnl": round(realized_pnl + unrealized_pnl, 2),
+            "net_pnl": money_sum_float([realized_pnl, unrealized_pnl]),
         },
         "risk_context": dict(risk_context or {}),
         "reason_code_attribution": _top_counts(blocker_counts),
@@ -686,8 +687,8 @@ def _risk_context_by_strategy(
                 payload[strategy_key]["admission_max_loss"] += max_loss_value
                 payload[strategy_key]["max_loss_observation_count"] += 1
     for row in payload.values():
-        row["admission_requested_notional"] = round(float(row["admission_requested_notional"]), 2)
-        row["admission_max_loss"] = round(float(row["admission_max_loss"]), 2)
+        row["admission_requested_notional"] = money_float(row["admission_requested_notional"])
+        row["admission_max_loss"] = money_float(row["admission_max_loss"])
     return payload
 
 
@@ -748,7 +749,7 @@ def _comparison_payload(strategy_results: list[dict[str, Any]]) -> dict[str, Any
             {
                 "variant_id": result.get("variant_id"),
                 "trading_strategy_id": result.get("trading_strategy_id"),
-                "net_pnl_delta_from_best": None if net_pnl is None or best_net_pnl is None else round(net_pnl - float(best_net_pnl), 2),
+                "net_pnl_delta_from_best": None if net_pnl is None or best_net_pnl is None else money_float(net_pnl - float(best_net_pnl)),
                 "selected_count_delta_from_best": None if best_selected is None else int(selected - best_selected),
             }
         )
@@ -825,7 +826,7 @@ def build_historical_strategy_evaluation(
         "attempt_count": sum(coerce_int(as_mapping(row.get("execution")).get("attempt_count")) or 0 for row in strategy_results),
         "fill_count": sum(coerce_int(as_mapping(row.get("execution")).get("fill_count")) or 0 for row in strategy_results),
         "position_count": sum(coerce_int(as_mapping(row.get("positions")).get("position_count")) or 0 for row in strategy_results),
-        "net_pnl": round(sum(coerce_float(as_mapping(row.get("pnl")).get("net_pnl")) or 0.0 for row in strategy_results), 2),
+        "net_pnl": money_sum_float(coerce_float(as_mapping(row.get("pnl")).get("net_pnl")) for row in strategy_results),
     }
     status = "ready" if strategy_results else "empty"
     if any(as_mapping(row.get("fidelity_labels")).get("market_data") == "clickhouse_unavailable" for row in strategy_results):

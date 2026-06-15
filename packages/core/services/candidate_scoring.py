@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from core.services.candidate_policy import (
@@ -13,7 +13,7 @@ from core.services.earnings_signal_features import (
     EARNINGS_SIGNAL_FIELDS,
     build_earnings_signal_bundle,
 )
-from core.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int
+from core.value_coercion import as_text as _as_text, coerce_float as _as_float, coerce_int as _as_int, coerce_utc_datetime
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
 BROAD_ETF_SYMBOLS = {"XLF", "XLE", "XLI", "XLV"}
@@ -650,14 +650,7 @@ def _parse_datetime(value: Any) -> datetime | None:
     text = _as_text(value)
     if text is None:
         return None
-    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed
+    return coerce_utc_datetime(text)
 
 
 def _minutes_between(start: Any, end: Any) -> float | None:

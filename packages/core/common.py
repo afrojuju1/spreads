@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import msgpack
+
+from core.value_coercion import utc_iso
 
 
 def load_local_env(path: str = ".env") -> None:
@@ -64,6 +65,5 @@ def format_stream_timestamp(value: Any) -> str | None:
     if value in (None, ""):
         return None
     if isinstance(value, msgpack.Timestamp):
-        dt = datetime.fromtimestamp(value.to_unix(), tz=UTC)
-        return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+        return utc_iso(value.to_unix())
     return str(value)
