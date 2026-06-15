@@ -58,10 +58,6 @@ def _window(market_date: str) -> tuple[date, datetime, datetime]:
     return market_day, start, start + timedelta(days=1)
 
 
-def _render_datetime(value: datetime | None) -> str | None:
-    return utc_iso(value)
-
-
 def _add_count_mapping(counter: Counter[str], value: Any) -> None:
     for key, raw_count in as_mapping(value).items():
         reason = as_text(key)
@@ -333,7 +329,7 @@ def _build_engine_strategy_ledgers(
             source_payload["symbols"] = source_symbols_by_run.get(source_run_id) or source_payload["symbols"]
             source_payload["source_evidence_state"] = "source_symbols_available" if int(selected_count) > 0 else "no_source_symbols"
             source_payload["latest_ticker_source_run_id"] = source_run_id
-            source_payload["latest_generated_at"] = _render_datetime(generated_at)
+            source_payload["latest_generated_at"] = utc_iso(generated_at)
             _set_latest_activity(latest_activity, strategy_id, generated_at)
 
     candidate_run_strategy: dict[str, str] = {}
@@ -366,7 +362,7 @@ def _build_engine_strategy_ledgers(
         if _newer_desc_asc(generated_at, candidate_run_id, latest_candidate_at.get(strategy_key), candidate_payload.get("latest_candidate_run_id")):
             latest_candidate_at[strategy_key] = generated_at
             candidate_payload["latest_candidate_run_id"] = run_id
-            candidate_payload["latest_generated_at"] = _render_datetime(generated_at)
+            candidate_payload["latest_generated_at"] = utc_iso(generated_at)
         _set_latest_activity(latest_activity, strategy_key, generated_at)
         summary = as_mapping(summary_json)
         _add_count_mapping(blockers_by_strategy[strategy_key], summary.get("top_quality_blockers"))
@@ -510,7 +506,7 @@ def _build_engine_strategy_ledgers(
         if _newer_desc_asc(observed_at, trade_signal_id, latest_signal_at.get(strategy_key), signal_payload.get("latest_trade_signal_id")):
             latest_signal_at[strategy_key] = observed_at
             signal_payload["latest_trade_signal_id"] = str(trade_signal_id)
-            signal_payload["latest_observed_at"] = _render_datetime(observed_at)
+            signal_payload["latest_observed_at"] = utc_iso(observed_at)
         _set_latest_activity(latest_activity, strategy_key, observed_at)
         _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
         _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
@@ -538,7 +534,7 @@ def _build_engine_strategy_ledgers(
         if _newer_desc_asc(decided_at, trade_decision_id, latest_decision_at.get(strategy_key), decision_payload.get("latest_trade_decision_id")):
             latest_decision_at[strategy_key] = decided_at
             decision_payload["latest_trade_decision_id"] = str(trade_decision_id)
-            decision_payload["latest_decided_at"] = _render_datetime(decided_at)
+            decision_payload["latest_decided_at"] = utc_iso(decided_at)
         _set_latest_activity(latest_activity, strategy_key, decided_at)
         _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
         _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
@@ -574,7 +570,7 @@ def _build_engine_strategy_ledgers(
         ):
             latest_admission_at[strategy_key] = decided_at
             admission_payload["latest_admission_decision_id"] = str(admission_decision_id)
-            admission_payload["latest_decided_at"] = _render_datetime(decided_at)
+            admission_payload["latest_decided_at"] = utc_iso(decided_at)
         _set_latest_activity(latest_activity, strategy_key, decided_at)
         _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
         _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
@@ -599,7 +595,7 @@ def _build_engine_strategy_ledgers(
         candidate_payload["market_data_coverage"] = _sorted_counts(diagnostic_counters["market_data_coverage"])
         payload["decisions"]["selected_count"] = int(payload["decisions"]["decision_state_counts"].get("selected", 0))
         payload["top_blocker_reasons"] = _top_blockers(blockers_by_strategy[strategy_id])
-        payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))
+        payload["latest_activity_at"] = utc_iso(latest_activity.get(strategy_id))
     return payloads
 
 
@@ -704,7 +700,7 @@ def _build_execution_strategy_ledgers(
             if _newer_desc_asc(created_at, execution_intent_id, latest_intent_at.get(strategy_key), intent_payload.get("latest_execution_intent_id")):
                 latest_intent_at[strategy_key] = created_at
                 intent_payload["latest_execution_intent_id"] = str(execution_intent_id)
-                intent_payload["latest_created_at"] = _render_datetime(created_at)
+                intent_payload["latest_created_at"] = utc_iso(created_at)
             _set_latest_activity(latest_activity, strategy_key, created_at)
 
     attempt_strategy: dict[str, str] = {}
@@ -745,7 +741,7 @@ def _build_execution_strategy_ledgers(
             ):
                 latest_attempt_at[strategy_key] = requested_at
                 attempt_payload["latest_execution_attempt_id"] = attempt_id
-                attempt_payload["latest_requested_at"] = _render_datetime(requested_at)
+                attempt_payload["latest_requested_at"] = utc_iso(requested_at)
             _set_latest_activity(latest_activity, strategy_key, requested_at)
 
         if attempt_strategy:
@@ -812,11 +808,11 @@ def _build_execution_strategy_ledgers(
                         position_payload["stale_mark_count"] += 1
                     if close_marked_at > latest_marked_at.get(strategy_key, datetime.min.replace(tzinfo=UTC)):
                         latest_marked_at[strategy_key] = close_marked_at
-                        position_payload["latest_marked_at"] = _render_datetime(close_marked_at)
+                        position_payload["latest_marked_at"] = utc_iso(close_marked_at)
             if _newer_desc_asc(updated_at, position_id, latest_position_at.get(strategy_key), position_payload.get("latest_position_id")):
                 latest_position_at[strategy_key] = updated_at
                 position_payload["latest_position_id"] = str(position_id)
-                position_payload["latest_updated_at"] = _render_datetime(updated_at)
+                position_payload["latest_updated_at"] = utc_iso(updated_at)
             _set_latest_activity(latest_activity, strategy_key, updated_at)
 
         latest_close_at: dict[str, datetime] = {}
@@ -843,7 +839,7 @@ def _build_execution_strategy_ledgers(
             if _newer_desc_desc(closed_at, position_close_id, latest_close_at.get(strategy_key), close_payload.get("latest_position_close_id")):
                 latest_close_at[strategy_key] = closed_at
                 close_payload["latest_position_close_id"] = int(position_close_id)
-                close_payload["latest_closed_at"] = _render_datetime(closed_at)
+                close_payload["latest_closed_at"] = utc_iso(closed_at)
             _set_latest_activity(latest_activity, strategy_key, closed_at)
 
     for strategy_id, payload in payloads.items():
@@ -870,7 +866,7 @@ def _build_execution_strategy_ledgers(
             "unrealized_pnl": unrealized_pnl,
             "net_pnl": money_sum_float([realized_pnl, unrealized_pnl]),
         }
-        payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))
+        payload["latest_activity_at"] = utc_iso(latest_activity.get(strategy_id))
     return payloads
 
 

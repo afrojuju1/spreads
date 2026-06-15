@@ -9,8 +9,6 @@ from uuid import uuid4
 from core.services.execution_lifecycle import (
     OPEN_ATTEMPT_STATUSES,
     TERMINAL_ATTEMPT_STATUSES,
-    is_terminal_execution_attempt_status,
-    resolve_execution_submit_job_run_id,
 )
 from core.services.option_structures import (
     candidate_legs,
@@ -32,10 +30,6 @@ DEFAULT_MIN_CREDIT_RETENTION_PCT = 0.95
 DEFAULT_MAX_CREDIT_CONCESSION = 0.02
 
 
-def _normalize_attempt_context(value: Any) -> str | None:
-    return as_text(value)
-
-
 def _execution_attempt_id() -> str:
     return f"execution:{uuid4().hex}"
 
@@ -44,16 +38,8 @@ def _execution_client_order_id() -> str:
     return f"spr-exec-{uuid4().hex[:20]}"
 
 
-def _execution_submit_job_run_id(execution_attempt_id: str) -> str:
-    return resolve_execution_submit_job_run_id(execution_attempt_id)
-
-
 def _order_intent_key(execution_attempt_id: str) -> str:
     return f"order_intent:{execution_attempt_id}"
-
-
-def _is_terminal_status(status: str | None) -> bool:
-    return is_terminal_execution_attempt_status(status)
 
 
 def _policy_version_token(payload: dict[str, Any]) -> str:

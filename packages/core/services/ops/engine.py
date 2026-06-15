@@ -42,10 +42,6 @@ def _count_rows(rows: list[Mapping[str, Any]], field_name: str) -> dict[str, int
     return dict(sorted(Counter(str(row.get(field_name) or "unknown") for row in rows).items()))
 
 
-def _render_datetime(value: datetime | None) -> str | None:
-    return utc_iso(value)
-
-
 def _ticker_source_run_row(row: TickerSourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
     return {
         "ticker_source_run_id": row.ticker_source_run_id,
@@ -54,15 +50,15 @@ def _ticker_source_run_row(row: TickerSourceRunModel, *, symbols: list[str]) -> 
         "job_run_id": row.job_run_id,
         "status": row.status,
         "config_hash": row.config_hash,
-        "generated_at": _render_datetime(row.generated_at),
-        "completed_at": _render_datetime(row.completed_at),
+        "generated_at": utc_iso(row.generated_at),
+        "completed_at": utc_iso(row.completed_at),
         "observed_count": row.observed_count,
         "selected_count": row.selected_count,
         "excluded_count": row.excluded_count,
         "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
         "summary": dict(row.summary_json or {}),
-        "created_at": _render_datetime(row.created_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "created_at": utc_iso(row.created_at),
+        "updated_at": utc_iso(row.updated_at),
     }
 
 
@@ -78,13 +74,13 @@ def _candidate_run_row(row: CandidateRunModel) -> dict[str, Any]:
         "ticker_source_id": row.ticker_source_id,
         "status": row.status,
         "config_hash": row.config_hash,
-        "generated_at": _render_datetime(row.generated_at),
-        "completed_at": _render_datetime(row.completed_at),
+        "generated_at": utc_iso(row.generated_at),
+        "completed_at": utc_iso(row.completed_at),
         "symbol_count": row.symbol_count,
         "candidate_count": row.candidate_count,
         "summary": dict(row.summary_json or {}),
-        "created_at": _render_datetime(row.created_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "created_at": utc_iso(row.created_at),
+        "updated_at": utc_iso(row.updated_at),
     }
 
 
@@ -102,9 +98,9 @@ def _ticker_source_state_row(row: TickerSourceStateModel) -> dict[str, Any]:
         "selected_count": row.selected_count,
         "consecutive_missing_count": row.consecutive_missing_count,
         "last_ticker_source_run_id": row.last_ticker_source_run_id,
-        "last_seen_at": _render_datetime(row.last_seen_at),
-        "last_selected_at": _render_datetime(row.last_selected_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "last_seen_at": utc_iso(row.last_seen_at),
+        "last_selected_at": utc_iso(row.last_selected_at),
+        "updated_at": utc_iso(row.updated_at),
         "metrics": dict(row.last_metrics_json or {}),
     }
 

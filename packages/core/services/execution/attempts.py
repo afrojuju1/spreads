@@ -19,7 +19,11 @@ from core.services.session_positions import (
     OPEN_TRADE_INTENT,
     sync_session_position_from_attempt,
 )
-from core.services.execution_lifecycle import project_execution_attempt_lifecycle
+from core.services.execution_lifecycle import (
+    is_terminal_execution_attempt_status,
+    project_execution_attempt_lifecycle,
+    resolve_execution_submit_job_run_id,
+)
 from core.value_coercion import (
     as_text,
     coerce_float,
@@ -29,9 +33,6 @@ from core.value_coercion import (
 from .shared import (
     BROKER_NAME,
     EXECUTION_SCHEMA_MESSAGE,
-    _execution_submit_job_run_id,
-    _is_terminal_status,
-    _normalize_attempt_context,
     _order_intent_key,
     _resolve_completed_at,
 )
@@ -102,7 +103,7 @@ def _attempt_payload_with_lifecycle(
     *,
     now: datetime,
 ) -> dict[str, Any]:
-    attempt_context = _normalize_attempt_context(attempt_payload.get("attempt_context"))
+    attempt_context = as_text(attempt_payload.get("attempt_context"))
     lifecycle = project_execution_attempt_lifecycle(
         attempt_payload,
         now=now,
@@ -275,7 +276,7 @@ def _sync_attempt_state(
         )
 
     status = str(order_snapshot.get("status") or attempt.get("status") or "unknown").lower()
-    completed_at = _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
+    completed_at = _resolve_completed_at(order_snapshot) if is_terminal_execution_attempt_status(status) else None
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
@@ -333,7 +334,7 @@ def _sync_equity_attempt_state(
         )
 
     status = str(order_snapshot.get("status") or attempt.get("status") or "unknown").lower()
-    completed_at = _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
+    completed_at = _resolve_completed_at(order_snapshot) if is_terminal_execution_attempt_status(status) else None
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
@@ -472,7 +473,7 @@ def _queue_execution_attempt(
     attempt: dict[str, Any],
 ) -> dict[str, Any]:
     execution_attempt_id = str(attempt["execution_attempt_id"])
-    job_run_id = _execution_submit_job_run_id(execution_attempt_id)
+    job_run_id = resolve_execution_submit_job_run_id(execution_attempt_id)
     scheduled_for = datetime.now(UTC)
     payload = {
         "execution_attempt_id": execution_attempt_id,

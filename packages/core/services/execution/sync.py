@@ -7,6 +7,7 @@ from core.db.decorators import with_storage
 from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_STATUS,
     SUBMIT_UNKNOWN_STATUS,
+    is_terminal_execution_attempt_status,
 )
 from core.services.execution_lifecycle import project_execution_attempt_lifecycle
 from core.services.runtime_identity import (
@@ -26,10 +27,6 @@ from .attempts import (
     _sync_attempt_state,
     _sync_linked_execution_intent,
 )
-from .shared import (
-    _is_terminal_status,
-)
-
 
 def _linked_intent_payload(*, execution_store: Any, attempt: dict[str, Any]) -> dict[str, Any] | None:
     if not execution_store.intent_schema_ready():
@@ -283,7 +280,7 @@ def cancel_execution_attempt(
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
 
     status = str(attempt.get("status") or "").strip().lower()
-    if _is_terminal_status(status):
+    if is_terminal_execution_attempt_status(status):
         payload = _get_attempt_payload(execution_store, execution_attempt_id)
         return {
             "action": "cancel",

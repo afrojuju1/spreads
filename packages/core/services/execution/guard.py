@@ -14,6 +14,7 @@ from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
     SUBMIT_UNKNOWN_STATUS,
     classify_open_execution_attempt,
+    is_terminal_execution_attempt_status,
     resolve_execution_attempt_source_job,
     resolve_execution_submit_job_run_id,
 )
@@ -33,7 +34,7 @@ from .attempts import (
 )
 from .alpaca_adapter import create_alpaca_order_adapter
 from .policy import _attempt_exit_policy, _validate_open_timing_window
-from .shared import OPEN_STATUSES, _is_terminal_status
+from .shared import OPEN_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +314,7 @@ def run_open_execution_guard(
                 order_snapshot=order_snapshot,
             )
             current_status = str(synced_attempt.get("status") or "").lower()
-            if _is_terminal_status(current_status):
+            if is_terminal_execution_attempt_status(current_status):
                 _sync_linked_execution_intent(
                     execution_store=execution_store,
                     attempt=synced_attempt,

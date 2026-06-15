@@ -38,10 +38,6 @@ _RESERVED_LOG_RECORD_KEYS = frozenset(
 )
 
 
-def _utc_timestamp() -> str:
-    return utc_now_iso()
-
-
 def _json_default(value: Any) -> str:
     if isinstance(value, datetime):
         return utc_iso(value) or value.isoformat()
@@ -68,7 +64,7 @@ class JsonLogFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": _utc_timestamp(),
+            "timestamp": utc_now_iso(),
             "level": record.levelname.lower(),
             "service": self.service,
             "logger": record.name,

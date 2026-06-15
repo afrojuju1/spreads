@@ -39,10 +39,6 @@ def _activity_window(activity_date: str) -> tuple[date, datetime, datetime]:
     return activity_day, start, start + timedelta(days=1)
 
 
-def _render_datetime(value: datetime | None) -> str | None:
-    return utc_iso(value)
-
-
 def _date_text(value: date | None) -> str | None:
     return None if value is None else value.isoformat()
 
@@ -64,9 +60,9 @@ def _attempt_row(row: ExecutionAttemptModel) -> dict[str, Any]:
         "quantity": row.quantity,
         "requested_limit_price": row.requested_limit_price,
         "limit_price": row.limit_price,
-        "requested_at": _render_datetime(row.requested_at),
-        "submitted_at": _render_datetime(row.submitted_at),
-        "completed_at": _render_datetime(row.completed_at),
+        "requested_at": utc_iso(row.requested_at),
+        "submitted_at": utc_iso(row.submitted_at),
+        "completed_at": utc_iso(row.completed_at),
         "broker": row.broker,
         "broker_order_id": row.broker_order_id,
         "client_order_id": row.client_order_id,
@@ -101,8 +97,8 @@ def _order_row(row: ExecutionOrderModel) -> dict[str, Any]:
         "limit_price": row.limit_price,
         "filled_qty": row.filled_qty,
         "filled_avg_price": row.filled_avg_price,
-        "submitted_at": _render_datetime(row.submitted_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "submitted_at": utc_iso(row.submitted_at),
+        "updated_at": utc_iso(row.updated_at),
     }
 
 
@@ -119,7 +115,7 @@ def _fill_row(row: ExecutionFillModel) -> dict[str, Any]:
         "fill_type": row.fill_type,
         "quantity": row.quantity,
         "price": row.price,
-        "filled_at": _render_datetime(row.filled_at),
+        "filled_at": utc_iso(row.filled_at),
     }
 
 
@@ -132,7 +128,7 @@ def _close_row(row: PositionCloseModel) -> dict[str, Any]:
         "exit_value": row.exit_value,
         "realized_pnl": row.realized_pnl,
         "broker_order_id": row.broker_order_id,
-        "closed_at": _render_datetime(row.closed_at),
+        "closed_at": utc_iso(row.closed_at),
     }
 
 
@@ -282,8 +278,8 @@ def list_execution_activity(
         "trading_strategy_id": trading_strategy_id,
         "scope": {
             "criteria": "attempt.market_date equals activity_date OR requested_at falls inside the UTC activity day",
-            "requested_at_start": _render_datetime(start),
-            "requested_at_end": _render_datetime(end),
+            "requested_at_start": utc_iso(start),
+            "requested_at_end": utc_iso(end),
         },
         "summary": _summarize_attempts(attempts, orders, fills, closes),
         "attempts": attempts,

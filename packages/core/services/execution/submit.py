@@ -10,6 +10,7 @@ from core.integrations.alpaca.errors import classify_alpaca_request_error
 from core.services.candidate_policy import resolve_candidate_profile
 from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_STATUS,
+    is_terminal_execution_attempt_status,
 )
 from core.services.session_positions import (
     OPEN_TRADE_INTENT,
@@ -33,10 +34,7 @@ from .policy import (
 from .runtimes import (
     execution_runtime_from_request,
 )
-from .shared import (
-    _is_terminal_status,
-    _resolve_completed_at,
-)
+from .shared import _resolve_completed_at
 
 from .admission import (
     _execution_admission_payload_from_account_capacity,
@@ -350,7 +348,7 @@ def run_execution_submit(
             broker_order_id=broker_order_id,
             client_order_id=as_text(submitted_order.get("client_order_id")) or client_order_id,
             submitted_at=as_text(submitted_order.get("submitted_at")) or requested_at,
-            completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
+            completed_at=_resolve_completed_at(submitted_order) if is_terminal_execution_attempt_status(submitted_status) else None,
             error_text=str(exc),
             position_id=as_text(payload.get("position_id")),
         )
@@ -397,7 +395,7 @@ def run_execution_submit(
             broker_order_id=broker_order_id,
             client_order_id=as_text(submitted_order.get("client_order_id")) or client_order_id,
             submitted_at=as_text(submitted_order.get("submitted_at")) or requested_at,
-            completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
+            completed_at=_resolve_completed_at(submitted_order) if is_terminal_execution_attempt_status(submitted_status) else None,
             error_text=str(exc),
             position_id=as_text(payload.get("position_id")),
         )

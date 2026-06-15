@@ -294,10 +294,6 @@ def _is_option_broker_position(position: Mapping[str, Any]) -> bool:
     return str(position.get("asset_class") or "").strip().lower() in BROKER_OPTION_ASSET_CLASSES
 
 
-def _broker_position_symbol(position: Mapping[str, Any]) -> str | None:
-    return as_text(position.get("symbol"))
-
-
 def _managed_leg_index(open_positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for position in open_positions:
@@ -334,7 +330,7 @@ def _broker_exposure_state(
     option_market_value = 0.0
 
     for position in broker_positions:
-        symbol = _broker_position_symbol(position)
+        symbol = as_text(position.get("symbol"))
         managed = managed_by_symbol.get(symbol or "")
         owner_kind = "external_manual" if managed is None else str(managed.get("owner_kind") or "spreads_managed")
         is_option = _is_option_broker_position(position)
@@ -493,10 +489,6 @@ def _symbols_from_ticker_source_run(ticker_source_run: Mapping[str, Any] | None)
     return [str(symbol).strip().upper() for symbol in tickers if str(symbol or "").strip()]
 
 
-def _render_datetime(value: datetime | None) -> str | None:
-    return utc_iso(value)
-
-
 def _normalize_broker_environment(value: Any) -> str:
     normalized = as_text(value)
     if normalized is None:
@@ -583,7 +575,7 @@ def _strategy_execution_contract(
         "trade_decision_id": None,
         "execution_intent_id": None,
         "execution_attempt_id": None,
-        "observed_at": _render_datetime(now),
+        "observed_at": utc_iso(now),
     }
 
 
@@ -788,15 +780,15 @@ def _ticker_source_run_payload(row: TickerSourceRunModel, *, symbols: list[str])
         "job_run_id": row.job_run_id,
         "status": row.status,
         "config_hash": row.config_hash,
-        "generated_at": _render_datetime(row.generated_at),
-        "completed_at": _render_datetime(row.completed_at),
+        "generated_at": utc_iso(row.generated_at),
+        "completed_at": utc_iso(row.completed_at),
         "observed_count": row.observed_count,
         "selected_count": row.selected_count,
         "excluded_count": row.excluded_count,
         "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
         "summary": dict(row.summary_json or {}),
-        "created_at": _render_datetime(row.created_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "created_at": utc_iso(row.created_at),
+        "updated_at": utc_iso(row.updated_at),
     }
 
 
@@ -811,7 +803,7 @@ def _candidate_symbol_diagnostic_payload(row: CandidateSymbolDiagnosticModel) ->
         "ticker_source_kind": row.ticker_source_kind,
         "ticker_source_id": row.ticker_source_id,
         "diagnostic_status": row.diagnostic_status,
-        "observed_at": _render_datetime(row.observed_at),
+        "observed_at": utc_iso(row.observed_at),
         "spot_price": row.spot_price,
         "expiration_count": row.expiration_count,
         "contract_count": row.contract_count,
@@ -826,8 +818,8 @@ def _candidate_symbol_diagnostic_payload(row: CandidateSymbolDiagnosticModel) ->
         "ranking_gate": dict(row.ranking_gate_json or {}),
         "examples": dict(row.examples_json or {}),
         "evidence": dict(row.evidence_json or {}),
-        "created_at": _render_datetime(row.created_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "created_at": utc_iso(row.created_at),
+        "updated_at": utc_iso(row.updated_at),
     }
 
 
@@ -946,16 +938,16 @@ def _candidate_run_payload(
         "ticker_source_id": row.ticker_source_id,
         "status": row.status,
         "config_hash": row.config_hash,
-        "generated_at": _render_datetime(row.generated_at),
-        "completed_at": _render_datetime(row.completed_at),
+        "generated_at": utc_iso(row.generated_at),
+        "completed_at": utc_iso(row.completed_at),
         "symbol_count": row.symbol_count,
         "candidate_count": row.candidate_count,
         "summary": dict(row.summary_json or {}),
         "diagnostics": list(diagnostics or []),
         "selection_counts": _int_count_map(selection_counts),
         "admission_counts": _int_count_map(admission_counts),
-        "created_at": _render_datetime(row.created_at),
-        "updated_at": _render_datetime(row.updated_at),
+        "created_at": utc_iso(row.created_at),
+        "updated_at": utc_iso(row.updated_at),
     }
 
 
@@ -1085,7 +1077,7 @@ def _portfolio_admission_state(row: TradeAdmissionModel) -> dict[str, Any]:
         "message": as_text(portfolio_admission.get("message")),
         "latest_admission_decision_id": row.admission_decision_id,
         "admission_state": row.admission_state,
-        "decided_at": _render_datetime(row.decided_at),
+        "decided_at": utc_iso(row.decided_at),
         "policy": as_mapping(portfolio_admission.get("policy")),
         "metrics": as_mapping(portfolio_admission.get("metrics")),
         "blockers": as_list(portfolio_admission.get("blockers")),
