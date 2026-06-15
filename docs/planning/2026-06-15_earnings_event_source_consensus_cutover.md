@@ -62,14 +62,14 @@ These are useful later, but they are not required to stop the current earnings-s
 
 Runtime facts observed on 2026-06-15:
 
-- `yfinance` is not installed and is not used.
+- `yfinance` is installed for the cached data-lane refresh path, but no strategy runtime path uses it.
 - `build_calendar_event_resolver()` wires:
-  - DoltHub-backed `EarningsCalendarAdapter`
+  - `DoltHubEarningsCalendarAdapter`
   - `FinvizEarningsAdapter`
   - optional `AlphaVantageEarningsCalendarAdapter`
   - `AlpacaCorporateActionsAdapter`
   - `MacroCalendarAdapter`
-- The generic `EarningsCalendarAdapter` is actually DoltHub-backed and reports source `dolt_earnings_calendar`.
+- `DoltHubEarningsCalendarAdapter` reports persisted source `dolt_earnings_calendar`.
 - `dolt_earnings_calendar` is marked required for `single_name_equity` calendar coverage.
 - `ALPHA_VANTAGE_API_KEY` is configured in deployed containers.
 - `FINVIZ_COOKIE` is not configured in deployed containers.
@@ -531,7 +531,7 @@ The calendar refresh may run off-hours. Strategy entry routines remain market-ho
 ### Phase 1: Dependency And Names
 
 - Add `yfinance` to project dependencies.
-- Rename DoltHub-backed `EarningsCalendarAdapter` to `DoltHubEarningsCalendarAdapter`.
+- Use `DoltHubEarningsCalendarAdapter` for the existing DoltHub-backed source.
 - Keep persisted source name `dolt_earnings_calendar`.
 - Add yfinance bulk adapter/helper for `Calendars.get_earnings_calendar`.
 - Keep yfinance per-ticker enrichment out of V1.

@@ -15,7 +15,7 @@ from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAH
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
-DOLT_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
+DOLTHUB_EARNINGS_HTTP = VendorHttpClient(timeout_seconds=20, user_agent="calendar-events/1.0")
 
 
 def _earnings_timestamp(date_str: str, session_label: str | None) -> str:
@@ -29,7 +29,7 @@ def _earnings_timestamp(date_str: str, session_label: str | None) -> str:
     return local_dt.astimezone(UTC).isoformat()
 
 
-class EarningsCalendarAdapter(BaseCalendarEventAdapter):
+class DoltHubEarningsCalendarAdapter(BaseCalendarEventAdapter):
     source_name = "dolt_earnings_calendar"
     source_confidence = "low"
     base_url = "https://www.dolthub.com/api/v1alpha1/post-no-preference/earnings"
@@ -64,7 +64,7 @@ class EarningsCalendarAdapter(BaseCalendarEventAdapter):
             f"and date <= '{end_date}' "
             "order by date asc"
         )
-        payload = DOLT_EARNINGS_HTTP.request_json("GET", self.base_url, "", params={"q": sql})
+        payload = DOLTHUB_EARNINGS_HTTP.request_json("GET", self.base_url, "", params={"q": sql})
 
         rows = payload.get("rows", [])
         fetched_at = _utc_now_iso()

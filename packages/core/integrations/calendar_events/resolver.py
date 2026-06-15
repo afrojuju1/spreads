@@ -12,7 +12,7 @@ from .adapters.alpha_vantage_earnings_calendar import (
     AlphaVantageEarningsCalendarAdapter,
 )
 from .adapters.base import BaseCalendarEventAdapter
-from .adapters.earnings_calendar import EarningsCalendarAdapter
+from .adapters.dolthub_earnings_calendar import DoltHubEarningsCalendarAdapter
 from .adapters.finviz_earnings import FinvizEarningsAdapter
 from .adapters.macro_calendar import MacroCalendarAdapter
 from .config import (
@@ -510,7 +510,7 @@ def build_calendar_event_resolver(
 ) -> CalendarEventResolver:
     store = CalendarEventStore(database_url or default_database_url())
     adapters: list[BaseCalendarEventAdapter] = [
-        EarningsCalendarAdapter(),
+        DoltHubEarningsCalendarAdapter(),
         FinvizEarningsAdapter(),
     ]
     resolved_alpha_vantage_api_key = alpha_vantage_api_key or default_alpha_vantage_api_key()
