@@ -40,9 +40,9 @@ def broker_sync_payload(
         normalized = "degraded"
     elif status == "failed":
         normalized = "blocked"
-    open_position_count = coerce_int(summary.get("open_position_count")) or 0
     queued_attempt_count = coerce_int(summary.get("queued_attempt_count")) or 0
-    requires_freshness = bool((market_session or {}).get("is_open")) or bool(open_position_count or queued_attempt_count)
+    market_is_open = bool((market_session or {}).get("is_open"))
+    requires_freshness = market_is_open or bool(queued_attempt_count)
     freshness = "current"
     if age_seconds is not None and age_seconds > BROKER_SYNC_STALE_AFTER_SECONDS and normalized == "healthy":
         freshness = "stale"

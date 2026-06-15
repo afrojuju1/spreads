@@ -174,6 +174,7 @@ class _PositionProjection:
     reconciliation_mismatch_count: int
     missing_mark_count: int
     stale_mark_count: int
+    mark_freshness_required: bool
     broker_unquoted_positions: int
     mark_error: str | None
     mark_health_status: str
@@ -232,14 +233,12 @@ def _alert_delivery_payload(
         status = "degraded"
     return {
         "status": status,
-        "count": len(recent_rows),
-        "recent_count": len(recent_rows),
+        "recent_event_count": len(recent_rows),
         "status_counts": dict(counts),
         "dead_letter_count": counts.get("dead_letter", 0),
         "retry_wait_count": counts.get("retry_wait", 0),
         "dispatching_count": counts.get("dispatching", 0),
         "pending_count": counts.get("pending", 0),
-        "historical_status_counts": dict(Counter(str(row.get("status") or "unknown") for row in rows)),
     }
 
 
@@ -2150,6 +2149,7 @@ def _project_positions(
     storage: Any,
     now: datetime,
     broker_sync: Mapping[str, Any],
+    market_session: Mapping[str, Any],
 ) -> _PositionProjection:
     statuses: list[str] = []
     attention: list[dict[str, str]] = []
@@ -2160,6 +2160,7 @@ def _project_positions(
     reconciliation_mismatch_count = 0
     missing_mark_count = 0
     stale_mark_count = 0
+    mark_freshness_required = bool(market_session.get("is_open"))
     if execution_store.portfolio_schema_ready():
         from core.services.positions import enrich_position_row
 
@@ -2211,15 +2212,16 @@ def _project_positions(
 
     mark_error = as_text(as_mapping(broker_sync.get("summary")).get("mark_error"))
     broker_unquoted_positions = coerce_int(as_mapping(broker_sync.get("summary")).get("unquoted_position_count")) or 0
+    actionable_stale_mark_count = stale_mark_count if mark_freshness_required else 0
     mark_health_status = "healthy"
-    if missing_mark_count or stale_mark_count or broker_unquoted_positions or mark_error:
+    if missing_mark_count or actionable_stale_mark_count or broker_unquoted_positions or mark_error:
         mark_health_status = "degraded"
         statuses.append("degraded")
         attention.append(
             _attention(
                 severity="medium",
                 code="mark_health_degraded",
-                message="One or more open positions are missing or stale quote marks.",
+                message="One or more open positions have missing, stale, or unavailable quote marks.",
             )
         )
 
@@ -2250,6 +2252,7 @@ def _project_positions(
         reconciliation_mismatch_count=reconciliation_mismatch_count,
         missing_mark_count=missing_mark_count,
         stale_mark_count=stale_mark_count,
+        mark_freshness_required=mark_freshness_required,
         broker_unquoted_positions=broker_unquoted_positions,
         mark_error=mark_error,
         mark_health_status=mark_health_status,
@@ -2281,7 +2284,7 @@ def _project_alerts(
     else:
         alert_delivery = {
             "status": "unknown",
-            "count": 0,
+            "recent_event_count": 0,
             "status_counts": {},
             "dead_letter_count": 0,
             "retry_wait_count": 0,
@@ -2435,7 +2438,12 @@ def build_trading_ops_state(
         now=now,
     )
     execution = _project_execution(storage=storage, now=now)
-    positions = _project_positions(storage=storage, now=now, broker_sync=account.broker_sync)
+    positions = _project_positions(
+        storage=storage,
+        now=now,
+        broker_sync=account.broker_sync,
+        market_session=market_control.market_session,
+    )
     alerts = _project_alerts(storage=storage, now=now)
     broker_environment = _normalize_broker_environment(account.account_snapshot.get("environment"))
     broker_environment_source = _broker_environment_source(account.account_snapshot)
@@ -2514,7 +2522,6 @@ def build_trading_ops_state(
         "market_open_at": market_control.market_session.get("market_open_at"),
         "market_close_at": market_control.market_session.get("market_close_at"),
         "trading_allowed": trading_allowed,
-        "environment": account.account_snapshot.get("environment"),
         **execution_contract.summary,
         "control_mode": market_control.control.get("mode"),
         "scheduler_status": as_mapping(jobs.details.get("scheduler")).get("status"),
@@ -2610,6 +2617,7 @@ def build_trading_ops_state(
             "status": positions.mark_health_status,
             "missing_mark_count": positions.missing_mark_count,
             "stale_mark_count": positions.stale_mark_count,
+            "mark_freshness_required": positions.mark_freshness_required,
             "broker_unquoted_position_count": positions.broker_unquoted_positions,
             "mark_error": positions.mark_error,
         },

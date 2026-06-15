@@ -164,6 +164,10 @@ def build_storage_ops_state(
     tables = [dict(row) for row in list(details.get("tables") or [])]
     tables.append(capture_row)
     details["tables"] = tables
+    market_data_total_size_bytes = int(summary.pop("total_size_bytes", 0) or 0)
+    market_data_estimated_live_rows = int(summary.pop("estimated_live_rows", 0) or 0)
+    market_data_estimated_dead_rows = int(summary.pop("estimated_dead_rows", 0) or 0)
+    market_data_inactive_part_count = int(summary.pop("inactive_part_count", 0) or 0)
 
     latest_capture_status = capture_row.get("latest_capture_status")
     if latest_capture_status is not None and str(latest_capture_status).lower() not in {"ok", "idle"}:
@@ -180,10 +184,14 @@ def build_storage_ops_state(
     summary["latest_captured_at"] = capture_row.get("latest_captured_at")
     summary["latest_quote_rows_saved"] = capture_row.get("latest_quote_rows_saved")
     summary["latest_trade_rows_saved"] = capture_row.get("latest_trade_rows_saved")
-    summary["table_count"] = len(tables)
-    summary["total_size_bytes"] = sum(int(row.get("total_size_bytes") or 0) for row in tables)
-    summary["estimated_live_rows"] = sum(int(row.get("estimated_live_rows") or 0) for row in tables)
-    summary["estimated_dead_rows"] = sum(int(row.get("estimated_dead_rows") or 0) for row in tables)
+    summary["market_data_total_size_bytes"] = market_data_total_size_bytes
+    summary["market_data_estimated_live_rows"] = market_data_estimated_live_rows
+    summary["market_data_estimated_dead_rows"] = market_data_estimated_dead_rows
+    summary["market_data_inactive_part_count"] = market_data_inactive_part_count
+    summary["storage_table_count"] = len(tables)
+    summary["storage_total_size_bytes"] = sum(int(row.get("total_size_bytes") or 0) for row in tables)
+    summary["storage_estimated_live_rows"] = sum(int(row.get("estimated_live_rows") or 0) for row in tables)
+    summary["storage_estimated_dead_rows"] = sum(int(row.get("estimated_dead_rows") or 0) for row in tables)
     summary["schedule"] = "clickhouse_ttl_background"
     summary["market_hours_safe"] = True
 

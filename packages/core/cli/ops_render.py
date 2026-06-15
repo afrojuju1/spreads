@@ -460,7 +460,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             f"..{_render_value(summary.get('market_close_at'))}"
         ),
     )
-    overview.add_row("Broker Env", _render_value(summary.get("broker_environment") or summary.get("environment")))
+    overview.add_row("Broker Env", _render_value(summary.get("broker_environment")))
     overview.add_row("Control", _render_value(summary.get("control_mode")))
     overview.add_row(
         "Execution Mode",
@@ -881,9 +881,9 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Storage",
         (
-            f"{_render_bytes(summary.get('total_size_bytes'))} | "
-            f"live rows {_render_value(summary.get('estimated_live_rows'))} | "
-            f"dead rows {_render_value(summary.get('estimated_dead_rows'))}"
+            f"{_render_bytes(summary.get('storage_total_size_bytes'))} | "
+            f"live rows {_render_value(summary.get('storage_estimated_live_rows'))} | "
+            f"dead rows {_render_value(summary.get('storage_estimated_dead_rows'))}"
         ),
     )
     overview.add_row("Schedule", _render_value(summary.get("schedule")))

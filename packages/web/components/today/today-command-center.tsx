@@ -130,7 +130,7 @@ export function TodayCommandCenter() {
   const marketDate = readString(summary.market_date, "");
   const marketSessionStatus = summary.market_session_status;
   const tradingAllowed = summary.trading_allowed;
-  const environment = firstPresent(summary.broker_environment, executionContract.broker_environment, summary.environment);
+  const environment = firstPresent(summary.broker_environment, executionContract.broker_environment);
   const executionPosture = firstPresent(summary.execution_posture, primaryExecutionContract.execution_posture);
   const executionContractStatus = firstPresent(summary.execution_contract_status, executionContract.status);
   const controlMode = summary.control_mode;

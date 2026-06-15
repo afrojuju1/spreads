@@ -82,7 +82,7 @@ def _normalize_account(payload: dict[str, Any]) -> dict[str, Any]:
         "daytrading_buying_power": coerce_float(payload.get("daytrading_buying_power")),
         "non_marginable_buying_power": coerce_float(payload.get("non_marginable_buying_power")),
         "options_buying_power": coerce_float(payload.get("options_buying_power")),
-        "portfolio_value": equity,
+        "portfolio_value": coerce_float(payload.get("portfolio_value")),
         "long_market_value": coerce_float(payload.get("long_market_value")),
         "short_market_value": coerce_float(payload.get("short_market_value")),
         "initial_margin": coerce_float(payload.get("initial_margin")),

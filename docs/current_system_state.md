@@ -133,6 +133,7 @@ Always-on runtime:
 - Postgres, ClickHouse, Redis, API, web, scheduler, and the logging/metrics stack stay up so operator reads, dashboards, leases, queues, and market-data storage remain available.
 - Runtime workers stay up for broker/account sync, intent dispatch, alert reconciliation, and strategy routines, but market-only jobs are expressed in their job schedules instead of waking and skipping all night.
 - `alert_reconcile` is intentionally allowed off-hours so pending notifications can recover without waiting for the next session.
+- `TradingOpsState` keeps broker-sync age and stale position marks visible after market close, but expected off-hours staleness is not degraded when the latest sync was healthy and there are no queued attempts, missing marks, broker quote errors, or reconciliation mismatches.
 
 Market-window and data-refresh runtime:
 
@@ -384,6 +385,8 @@ Entry planning treats non-live signal eligibility, including `analysis_only` emi
 Disabled strategy breadth can be run explicitly through `spreads lifecycle observe-strategy <trading_strategy_id>`. Observation runs resolve authored strategy config without enabling scheduler jobs, run the normal ticker-source, candidate-build, entry-quality, signal, and decision persistence spine, force `analysis_only`/`observation_only` provenance, and stop before admission or execution-intent creation. `TradingOpsState.details.strategy_breadth[].latest_observation` exposes the latest observation evidence for each authored strategy.
 
 `TradingOpsState.details.broker_exposure` classifies the latest broker account snapshot positions by ownership against canonical open Spreads position legs. Broker option legs should be labeled as `spreads_managed`, `spreads_synthetic_validation`, or `external_manual` instead of being hidden behind raw broker account positions.
+
+`StorageOpsState.summary` uses `market_data_*` fields for ClickHouse market-data aggregates and `storage_*` fields for combined ClickHouse plus Postgres capture-summary storage aggregates. Avoid generic storage totals that hide which database class owns the bytes or row estimates.
 
 ## Rollout Notes
 
