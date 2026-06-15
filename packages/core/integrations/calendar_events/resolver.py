@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import json
-from collections import Counter
-from dataclasses import replace
 from datetime import UTC, date, datetime, time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from .adapters.alpaca_corporate_actions import AlpacaCorporateActionsAdapter
 from .adapters.alpha_vantage_earnings_calendar import (
@@ -24,6 +20,11 @@ from .config import (
     SOURCE_CONFIDENCE_RANK,
     SOURCE_FRESHNESS_HOURS,
 )
+from .consensus import (
+    compact_payload as _compact_payload,
+    reconcile_earnings_records as _reconcile_earnings_records,
+    record_payload as _record_payload,
+)
 from .earnings_phase import resolve_earnings_phase_snapshot
 from .models import (
     CalendarEventContext,
@@ -36,144 +37,12 @@ from core.runtime.config import default_alpha_vantage_api_key, default_database_
 from core.storage.serializers import parse_datetime as _parse_datetime
 from core.value_coercion import as_text as _as_text, utc_now_iso as _utc_now_iso
 
-NEW_YORK = ZoneInfo("America/New_York")
-
 
 def _aggregate_confidence(confidences: list[str]) -> str:
     if not confidences:
         return "unknown"
     ranked = sorted(confidences, key=lambda item: SOURCE_CONFIDENCE_RANK.get(item, 0))
     return ranked[0]
-
-
-def _record_payload(record: CalendarEventRecord) -> dict[str, object]:
-    if not record.payload_json:
-        return {}
-    try:
-        payload = json.loads(record.payload_json)
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _compact_payload(payload: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in payload.items() if value not in (None, "", (), [], {})}
-
-
-def _earnings_session_timing(record: CalendarEventRecord) -> str:
-    payload = _record_payload(record)
-    raw = str(payload.get("when") or payload.get("reportTime") or payload.get("report_time") or payload.get("time") or "").strip().lower()
-    if raw in {"bmo", "before_open"} or "before" in raw:
-        return "before_open"
-    if raw in {"amc", "after_close"} or "after" in raw:
-        return "after_close"
-    if raw:
-        return "during_market"
-    return "unknown"
-
-
-def _render_earnings_timestamp(date_str: str, timing: str) -> str:
-    local_time = time(12, 0)
-    if timing == "before_open":
-        local_time = time(9, 0)
-    elif timing == "after_close":
-        local_time = time(16, 15)
-    local_dt = datetime.combine(date.fromisoformat(date_str), local_time, tzinfo=NEW_YORK)
-    return local_dt.astimezone(UTC).isoformat()
-
-
-def _fresh_earnings_records(
-    records: list[CalendarEventRecord],
-    *,
-    covered_sources: set[str],
-) -> list[CalendarEventRecord]:
-    return [record for record in records if record.event_type == "earnings" and record.source in covered_sources]
-
-
-def _reconcile_earnings_records(
-    records: list[CalendarEventRecord],
-    *,
-    covered_sources: set[str],
-) -> tuple[list[CalendarEventRecord], dict[str, dict[str, object]]]:
-    fresh_records = sorted(
-        _fresh_earnings_records(records, covered_sources=covered_sources),
-        key=lambda item: _parse_datetime(item.scheduled_at),
-    )
-    if not fresh_records:
-        return [], {}
-
-    clusters: list[list[CalendarEventRecord]] = []
-    for record in fresh_records:
-        event_date = _parse_datetime(record.scheduled_at).date()
-        if not clusters:
-            clusters.append([record])
-            continue
-        last_date = _parse_datetime(clusters[-1][-1].scheduled_at).date()
-        if abs((event_date - last_date).days) <= 3:
-            clusters[-1].append(record)
-        else:
-            clusters.append([record])
-
-    canonical_records: list[CalendarEventRecord] = []
-    consensus_by_date: dict[str, dict[str, object]] = {}
-    for cluster in clusters:
-        by_date: dict[str, list[CalendarEventRecord]] = {}
-        for record in cluster:
-            by_date.setdefault(record.scheduled_at[:10], []).append(record)
-        event_date, date_records = max(
-            by_date.items(),
-            key=lambda item: (
-                len(item[1]),
-                max(SOURCE_CONFIDENCE_RANK.get(record.source_confidence, 0) for record in item[1]),
-                max(_parse_datetime(record.source_updated_at) for record in item[1]),
-                item[0],
-            ),
-        )
-        date_sources = sorted({record.source for record in date_records})
-        cluster_sources = sorted({record.source for record in cluster})
-        timing_counts = Counter(timing for timing in (_earnings_session_timing(record) for record in date_records) if timing != "unknown")
-        canonical_timing = max(timing_counts.items(), key=lambda item: (item[1], item[0]))[0] if timing_counts else "unknown"
-        best_record = max(
-            date_records,
-            key=lambda item: (
-                SOURCE_CONFIDENCE_RANK.get(item.source_confidence, 0),
-                _parse_datetime(item.source_updated_at),
-                item.source,
-            ),
-        )
-        canonical_record = best_record
-        if canonical_timing != "unknown":
-            canonical_record = replace(
-                best_record,
-                scheduled_at=_render_earnings_timestamp(event_date, canonical_timing),
-                window_start=_render_earnings_timestamp(event_date, canonical_timing),
-                window_end=_render_earnings_timestamp(event_date, canonical_timing),
-            )
-        canonical_records.append(canonical_record)
-
-        if len(cluster_sources) == 1:
-            consensus_status = "single_source"
-            timing_confidence = "low"
-        elif len(by_date) > 1:
-            consensus_status = "conflict"
-            timing_confidence = "medium" if canonical_timing != "unknown" else "low"
-        elif len(timing_counts) == 1 and sum(timing_counts.values()) == len(date_records):
-            consensus_status = "consensus"
-            timing_confidence = "high"
-        else:
-            consensus_status = "date_only"
-            timing_confidence = "medium"
-
-        consensus_by_date[event_date] = {
-            "primary_source": best_record.source,
-            "supporting_sources": tuple(date_sources),
-            "consensus_status": consensus_status,
-            "timing_confidence": timing_confidence,
-            "session_timing": canonical_timing,
-        }
-
-    canonical_records.sort(key=lambda item: _parse_datetime(item.scheduled_at))
-    return canonical_records, consensus_by_date
 
 
 def _days_until(window_start: datetime, scheduled_at: datetime) -> int:

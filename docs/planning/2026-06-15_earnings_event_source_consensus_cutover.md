@@ -70,6 +70,8 @@ Runtime facts observed on 2026-06-15:
   - `AlpacaCorporateActionsAdapter`
   - `MacroCalendarAdapter`
 - `DoltHubEarningsCalendarAdapter` reports persisted source `dolt_earnings_calendar`.
+- Redis provider cache/backoff/refresh-lock helpers exist for data-lane provider protection.
+- Postgres has `provider_fetch_audit` and `earnings_event_consensus`; `CalendarEventStore` can rebuild consensus from existing `calendar_events`.
 - `dolt_earnings_calendar` is marked required for `single_name_equity` calendar coverage.
 - `ALPHA_VANTAGE_API_KEY` is configured in deployed containers.
 - `FINVIZ_COOKIE` is not configured in deployed containers.

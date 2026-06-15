@@ -25,8 +25,8 @@ Read [docs/current_system_state.md](../../../docs/current_system_state.md) for a
 Working assumptions:
 
 - ClickHouse owns high-volume option quote/trade events and market-data analytics.
-- Postgres owns domain facts, job state, trading state, strategy state, capture summaries, and operator read models.
-- Redis is runtime coordination/cache infrastructure, not the durable market-data store.
+- Postgres owns domain facts, job state, trading state, strategy state, capture summaries, calendar provider facts, provider fetch audit, earnings event consensus, and operator read models.
+- Redis is runtime coordination/cache infrastructure, not the durable market-data store. For earnings/event providers, Redis owns only short-lived hot provider responses, backoff, and ad-hoc refresh locks; Postgres owns durable audit and consensus truth.
 - `StorageOpsState` is the canonical storage health surface.
 - Do not reintroduce Postgres tick partitions, Postgres tick-retention pruning, or dual-write tick stores.
 
@@ -83,6 +83,7 @@ Market-closed recorder idle is healthy unless storage state says capture is degr
 
 - Raw tick firehose goes to ClickHouse.
 - Postgres stores facts needed by trading, operations, jobs, alerts, and summaries.
+- Calendar provider rows live in `calendar_events`; derived earnings truth lives in `earnings_event_consensus`; bounded provider fetch summaries live in `provider_fetch_audit`.
 - Rollups should be named by the analytical question they answer, not by the ingestion accident that produced them.
 - Retention should be explicit in code/config/docs, not hidden in ad hoc cleanup scripts.
 - Prefer one owner per data class. Do not keep shadow copies for comfort.

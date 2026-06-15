@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-12
+Last updated: 2026-06-15
 
 ## Top-Level Boundaries
 
@@ -14,6 +14,7 @@ Last updated: 2026-06-12
 | Trading strategy config | `packages/config/strategies/catalog.yaml`, `packages/config/strategies/profiles.yaml`, `services/trading_strategies.py`, `services/trade_structure_specs.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. Reusable trade-structure construction lives in code; authored strategy runtime config composes from the catalog and profiles only. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls` and filters Finviz rows through the strategy's target-DTE optionability/expected-move requirements before marking symbols selected; filtered observations remain visible with stable reason codes. |
+| Calendar events and earnings consensus | `integrations/calendar_events`, `storage/calendar_models.py`, `CalendarEventStore` | `calendar_events` stores normalized provider event facts. `provider_fetch_audit` stores bounded provider fetch/cache/error summaries. `earnings_event_consensus` stores derived earnings facts separately from provider rows. Strategy runtime must not call yfinance, Alpha Vantage, DoltHub, or Finviz directly. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py`, `storage/market_data_store.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into ClickHouse option quote/trade ticks plus Postgres `capture_summaries`. |
 | Engine data and candidate building | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/strategy_candidate_builders/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. `services/strategy_candidate_builders/` owns market slices, option construction, ranking policy, and diagnostics under engine-owned candidate facts. Candidate generation consumes market data through the `MarketSliceProvider` boundary; live behavior uses `AlpacaMarketSliceProvider` by default. There is no separate candidate-building CLI flow or orchestration boundary. |
 | Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/trading_engine/entry_selection.py`, `services/trading_engine/entry_quality_pipeline.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyRuntime owns entry orchestration and persistence. `EntrySelectionEngine` owns account-agnostic entry quality analysis, candidate filtering, selected/monitored/rejected candidate output, and live signal selection. Admission handoff and intent creation remain after selection. Helper modules are pure policy delegates, not alternate orchestration paths. |
@@ -21,7 +22,7 @@ Last updated: 2026-06-12
 | Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, storage, and capture state. Operator surfaces should project current domain facts instead of reintroducing removed product pages. |
 | Company valuation lane | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Company valuation is an offline research/maintenance lane. It can support future analysis, but live strategy selection, admission, execution, and position management must not depend on it by default. |
 | Research AI lane | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, optional `worker-research`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. This lane is disabled by default and is not a live execution dependency. |
-| Persistence and transport | Postgres, ClickHouse, Redis | Postgres is source of truth for durable domain and ops state. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles queues, leases, and pub/sub fanout. |
+| Persistence and transport | Postgres, ClickHouse, Redis | Postgres is source of truth for durable domain and ops state, including calendar provider facts, provider fetch audit, and earnings event consensus. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles queues, leases, pub/sub fanout, and short-lived provider cache/backoff state. |
 
 ## Non-Negotiable Boundary Rules
 
@@ -51,6 +52,9 @@ Last updated: 2026-06-12
 | Routine | Scheduled strategy behavior such as entry or manage. | `services/trading_strategy_runtime.py`, generated job specs | Broker submission facts. |
 | Ticker source | Reusable static or dynamic symbol source. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
 | Ticker source run | One materialized ticker-source refresh plus selected, observed, and filtered ticker observations. | `ticker_source_runs`, `ticker_source_observations`, `ticker_source_state`, `services/ticker_sources.py` | Strategy candidate ownership, execution ownership, or broker facts. |
+| Calendar event | Normalized provider event fact such as earnings, dividends, splits, or macro events. | `calendar_events`, `integrations/calendar_events` adapters, `CalendarEventStore` | Derived consensus, strategy candidate ownership, or raw provider replay storage. |
+| Provider fetch audit | Bounded durable summary of provider fetch/cache/error state. | `provider_fetch_audit`, `CalendarEventStore`, provider cache helpers | Raw provider payload archival, secrets, or strategy runtime truth. |
+| Earnings event consensus | Derived per-symbol earnings event fact with event date, session timing, source support, conflicts, confidence, and stale-after time. | `earnings_event_consensus`, `integrations/calendar_events/consensus.py`, `CalendarEventStore` | Fake provider rows in `calendar_events`, direct external provider calls, or Alpaca actionability decisions. |
 | Candidate run | One strategy candidate-build pass over resolved tickers. | `candidate_runs`, `trade_candidates`, `services/trading_engine/facts.py` | Broker facts or position PnL. |
 | Trade signal | Normalized market/setup observation from an account-agnostic selected or monitored candidate. | `trade_signals`, `services/trading_engine/entry_selection.py`, `services/trading_engine/facts.py` | Broker sync, frontend state, or account-capacity checks. |
 | Trade decision | Strategy/lifecycle choice such as selected, skipped, blocked, or no-entry. | `trade_decisions`, `services/trading_engine/strategy_runtime.py` | Alert delivery or dashboard-only read models. |
@@ -97,7 +101,7 @@ Market recorder
 
 Postgres = domain and ops source of truth
 ClickHouse = high-volume raw market-data ticks and quote snapshots
-Redis = queues, leases, pub/sub
+Redis = queues, leases, pub/sub, short-lived provider cache/backoff
 ```
 
 ## Current Runtime Jobs

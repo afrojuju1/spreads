@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 from typing import Literal
 
 CalendarStatus = Literal["clean", "penalized", "blocked", "unknown"]
@@ -37,6 +38,47 @@ class CalendarEventRecord:
     payload_json: str
     ingested_at: str
     source_updated_at: str
+
+
+@dataclass(frozen=True)
+class ProviderFetchAuditRecord:
+    audit_id: str
+    provider: str
+    endpoint: str
+    params_hash: str
+    params_json: dict[str, Any]
+    coverage_start: str | None
+    coverage_end: str | None
+    page_key: str | None
+    status: str
+    cache_hit: bool
+    payload_hash: str | None
+    row_count: int | None
+    fetched_at: str
+    created_at: str
+    expires_at: str | None = None
+    backoff_until: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class EarningsEventConsensusRecord:
+    consensus_id: str
+    symbol: str
+    event_date: str
+    scheduled_at: str
+    session_timing: EventSessionTiming
+    event_status: str
+    primary_source: str | None
+    supporting_sources: tuple[str, ...]
+    conflicting_sources: tuple[str, ...]
+    consensus_status: EarningsConsensusStatus
+    source_confidence: SourceConfidence
+    timing_confidence: SourceConfidence
+    provider_payload: dict[str, Any]
+    computed_at: str
+    stale_after: str
 
 
 @dataclass(frozen=True)

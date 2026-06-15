@@ -4,16 +4,23 @@ from contextlib import contextmanager
 from datetime import timedelta
 from typing import Iterator
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from core.value_coercion import utc_now
-from core.storage.calendar_models import CalendarEventModel, CalendarEventRefreshStateModel
+from core.storage.calendar_models import (
+    CalendarEventModel,
+    CalendarEventRefreshStateModel,
+    EarningsEventConsensusModel,
+    ProviderFetchAuditModel,
+)
 from core.storage.db import build_session_factory
-from core.storage.serializers import parse_datetime as _parse_datetime, render_value as _render_value
+from core.storage.serializers import parse_date as _parse_date, parse_datetime as _parse_datetime, render_value as _render_value
 
-from .models import CalendarEventRecord
+from .consensus import build_earnings_event_consensus
+from .models import CalendarEventRecord, EarningsEventConsensusRecord, ProviderFetchAuditRecord
+from .provider_cache import sanitize_provider_json
 
 
 class CalendarEventStore:
@@ -76,6 +83,59 @@ class CalendarEventStore:
                 "payload_json": statement.excluded.payload_json,
                 "ingested_at": statement.excluded.ingested_at,
                 "source_updated_at": statement.excluded.source_updated_at,
+            },
+        )
+        with self.session_scope() as session:
+            session.execute(upsert)
+
+    def upsert_provider_fetch_audit(self, records: list[ProviderFetchAuditRecord]) -> None:
+        if not records:
+            return
+        statement = insert(ProviderFetchAuditModel).values(
+            [
+                {
+                    "audit_id": record.audit_id,
+                    "provider": record.provider,
+                    "endpoint": record.endpoint,
+                    "params_hash": record.params_hash,
+                    "params_json": sanitize_provider_json(dict(record.params_json)),
+                    "coverage_start": _parse_datetime(record.coverage_start),
+                    "coverage_end": _parse_datetime(record.coverage_end),
+                    "page_key": record.page_key,
+                    "status": record.status,
+                    "cache_hit": record.cache_hit,
+                    "payload_hash": record.payload_hash,
+                    "row_count": record.row_count,
+                    "fetched_at": _parse_datetime(record.fetched_at),
+                    "expires_at": _parse_datetime(record.expires_at),
+                    "backoff_until": _parse_datetime(record.backoff_until),
+                    "error_code": record.error_code,
+                    "error_message": record.error_message,
+                    "created_at": _parse_datetime(record.created_at),
+                }
+                for record in records
+            ]
+        )
+        upsert = statement.on_conflict_do_update(
+            index_elements=[ProviderFetchAuditModel.audit_id],
+            set_={
+                "provider": statement.excluded.provider,
+                "endpoint": statement.excluded.endpoint,
+                "params_hash": statement.excluded.params_hash,
+                "params_json": statement.excluded.params_json,
+                "coverage_start": statement.excluded.coverage_start,
+                "coverage_end": statement.excluded.coverage_end,
+                "page_key": statement.excluded.page_key,
+                "status": statement.excluded.status,
+                "cache_hit": statement.excluded.cache_hit,
+                "payload_hash": statement.excluded.payload_hash,
+                "row_count": statement.excluded.row_count,
+                "fetched_at": statement.excluded.fetched_at,
+                "expires_at": statement.excluded.expires_at,
+                "backoff_until": statement.excluded.backoff_until,
+                "error_code": statement.excluded.error_code,
+                "error_message": statement.excluded.error_message,
+                "created_at": statement.excluded.created_at,
             },
         )
         with self.session_scope() as session:
@@ -176,21 +236,162 @@ class CalendarEventStore:
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
+        return [_calendar_event_record_from_row(row) for row in rows]
+
+    def query_earnings_events(
+        self,
+        *,
+        window_start: str,
+        window_end: str,
+        symbol: str | None = None,
+        sources: set[str] | None = None,
+    ) -> list[CalendarEventRecord]:
+        statement = (
+            select(CalendarEventModel)
+            .where(CalendarEventModel.event_type == "earnings")
+            .where(CalendarEventModel.scheduled_at >= _parse_datetime(window_start))
+            .where(CalendarEventModel.scheduled_at <= _parse_datetime(window_end))
+            .order_by(CalendarEventModel.symbol.asc(), CalendarEventModel.scheduled_at.asc())
+        )
+        if symbol:
+            statement = statement.where(CalendarEventModel.symbol == symbol.upper())
+        if sources:
+            statement = statement.where(CalendarEventModel.source.in_(sorted(sources)))
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return [_calendar_event_record_from_row(row) for row in rows]
+
+    def upsert_earnings_event_consensus(self, records: list[EarningsEventConsensusRecord]) -> None:
+        if not records:
+            return
+        statement = insert(EarningsEventConsensusModel).values([_earnings_event_consensus_values(record) for record in records])
+        upsert = statement.on_conflict_do_update(
+            index_elements=[EarningsEventConsensusModel.consensus_id],
+            set_={
+                "symbol": statement.excluded.symbol,
+                "event_date": statement.excluded.event_date,
+                "scheduled_at": statement.excluded.scheduled_at,
+                "session_timing": statement.excluded.session_timing,
+                "event_status": statement.excluded.event_status,
+                "primary_source": statement.excluded.primary_source,
+                "supporting_sources_json": statement.excluded.supporting_sources_json,
+                "conflicting_sources_json": statement.excluded.conflicting_sources_json,
+                "consensus_status": statement.excluded.consensus_status,
+                "source_confidence": statement.excluded.source_confidence,
+                "timing_confidence": statement.excluded.timing_confidence,
+                "provider_payload_json": statement.excluded.provider_payload_json,
+                "computed_at": statement.excluded.computed_at,
+                "stale_after": statement.excluded.stale_after,
+            },
+        )
+        with self.session_scope() as session:
+            session.execute(upsert)
+
+    def rebuild_earnings_event_consensus(
+        self,
+        *,
+        window_start: str,
+        window_end: str,
+        sources: set[str] | None = None,
+        computed_at: str | None = None,
+        stale_after: str | None = None,
+    ) -> list[EarningsEventConsensusRecord]:
+        events = self.query_earnings_events(window_start=window_start, window_end=window_end, sources=sources)
+        consensus_records = build_earnings_event_consensus(
+            events,
+            covered_sources=sources,
+            computed_at=computed_at,
+            stale_after=stale_after,
+        )
+        start_date = _parse_datetime(window_start).date()
+        end_date = _parse_datetime(window_end).date()
+        delete_statement = delete(EarningsEventConsensusModel).where(
+            and_(
+                EarningsEventConsensusModel.event_date >= start_date,
+                EarningsEventConsensusModel.event_date <= end_date,
+            )
+        )
+        with self.session_scope() as session:
+            session.execute(delete_statement)
+            if consensus_records:
+                statement = insert(EarningsEventConsensusModel).values(
+                    [_earnings_event_consensus_values(record) for record in consensus_records]
+                )
+                session.execute(statement)
+        return consensus_records
+
+    def query_earnings_event_consensus(
+        self,
+        *,
+        window_start: str,
+        window_end: str,
+        symbol: str | None = None,
+    ) -> list[EarningsEventConsensusRecord]:
+        statement = (
+            select(EarningsEventConsensusModel)
+            .where(EarningsEventConsensusModel.event_date >= _parse_datetime(window_start).date())
+            .where(EarningsEventConsensusModel.event_date <= _parse_datetime(window_end).date())
+            .order_by(EarningsEventConsensusModel.event_date.asc(), EarningsEventConsensusModel.symbol.asc())
+        )
+        if symbol:
+            statement = statement.where(EarningsEventConsensusModel.symbol == symbol.upper())
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
         return [
-            CalendarEventRecord(
-                event_id=row.event_id,
-                event_type=row.event_type,
+            EarningsEventConsensusRecord(
+                consensus_id=row.consensus_id,
                 symbol=row.symbol,
-                asset_scope=row.asset_scope,
+                event_date=str(_render_value(row.event_date)),
                 scheduled_at=str(_render_value(row.scheduled_at)),
-                window_start=str(_render_value(row.window_start)),
-                window_end=str(_render_value(row.window_end)),
-                source=row.source,
-                source_confidence=row.source_confidence,
-                status=row.status,
-                payload_json=row.payload_json,
-                ingested_at=str(_render_value(row.ingested_at)),
-                source_updated_at=str(_render_value(row.source_updated_at)),
+                session_timing=row.session_timing,  # type: ignore[arg-type]
+                event_status=row.event_status,
+                primary_source=row.primary_source,
+                supporting_sources=tuple(row.supporting_sources_json or ()),
+                conflicting_sources=tuple(row.conflicting_sources_json or ()),
+                consensus_status=row.consensus_status,  # type: ignore[arg-type]
+                source_confidence=row.source_confidence,  # type: ignore[arg-type]
+                timing_confidence=row.timing_confidence,  # type: ignore[arg-type]
+                provider_payload=dict(row.provider_payload_json or {}),
+                computed_at=str(_render_value(row.computed_at)),
+                stale_after=str(_render_value(row.stale_after)),
             )
             for row in rows
         ]
+
+
+def _calendar_event_record_from_row(row: CalendarEventModel) -> CalendarEventRecord:
+    return CalendarEventRecord(
+        event_id=row.event_id,
+        event_type=row.event_type,
+        symbol=row.symbol,
+        asset_scope=row.asset_scope,
+        scheduled_at=str(_render_value(row.scheduled_at)),
+        window_start=str(_render_value(row.window_start)),
+        window_end=str(_render_value(row.window_end)),
+        source=row.source,
+        source_confidence=row.source_confidence,
+        status=row.status,
+        payload_json=row.payload_json,
+        ingested_at=str(_render_value(row.ingested_at)),
+        source_updated_at=str(_render_value(row.source_updated_at)),
+    )
+
+
+def _earnings_event_consensus_values(record: EarningsEventConsensusRecord) -> dict[str, object]:
+    return {
+        "consensus_id": record.consensus_id,
+        "symbol": record.symbol,
+        "event_date": _parse_date(record.event_date),
+        "scheduled_at": _parse_datetime(record.scheduled_at),
+        "session_timing": record.session_timing,
+        "event_status": record.event_status,
+        "primary_source": record.primary_source,
+        "supporting_sources_json": list(record.supporting_sources),
+        "conflicting_sources_json": list(record.conflicting_sources),
+        "consensus_status": record.consensus_status,
+        "source_confidence": record.source_confidence,
+        "timing_confidence": record.timing_confidence,
+        "provider_payload_json": dict(record.provider_payload),
+        "computed_at": _parse_datetime(record.computed_at),
+        "stale_after": _parse_datetime(record.stale_after),
+    }
