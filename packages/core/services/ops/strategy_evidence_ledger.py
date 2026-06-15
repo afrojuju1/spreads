@@ -93,6 +93,18 @@ def _top_blockers(counter: Counter[str]) -> dict[str, int]:
     return dict(counter.most_common(TOP_BLOCKER_LIMIT))
 
 
+def _sorted_counts(counter: Counter[str]) -> dict[str, int]:
+    return dict(sorted((str(key), int(count)) for key, count in counter.items() if int(count) > 0))
+
+
+def _first_non_empty_mapping(*values: Any) -> Mapping[str, Any]:
+    for value in values:
+        mapping = as_mapping(value)
+        if mapping:
+            return mapping
+    return {}
+
+
 def _newer_desc_asc(value_at: datetime | None, value_id: Any, current_at: datetime | None, current_id: Any) -> bool:
     if value_at is None:
         return False
@@ -128,6 +140,7 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "configured_symbol_count": len(strategy.symbols),
             "latest_symbol_count": len(strategy.symbols),
             "symbols": configured_source_symbols,
+            "source_evidence_state": "static_symbols_configured" if strategy.source.kind == "static" and configured_source_symbols else "not_observed",
             "latest_ticker_source_run_id": None,
             "latest_generated_at": None,
         },
@@ -142,6 +155,14 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "runtime_candidate_count": 0,
             "returned_candidate_count": 0,
             "candidate_productivity_state": "not_evaluated",
+            "top_raw_rejection_counts": {},
+            "data_quality_status_counts": {},
+            "top_data_quality_reasons": {},
+            "calendar_policy_status_counts": {},
+            "top_calendar_policy_reasons": {},
+            "ranking_policy_status_counts": {},
+            "top_ranking_policy_blockers": {},
+            "market_data_coverage": {},
             "latest_candidate_run_id": None,
             "latest_generated_at": None,
         },
@@ -233,6 +254,19 @@ def _build_engine_strategy_ledgers(
 
     latest_activity: dict[str, datetime] = {}
     blockers_by_strategy = {strategy_id: Counter() for strategy_id in strategy_ids}
+    candidate_diagnostic_counters = {
+        strategy_id: {
+            "raw_rejection_counts": Counter(),
+            "data_quality_status_counts": Counter(),
+            "data_quality_reasons": Counter(),
+            "calendar_policy_status_counts": Counter(),
+            "calendar_policy_reasons": Counter(),
+            "ranking_policy_status_counts": Counter(),
+            "ranking_policy_blockers": Counter(),
+            "market_data_coverage": Counter(),
+        }
+        for strategy_id in strategy_ids
+    }
 
     source_to_strategies: dict[str, list[str]] = {}
     for strategy in strategy_list:
@@ -289,10 +323,17 @@ def _build_engine_strategy_ledgers(
             source_payload = payloads[strategy_id]["source"]
             source_payload["source_run_count"] = int(source_run_counts.get(source_ref, 0))
             if latest_source is None:
+                if source_payload["source_type"] == "static":
+                    source_payload["source_evidence_state"] = (
+                        "static_symbols_configured" if int(source_payload.get("latest_symbol_count") or 0) > 0 else "no_source_symbols"
+                    )
+                else:
+                    source_payload["source_evidence_state"] = "no_recent_source_run"
                 continue
             source_run_id, selected_count, generated_at = latest_source
             source_payload["latest_symbol_count"] = int(selected_count)
             source_payload["symbols"] = source_symbols_by_run.get(source_run_id) or source_payload["symbols"]
+            source_payload["source_evidence_state"] = "source_symbols_available" if int(selected_count) > 0 else "no_source_symbols"
             source_payload["latest_ticker_source_run_id"] = source_run_id
             source_payload["latest_generated_at"] = _render_datetime(generated_at)
             _set_latest_activity(latest_activity, strategy_id, generated_at)
@@ -342,7 +383,12 @@ def _build_engine_strategy_ledgers(
                 CandidateSymbolDiagnosticModel.postprocess_candidate_count,
                 CandidateSymbolDiagnosticModel.runtime_candidate_count,
                 CandidateSymbolDiagnosticModel.returned_candidate_count,
+                CandidateSymbolDiagnosticModel.expiration_count,
+                CandidateSymbolDiagnosticModel.contract_count,
+                CandidateSymbolDiagnosticModel.snapshot_count,
+                CandidateSymbolDiagnosticModel.market_data_json,
                 CandidateSymbolDiagnosticModel.rejection_counts_json,
+                CandidateSymbolDiagnosticModel.ranking_gate_json,
                 CandidateSymbolDiagnosticModel.evidence_json,
             ).where(CandidateSymbolDiagnosticModel.candidate_run_id.in_(list(candidate_run_strategy)))
         )
@@ -353,7 +399,12 @@ def _build_engine_strategy_ledgers(
             postprocess_candidate_count,
             runtime_candidate_count,
             returned_candidate_count,
+            expiration_count,
+            contract_count,
+            snapshot_count,
+            market_data_json,
             rejection_counts_json,
+            ranking_gate_json,
             evidence_json,
         ) in diagnostic_rows:
             strategy_key = candidate_run_strategy.get(str(candidate_run_id))
@@ -367,7 +418,60 @@ def _build_engine_strategy_ledgers(
             candidate_payload["runtime_candidate_count"] += int(runtime_candidate_count or 0)
             candidate_payload["returned_candidate_count"] += int(returned_candidate_count or 0)
             _add_count_mapping(blockers_by_strategy[strategy_key], rejection_counts_json)
-            _add_quality_waterfall_reasons(blockers_by_strategy[strategy_key], as_mapping(evidence_json).get("quality_waterfall"))
+            evidence = as_mapping(evidence_json)
+            _add_quality_waterfall_reasons(blockers_by_strategy[strategy_key], evidence.get("quality_waterfall"))
+
+            counters = candidate_diagnostic_counters[strategy_key]
+            rejection_counts = as_mapping(rejection_counts_json)
+            ranking_gate = as_mapping(ranking_gate_json)
+            replay_details = as_mapping(evidence.get("replay_details"))
+            market_data = as_mapping(market_data_json)
+
+            _add_count_mapping(counters["raw_rejection_counts"], rejection_counts.get("raw"))
+            _add_count_mapping(counters["data_quality_status_counts"], replay_details.get("data_status_counts"))
+            _add_count_mapping(
+                counters["data_quality_reasons"],
+                _first_non_empty_mapping(replay_details.get("data_reason_counts"), rejection_counts.get("data")),
+            )
+            _add_count_mapping(counters["calendar_policy_status_counts"], replay_details.get("calendar_status_counts"))
+            _add_count_mapping(
+                counters["calendar_policy_reasons"],
+                _first_non_empty_mapping(replay_details.get("calendar_reason_counts"), rejection_counts.get("calendar")),
+            )
+            _add_count_mapping(
+                counters["ranking_policy_status_counts"],
+                _first_non_empty_mapping(ranking_gate.get("status_counts"), replay_details.get("ranking_policy_status_counts")),
+            )
+            _add_count_mapping(
+                counters["ranking_policy_blockers"],
+                _first_non_empty_mapping(
+                    ranking_gate.get("blocker_counts"),
+                    replay_details.get("ranking_policy_blocker_counts"),
+                    rejection_counts.get("ranking_policy"),
+                ),
+            )
+
+            coverage = counters["market_data_coverage"]
+            expiration_total = int(expiration_count or 0)
+            contract_total = int(contract_count or 0)
+            snapshot_total = int(snapshot_count or 0)
+            delta_snapshot_total = int(coerce_int(market_data.get("delta_snapshot_count")) or 0)
+            expected_move_total = int(coerce_int(market_data.get("expected_move_count")) or 0)
+            coverage["expiration_count"] += expiration_total
+            coverage["contract_count"] += contract_total
+            coverage["snapshot_count"] += snapshot_total
+            coverage["delta_snapshot_count"] += delta_snapshot_total
+            coverage["expected_move_count"] += expected_move_total
+            if expiration_total > 0:
+                coverage["symbols_with_expirations_count"] += 1
+            if contract_total > 0:
+                coverage["symbols_with_contracts_count"] += 1
+            if snapshot_total > 0:
+                coverage["symbols_with_snapshots_count"] += 1
+            if delta_snapshot_total > 0:
+                coverage["symbols_with_delta_snapshots_count"] += 1
+            if expected_move_total > 0:
+                coverage["symbols_with_expected_moves_count"] += 1
 
     trade_candidate_rows = session.execute(
         select(
@@ -486,6 +590,15 @@ def _build_engine_strategy_ledgers(
             sorted((str(state), int(count)) for state, count in as_mapping(candidate_payload.get("diagnostic_status_counts")).items())
         )
         candidate_payload["candidate_productivity_state"] = _candidate_productivity_state(candidate_payload)
+        diagnostic_counters = candidate_diagnostic_counters[strategy_id]
+        candidate_payload["top_raw_rejection_counts"] = _top_blockers(diagnostic_counters["raw_rejection_counts"])
+        candidate_payload["data_quality_status_counts"] = _sorted_counts(diagnostic_counters["data_quality_status_counts"])
+        candidate_payload["top_data_quality_reasons"] = _top_blockers(diagnostic_counters["data_quality_reasons"])
+        candidate_payload["calendar_policy_status_counts"] = _sorted_counts(diagnostic_counters["calendar_policy_status_counts"])
+        candidate_payload["top_calendar_policy_reasons"] = _top_blockers(diagnostic_counters["calendar_policy_reasons"])
+        candidate_payload["ranking_policy_status_counts"] = _sorted_counts(diagnostic_counters["ranking_policy_status_counts"])
+        candidate_payload["top_ranking_policy_blockers"] = _top_blockers(diagnostic_counters["ranking_policy_blockers"])
+        candidate_payload["market_data_coverage"] = _sorted_counts(diagnostic_counters["market_data_coverage"])
         payload["decisions"]["selected_count"] = int(payload["decisions"]["decision_state_counts"].get("selected", 0))
         payload["top_blocker_reasons"] = _top_blockers(blockers_by_strategy[strategy_id])
         payload["latest_activity_at"] = _render_datetime(latest_activity.get(strategy_id))
