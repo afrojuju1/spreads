@@ -23,7 +23,6 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
     "0dte_core": ZERO_DTE_CORE_SYMBOLS,
     "explore_10": ZERO_DTE_ALLOWED_SYMBOLS,
     "etf_core": ("SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "SMH"),
-    "liquid_stocks": ("AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AMD", "TSLA"),
     "liquid_mixed": (
         "SPY",
         "QQQ",

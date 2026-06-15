@@ -39,9 +39,6 @@ ETF_INDEX_PROXY_SYMBOLS = {
 }
 
 SOURCE_FRESHNESS_HOURS = {
-    "dolt_earnings_calendar": 24,
-    "alpha_vantage_earnings_calendar": 24,
-    "finviz_earnings": 24,
     "alpaca_corporate_actions": 24,
     "macro_calendar": 0,
 }
@@ -63,12 +60,12 @@ PENALTY_EVENT_CODES = {"corporate_action_before_expiry", "macro_event_in_window"
 OPTIONAL_SOURCE_WARNING_CODES = {"macro_calendar_unavailable"}
 
 REQUIRED_SOURCES_BY_UNDERLYING = {
-    "single_name_equity": {"dolt_earnings_calendar", "alpaca_corporate_actions"},
+    "single_name_equity": {"alpaca_corporate_actions"},
     "etf_index_proxy": {"alpaca_corporate_actions"},
 }
 
 OPTIONAL_SOURCES_BY_UNDERLYING = {
-    "single_name_equity": {"alpha_vantage_earnings_calendar"},
+    "single_name_equity": set(),
     "etf_index_proxy": {"macro_calendar"},
 }
 

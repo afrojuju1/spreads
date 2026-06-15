@@ -10,14 +10,16 @@ source_models:
       ref: finviz_momentum
       max_age_seconds: 300
       max_symbols: 10
+  earnings_event_window_dynamic:
+    source:
+      type: dynamic
+      ref: earnings_event_window
+      max_age_seconds: 21600
+      max_symbols: 25
   liquid_index_etfs_static:
     source:
       type: static
       ref: liquid_index_etfs
-  liquid_stocks_static:
-    source:
-      type: static
-      ref: liquid_stocks
   liquid_etf_short_puts_static:
     source:
       type: static
@@ -462,7 +464,7 @@ archetypes:
     executor_profile: alpaca_auto_direct
     exit_controller: short_dated_iron_condor_exit
   earnings_debit_vertical:
-    universe_model: liquid_stocks_static
+    universe_model: earnings_event_window_dynamic
     allowed_trade_structures:
       - call_debit_spread
       - put_debit_spread
@@ -473,7 +475,7 @@ archetypes:
     executor_profile: alpaca_auto_direct
     exit_controller: short_dated_debit_exit
   earnings_long_vol:
-    universe_model: liquid_stocks_static
+    universe_model: earnings_event_window_dynamic
     allowed_trade_structures:
       - long_straddle
       - long_strangle

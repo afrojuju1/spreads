@@ -190,7 +190,7 @@ Current default-enabled strategies:
 
 `short_dated_index_put_credit` and `short_dated_index_iron_condor` consume the same `liquid_index_etfs` source and run defined-risk index premium strategies through `put_credit_spread_v1` and `iron_condor_v1`.
 
-`short_dated_earnings_call_debit`, `short_dated_earnings_put_debit`, `short_dated_earnings_long_straddle`, and `short_dated_earnings_long_strangle` consume the static `liquid_stocks` source and run paper-mode earnings-oriented debit and long-vol structures through their family quality profiles.
+`short_dated_earnings_call_debit`, `short_dated_earnings_put_debit`, `short_dated_earnings_long_straddle`, and `short_dated_earnings_long_strangle` consume the dynamic `earnings_event_window` source backed by cached `earnings_event_consensus` rows, then run paper-mode earnings-oriented debit and long-vol structures through their family quality profiles.
 
 `short_dated_etf_short_put` consumes `liquid_etf_short_puts` and runs the `short_put_v1` quality profile with explicit cash-secured short-put portfolio caps.
 
