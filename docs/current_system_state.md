@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-15
+Last updated: 2026-06-16
 
 ## Top-Level Boundaries
 
@@ -18,7 +18,7 @@ Last updated: 2026-06-15
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py`, `storage/market_data_store.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into ClickHouse option quote/trade ticks plus Postgres `capture_summaries`. |
 | Engine data and candidate building | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/strategy_candidate_builders/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. `services/strategy_candidate_builders/` owns market slices, option construction, ranking policy, and diagnostics under engine-owned candidate facts. Candidate generation consumes market data through the `MarketSliceProvider` boundary; live behavior uses `AlpacaMarketSliceProvider` by default. There is no separate candidate-building CLI flow or orchestration boundary. |
 | Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/trading_engine/entry_selection.py`, `services/trading_engine/entry_quality_pipeline.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyRuntime owns entry orchestration and persistence. `EntrySelectionEngine` owns account-agnostic entry quality analysis, candidate filtering, selected/monitored/rejected candidate output, and live signal selection. Admission handoff and intent creation remain after selection. Helper modules are pure policy delegates, not alternate orchestration paths. |
-| Execution and portfolio state | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/execution_intents/`, `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | PortfolioEngine owns close decisions and close-policy evaluation. RiskEngine-owned close admission validates position/reconciliation/order readiness. The manage job refreshes marks, applies close admission, and creates close intents; execution services dispatch intents and persist broker attempts/orders/fills. |
+| Execution and portfolio state | `services/trading_engine/portfolio_runtime.py`, `services/trading_engine/close_policy.py`, `services/trading_engine/risk_runtime.py`, `services/execution_intents/`, `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | PortfolioEngine owns close decisions and close-policy evaluation. RiskEngine-owned close admission validates position/reconciliation/order readiness. The manage job refreshes marks, applies close admission, and creates close intents. Executor profiles own broker-order lifecycle policy; execution services dispatch intents and persist broker attempts/orders/fills. |
 | Money and premium arithmetic | `money.py` | `core.money` is the canonical helper layer for USD Money construction, Decimal quantization, option premium/limit-price rounding, contract notionals, spread exposure, close PnL, and repricing tick math. Runtime services may still persist floats for compatibility, but they should not add new local `_round_money` or ad hoc premium/notional helpers. |
 | Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, storage, and capture state. Operator surfaces should project current domain facts instead of reintroducing removed product pages. |
 | Historical strategy evaluation | `services/strategy_lab/historical_evaluator.py` | Backend-only strategy-lab primitive. `build_historical_strategy_evaluation` evaluates bounded date windows over the current ticker-source, candidate, signal, decision, admission, intent, attempt, position, and ClickHouse market-data model. The first shipped mode is `stored_facts_current_model`: it compares current catalog strategy/profile/source variants from persisted facts and labels source, candidate, decision, execution, PnL, and market-data fidelity explicitly. It is not an operator app UI and does not revive removed replay/audit/backtest/analyze commands. |
@@ -40,7 +40,8 @@ Last updated: 2026-06-15
 - Historical strategy evaluation is a service-owned backend primitive under `services/strategy_lab/`. It must consume the current fact spine and ClickHouse market-data stores with explicit fidelity labels; do not reintroduce removed replay, audit, backtest, analyze, or post-market analyze wrapper commands as historical-evaluation shortcuts.
 - Capture is desired state, not a candidate-build side effect. The priority order is open positions, working intents/attempts, selected candidates, then watch candidates.
 - `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime. It reads `capture_targets` by priority and records `capture_summaries`.
-- `execution_intents` is the control-plane handoff boundary. It selects an execution runtime before broker submission.
+- `execution_intents` is the control-plane handoff boundary. It carries the resolved executor-profile snapshot and selects an execution runtime before broker submission.
+- Executor profiles are the strategy-owned contract for order style, quote freshness, submit TTL, cancel/reprice policy, max concession, stale-order handling, open/close lifecycle policy, and fail-closed unsupported-structure behavior.
 - `alpaca_direct` is the active Python-native runtime for equity, single-leg option, and Alpaca order-payload submission.
 - `session_positions` owns day/session position attribution. Broker positions are reconciliation input, not the sole position truth.
 - Spreads is the active trading operations and research-orchestration home. The old `trading_operator` wrapper repo is not an active hub for future operator guidance.
@@ -159,7 +160,7 @@ Scale defaults:
 Trading strategies are authored through a single catalog/profile model under `packages/config/strategies`:
 
 - `catalog.yaml` owns strategy identity, activation, execution mode, thesis, archetype, trade structure, structure model reference, portfolio model reference, and thesis-level overrides.
-- `profiles.yaml` owns reusable source models, archetypes, routine profiles, liquidity profiles, structure models, portfolio models, protection models, executor profiles, and exit controllers.
+- `profiles.yaml` owns reusable source models, archetypes, routine profiles, liquidity profiles, structure models, portfolio models, protection models, executor profiles, and exit controllers. Executor profiles own broker-order lifecycle policy; exit controllers own why/when to close.
 
 `services/trading_strategies.py` composes the catalog and profiles into the runtime `TradingStrategyConfig` objects consumed by scheduler-generated strategy routines. There is no per-strategy runtime YAML path and no paper-specific config namespace. `paper`, `shadow`, and `live` are execution posture values under `execution.mode`, not separate files or directories.
 
@@ -175,7 +176,7 @@ Each strategy owns:
 - entry quality profile and quality overrides when configured
 - runtime controls
 - risk and limit policy references
-- execution posture, approval mode, observed broker environment, and runtime
+- execution posture, approval mode, observed broker environment, runtime, and executor lifecycle profile
 - `config_hash`
 
 Current default-enabled strategies:
@@ -259,6 +260,8 @@ Broker environment is an observed fact, never a strategy config knob. The canoni
 
 Use `alpaca_custom` or `unknown` only when the Alpaca base URL is nonstandard or environment resolution fails. Existing account snapshots may still expose raw `paper`, `live`, or `custom`; new lifecycle and ops projections should normalize those into `broker_environment`.
 
+Executor profiles are part of the normal paper/live lifecycle contract. A natural strategy open or close intent carries an `executor_profile` snapshot plus `execution_policy` and `repricing_policy` payloads. That snapshot owns broker order style, quote freshness, submit TTL, reprice/cancel behavior, max concession, stale-order action, runtime adapter, approval mode, and fail-closed unsupported-structure behavior. Strategy selection and exit controllers decide what to trade and when to close; execution uses the executor profile to decide how broker work is submitted, refreshed, canceled, or repriced.
+
 Validation provenance values:
 
 - `natural_strategy`: emitted by the scheduled strategy entry/manage flow from real ticker-source, candidate, signal, decision, admission, intent, attempt, order, fill, and position facts.
@@ -267,11 +270,14 @@ Validation provenance values:
 
 The shipped synthetic paper harness is `spreads lifecycle paper-smoke`. It is an operator validation path over the normal lifecycle, not a strategy-selection path. `paper-smoke open` is preview-first and requires `--execute` before it creates an intent; it checks market hours, the control plane and kill switch, Alpaca paper environment, exact contract and underlying allowlists, a total debit cap, and intent TTL before it writes. It can optionally auto-select a quoted SPY/QQQ contract under the debit cap for preview, but execution still requires the exact selected contract to be allowlisted. Synthetic open intents carry `validation_provenance=synthetic_validation`, `execution_mode=paper`, `approval_mode=auto`, `profile=paper_smoke`, and `queue_submission=true`, then rely on `execution_intent_dispatch` and `execution_submit` for broker submission. `paper-smoke close` only closes positions whose opening attempt is also `synthetic_validation`; it creates a close intent and uses the same queued close attempt path. `paper-smoke status` inspects intent, attempt, order, fill, position, and close evidence for the run.
 
-The expected environment/provenance snapshot shape is:
+The expected environment/provenance/executor snapshot shape is:
 
 - `execution_posture`
 - `approval_mode`
 - `execution_runtime`
+- `executor_profile`
+- `execution_policy`
+- `repricing_policy`
 - `broker`
 - `broker_environment`
 - `broker_environment_source`
@@ -358,7 +364,7 @@ Dynamic-source and static-source strategies both flow through the same strategy 
 - `execution_orders`
 - `execution_fills`
 
-Execution modules have explicit owners: `direct_orders.py` owns equity/option attempt construction for direct operator requests and intent-derived option opens, `position_close.py` owns close-by-position attempt creation, `submit.py` owns queued broker submission, `sync.py` owns refresh/cancel reconciliation, `attempts.py` owns attempt/order/fill payload sync helpers, `admission.py` owns execution admission payload helpers, and `order_requests.py` owns order payload construction plus live quote quality gates. Natural strategy open intents create `pending_submission` attempts and queue `execution_submit`; selected trade-decision dispatch reads canonical `execution_shape.legs[]` and `order_payload`, preserving multi-leg order class, leg roles/position intents, quantity, signed net limit price, validation provenance, and decision/intent refs into the queued attempt. Before broker submission, `execution_submit` runs an option-structure guard over canonical legs, family support, Alpaca `mleg` usage, net credit/debit sign, max-risk resolvability, quantity, and quote freshness; blocked attempts fail with stable execution-admission reason codes. The legacy long-call single-leg path still uses the single-leg helper; other natural option structures use the canonical structure-order helper. Synthetic smoke open intents opt into the same isolation with `queue_submission=true`; direct/manual option helpers remain direct unless they deliberately request queueing. Do not route new callers through the package root.
+Execution modules have explicit owners: `direct_orders.py` owns equity/option attempt construction for direct operator requests and intent-derived option opens, `position_close.py` owns close-by-position attempt creation, `submit.py` owns queued broker submission, `sync.py` owns refresh/cancel reconciliation, `attempts.py` owns attempt/order/fill payload sync helpers, `admission.py` owns execution admission payload helpers, and `order_requests.py` owns order payload construction plus live quote quality gates. Natural strategy open intents create `pending_submission` attempts and queue `execution_submit`; selected trade-decision dispatch reads canonical `execution_shape.legs[]` and `order_payload`, preserving multi-leg order class, leg roles/position intents, quantity, signed net limit price, validation provenance, decision/intent refs, and the resolved executor-profile lifecycle snapshot into the queued attempt. Before broker submission, `execution_submit` runs an option-structure guard over canonical legs, family support, executor order style, Alpaca `mleg` usage, net credit/debit sign, max-risk resolvability, quantity, and executor-profile quote freshness; blocked attempts fail with stable execution-admission reason codes. Intent maintenance refreshes working attempts and applies the same executor-profile stale-order/reprice policy for open and close orders. The legacy long-call single-leg path still uses the single-leg helper; other natural option structures use the canonical structure-order helper. Synthetic smoke open intents opt into the same isolation with `queue_submission=true`; direct/manual option helpers remain direct unless they deliberately request queueing. Do not route new callers through the package root.
 
 Operators inspect and reconcile individual attempts through `spreads execution inspect <execution_attempt_id>`, `spreads execution refresh <execution_attempt_id>`, and `spreads execution cancel <execution_attempt_id>`. These commands are thin adapters over `services/execution/sync.py`, support deploy targeting with `--env`, render attempt status plus order/fill counts and linked intent state, and refuse terminal cancels with `changed=false`.
 

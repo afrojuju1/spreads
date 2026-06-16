@@ -536,11 +536,13 @@ def submit_execution_intent(
                 "config_hash": source_intent.get("config_hash"),
                 "approval_mode": payload.get("approval_mode"),
                 "execution_mode": payload.get("execution_mode"),
+                "execution_runtime": payload.get("execution_runtime"),
                 "validation_provenance": as_text(payload.get("validation_provenance")) or "natural_strategy",
                 "trade_intent": option_payload.get("trade_intent") or "open",
                 "execution_policy": execution_policy,
                 "exit_policy": exit_policy,
                 "execution_admission": payload.get("execution_admission"),
+                **({} if not isinstance(payload.get("executor_profile"), dict) else {"executor_profile": dict(payload["executor_profile"])}),
                 "source": dict(source_metadata),
                 "option_selection": (dict(option_payload["option_selection"]) if isinstance(option_payload.get("option_selection"), dict) else None),
                 "underlying_price": option_payload.get("underlying_price"),
@@ -600,6 +602,7 @@ def submit_execution_intent(
                 "validation_provenance": as_text(payload.get("validation_provenance")) or "natural_strategy",
                 "execution_policy": execution_policy,
                 "exit_policy": exit_policy,
+                **({} if not isinstance(payload.get("executor_profile"), dict) else {"executor_profile": dict(payload["executor_profile"])}),
                 **_repricing_metadata(payload),
                 **engine_ref_metadata,
             }
@@ -640,6 +643,11 @@ def submit_execution_intent(
                     "execution_mode": as_text(equity_payload.get("execution_mode")),
                     "validation_provenance": as_text(equity_payload.get("validation_provenance")),
                     "execution_policy": execution_policy,
+                    **(
+                        {}
+                        if not isinstance(equity_payload.get("executor_profile"), dict)
+                        else {"executor_profile": dict(equity_payload["executor_profile"])}
+                    ),
                     "exit_policy": (dict(equity_payload["exit_policy"]) if isinstance(equity_payload.get("exit_policy"), dict) else None),
                     "risk_policy": (dict(equity_payload["risk_policy"]) if isinstance(equity_payload.get("risk_policy"), dict) else None),
                     "source": dict(source_metadata),
@@ -681,6 +689,11 @@ def submit_execution_intent(
                     "validation_provenance": as_text(option_payload.get("validation_provenance")),
                     "profile": as_text(option_payload.get("profile")),
                     "execution_policy": option_execution_policy,
+                    **(
+                        {}
+                        if not isinstance(option_payload.get("executor_profile"), dict)
+                        else {"executor_profile": dict(option_payload["executor_profile"])}
+                    ),
                     "exit_policy": (dict(option_payload["exit_policy"]) if isinstance(option_payload.get("exit_policy"), dict) else None),
                     "risk_policy": (dict(option_payload["risk_policy"]) if isinstance(option_payload.get("risk_policy"), dict) else None),
                     "source": dict(source_metadata),

@@ -35,6 +35,7 @@ routine_profiles:
       end_et: "15:45"
   momentum_manage_1m:
     cadence_minutes: 1
+    offset_seconds: 45
     market_hours_only: true
     window:
       start_et: "10:00"
@@ -59,12 +60,14 @@ routine_profiles:
       end_et: "15:15"
   short_dated_manage_1m:
     cadence_minutes: 1
+    offset_seconds: 45
     market_hours_only: true
     window:
       start_et: "09:45"
       end_et: "15:45"
   short_dated_iron_condor_manage_1m:
     cadence_minutes: 1
+    offset_seconds: 45
     market_hours_only: true
     window:
       start_et: "09:50"
@@ -388,6 +391,32 @@ executor_profiles:
   alpaca_auto_direct:
     approval: auto
     runtime: alpaca_direct
+    order_style:
+      order_type: limit
+      time_in_force: day
+      pricing_mode: adaptive_credit
+      min_credit_retention_pct: 0.95
+    quote_freshness:
+      max_age_seconds: 180
+    open_lifecycle:
+      submit_ttl_minutes: 5
+      stale_order_action: cancel_and_reprice
+      repricing:
+        enabled: true
+        stale_after_seconds: 75
+        max_reprices: 3
+        price_step: 0.01
+        max_concession: 0.03
+    close_lifecycle:
+      submit_ttl_minutes: 5
+      stale_order_action: cancel_and_reprice
+      repricing:
+        enabled: true
+        stale_after_seconds: 75
+        max_reprices: 3
+        price_step: 0.01
+        max_concession: 0.03
+    unsupported_structure_behavior: fail_closed
 
 exit_controllers:
   momentum_long_call_exit:
@@ -398,11 +427,6 @@ exit_controllers:
       force_close_minutes_before_close: 15
       max_spread_pct: 20
       max_quote_age_seconds: 180
-      repricing:
-        stale_after_seconds: 75
-        max_reprices: 3
-        price_step: 0.01
-        max_concession: 0.03
       underlying_invalidation:
         enabled: true
         min_intraday_bars: 30

@@ -209,6 +209,62 @@ def _manage_submitted_open_intents(
         broker_order_id = as_text(refreshed_attempt.get("broker_order_id"))
         if broker_order_id is None:
             continue
+        repricing_policy = _repricing_policy(intent, refreshed_attempt)
+        stale_order_action = as_text(repricing_policy.get("stale_order_action")) or "cancel_and_reprice"
+        if stale_order_action == "leave_working":
+            results.append(
+                {
+                    "execution_intent_id": str(intent["execution_intent_id"]),
+                    "status": "stale_order_left_working",
+                    "execution_attempt_id": execution_attempt_id,
+                    "age_seconds": age_seconds,
+                    "stale_order_action": stale_order_action,
+                }
+            )
+            continue
+        if stale_order_action == "fail_closed":
+            client.cancel_order(broker_order_id)
+            canceled += 1
+            _append_event(
+                execution_store,
+                execution_intent_id=str(intent["execution_intent_id"]),
+                event_type="cancel_requested_for_stale_fail_closed",
+                payload={
+                    "execution_attempt_id": execution_attempt_id,
+                    "broker_order_id": broker_order_id,
+                    "age_seconds": age_seconds,
+                },
+            )
+            updated = _update_intent(
+                execution_store,
+                intent,
+                state="failed",
+                execution_attempt_id=execution_attempt_id,
+                payload_updates={
+                    "dispatch_status": "failed",
+                    "failure_reason": "stale_order_policy_fail_closed",
+                },
+                updated_at=utc_now_iso(),
+            )
+            _append_event(
+                execution_store,
+                execution_intent_id=str(intent["execution_intent_id"]),
+                event_type="failed",
+                payload={
+                    "reason": "stale_order_policy_fail_closed",
+                    "execution_attempt_id": execution_attempt_id,
+                    "broker_order_id": broker_order_id,
+                    "age_seconds": age_seconds,
+                },
+            )
+            results.append(
+                {
+                    "execution_intent_id": str(intent["execution_intent_id"]),
+                    "status": updated.get("state"),
+                    "reason": "stale_order_policy_fail_closed",
+                }
+            )
+            continue
         next_limit = _next_reprice_limit(intent, refreshed_attempt)
         if next_limit is None:
             results.append(

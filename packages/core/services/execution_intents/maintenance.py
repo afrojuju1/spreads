@@ -47,10 +47,13 @@ def _intent_execution_policy(intent: dict[str, Any]) -> dict[str, Any] | None:
     execution_mode = str(payload.get("execution_mode") or "paper").strip().lower()
     if approval_mode != "auto":
         return None
+    policy = dict(payload.get("execution_policy") or {}) if isinstance(payload.get("execution_policy"), dict) else {}
     if execution_mode == "paper":
-        return {"deployment_mode": DEPLOYMENT_MODE_PAPER_AUTO}
+        policy.setdefault("deployment_mode", DEPLOYMENT_MODE_PAPER_AUTO)
+        return policy
     if execution_mode == "live":
-        return {"deployment_mode": DEPLOYMENT_MODE_LIVE_AUTO}
+        policy.setdefault("deployment_mode", DEPLOYMENT_MODE_LIVE_AUTO)
+        return policy
     return None
 
 

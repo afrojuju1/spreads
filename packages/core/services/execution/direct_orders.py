@@ -233,6 +233,7 @@ def submit_equity_order(
                     if as_text(metadata.get("execution_intent_id")) is None
                     else {"execution_intent_id": as_text(metadata.get("execution_intent_id"))}
                 ),
+                **({} if not isinstance(metadata.get("executor_profile"), Mapping) else {"executor_profile": dict(metadata["executor_profile"])}),
                 **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
                 **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
                 "execution_admission": execution_admission,
@@ -547,6 +548,7 @@ def submit_option_order(
                     if as_text(metadata.get("execution_intent_id")) is None
                     else {"execution_intent_id": as_text(metadata.get("execution_intent_id"))}
                 ),
+                **({} if not isinstance(metadata.get("executor_profile"), Mapping) else {"executor_profile": dict(metadata["executor_profile"])}),
                 **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
                 **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
                 "execution_admission": execution_admission,
@@ -891,6 +893,7 @@ def submit_option_structure_order(
                     if as_text(metadata.get("execution_intent_id")) is None
                     else {"execution_intent_id": as_text(metadata.get("execution_intent_id"))}
                 ),
+                **({} if not isinstance(metadata.get("executor_profile"), Mapping) else {"executor_profile": dict(metadata["executor_profile"])}),
                 **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
                 **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
                 "execution_admission": execution_admission,

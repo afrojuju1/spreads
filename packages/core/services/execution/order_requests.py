@@ -211,6 +211,58 @@ def _option_structure_max_quote_age_seconds(
     return DEFAULT_STRUCTURE_QUOTE_MAX_AGE_SECONDS
 
 
+def _attempt_execution_policy(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    request_payload = payload.get("request") if isinstance(payload.get("request"), Mapping) else {}
+    return request_payload.get("execution_policy") if isinstance(request_payload.get("execution_policy"), Mapping) else {}
+
+
+def _apply_executor_order_style(
+    *,
+    payload: Mapping[str, Any],
+    order_request: Mapping[str, Any],
+) -> dict[str, Any]:
+    request = dict(order_request)
+    execution_policy = _attempt_execution_policy(payload)
+    order_type = as_text(execution_policy.get("order_type"))
+    time_in_force = as_text(execution_policy.get("time_in_force"))
+    if order_type is not None:
+        request.setdefault("type", order_type)
+    if time_in_force is not None:
+        request.setdefault("time_in_force", time_in_force)
+    return request
+
+
+def _validate_executor_order_style(
+    *,
+    payload: Mapping[str, Any],
+    order_request: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    execution_policy = _attempt_execution_policy(payload)
+    expected_order_type = as_text(execution_policy.get("order_type"))
+    expected_time_in_force = as_text(execution_policy.get("time_in_force"))
+    actual_order_type = as_text(order_request.get("type"))
+    actual_time_in_force = as_text(order_request.get("time_in_force"))
+    expected_order_type = None if expected_order_type is None else expected_order_type.lower()
+    expected_time_in_force = None if expected_time_in_force is None else expected_time_in_force.lower()
+    actual_order_type = None if actual_order_type is None else actual_order_type.lower()
+    actual_time_in_force = None if actual_time_in_force is None else actual_time_in_force.lower()
+    if expected_order_type is not None and actual_order_type is not None and actual_order_type != expected_order_type:
+        return _structure_guard_block(
+            "executor_order_type_mismatch",
+            "Option submission is blocked because the broker order type does not match the executor profile.",
+            expected_order_type=expected_order_type,
+            order_type=actual_order_type,
+        )
+    if expected_time_in_force is not None and actual_time_in_force is not None and actual_time_in_force != expected_time_in_force:
+        return _structure_guard_block(
+            "executor_time_in_force_mismatch",
+            "Option submission is blocked because the broker time-in-force does not match the executor profile.",
+            expected_time_in_force=expected_time_in_force,
+            time_in_force=actual_time_in_force,
+        )
+    return None
+
+
 def _validate_leg_contract(
     *,
     legs: list[dict[str, Any]],
@@ -364,6 +416,12 @@ def _validate_option_structure_submission(
     order_request: Mapping[str, Any],
     now: datetime | None = None,
 ) -> dict[str, Any]:
+    style_guard = _validate_executor_order_style(
+        payload=payload,
+        order_request=order_request,
+    )
+    if style_guard is not None:
+        return style_guard
     legs = _normalized_attempt_legs(payload=payload, order_request=order_request)
     if not legs:
         return {"ok": True, "reason": "not_option_structure", "reason_codes": [], "blockers": [], "evidence": {}}
@@ -374,6 +432,7 @@ def _validate_option_structure_submission(
             "unsupported_option_family",
             f"Option submission is blocked because {family} is not explicitly supported for broker submission.",
             strategy_family=family,
+            unsupported_structure_behavior=as_text(_attempt_execution_policy(payload).get("unsupported_structure_behavior")),
         )
 
     order_class = str(order_request.get("order_class") or "").strip().lower()
@@ -880,7 +939,10 @@ def _normalize_submit_order_request(
     payload: Mapping[str, Any],
     order_request: Mapping[str, Any],
 ) -> dict[str, Any]:
-    request = dict(order_request)
+    request = _apply_executor_order_style(
+        payload=payload,
+        order_request=order_request,
+    )
     request_legs = order_payload_legs(
         request,
         expiration_date=as_text(payload.get("expiration_date")),
@@ -889,7 +951,7 @@ def _normalize_submit_order_request(
         return request
     requires_single_leg_rebuild = str(request.get("order_class") or "").strip().lower() == "mleg" or "symbol" not in request or "side" not in request
     if not requires_single_leg_rebuild:
-        return request
+        return _apply_executor_order_style(payload=payload, order_request=request)
     limit_price = coerce_float(request.get("limit_price")) or coerce_float(payload.get("limit_price"))
     if limit_price is None:
         return request
@@ -904,4 +966,4 @@ def _normalize_submit_order_request(
     client_order_id = as_text(request.get("client_order_id"))
     if client_order_id is not None:
         normalized_request["client_order_id"] = client_order_id
-    return normalized_request
+    return _apply_executor_order_style(payload=payload, order_request=normalized_request)

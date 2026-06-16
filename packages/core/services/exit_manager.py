@@ -28,7 +28,6 @@ from core.services.risk_manager import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
 from core.value_coercion import as_text, utc_expiry_iso, utc_iso, utc_now_iso
 from core.storage.serializers import parse_datetime
 
-MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
 BROKER_SYNC_KEY = "broker_sync:alpaca"
 BROKER_SYNC_IN_FLIGHT_STATUSES = {"queued", "running", "leased"}
 
@@ -161,6 +160,9 @@ def _create_close_intent(
         decision_source=as_text(decision.get("decision_source")),
     )
     decision = {**decision, "close_decision": close_decision}
+    close_execution_policy = runtime.strategy.execution.execution_policy_for_action("close")
+    close_repricing_policy = dict(close_execution_policy.get("repricing_policy") or {})
+    close_executor_profile = runtime.strategy.execution.executor_profile_snapshot("close")
     return issue_pending_execution_intent(
         execution_store,
         execution_intent_id=close_intent_id(position_id=position_id, trading_strategy_id=runtime.trading_strategy_id),
@@ -177,7 +179,10 @@ def _create_close_intent(
         },
         config_hash=runtime.config_hash,
         state="pending",
-        expires_at=utc_expiry_iso(minutes=MANAGED_CLOSE_INTENT_TTL_MINUTES, minimum_seconds=60),
+        expires_at=utc_expiry_iso(
+            minutes=int(close_execution_policy["submit_ttl_minutes"]),
+            minimum_seconds=60,
+        ),
         superseded_by_id=None,
         payload={
             "position_id": position_id,
@@ -195,6 +200,9 @@ def _create_close_intent(
             "execution_mode": runtime.strategy.execution.mode,
             "approval_mode": runtime.strategy.execution.approval,
             "execution_runtime": runtime.strategy.execution.runtime,
+            "executor_profile": close_executor_profile,
+            "execution_policy": close_execution_policy,
+            "repricing_policy": close_repricing_policy,
         },
         created_event_payload={
             "position_id": position_id,
@@ -204,6 +212,8 @@ def _create_close_intent(
             "close_decision_state": close_decision.get("decision_state"),
             "limit_price": decision.get("limit_price"),
             "execution_runtime": runtime.strategy.execution.runtime,
+            "executor_profile_id": close_executor_profile.get("executor_profile_id"),
+            "submit_ttl_minutes": close_execution_policy.get("submit_ttl_minutes"),
         },
     )
 

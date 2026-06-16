@@ -323,12 +323,21 @@ def _repricing_policy(intent: dict[str, Any], attempt: dict[str, Any]) -> dict[s
     payload = _intent_payload(intent)
     request = _attempt_request(attempt)
     exit_policy = as_mapping(request.get("exit_policy")) or as_mapping(payload.get("exit_policy"))
-    return (
+    execution_policy = as_mapping(request.get("execution_policy")) or as_mapping(payload.get("execution_policy"))
+    policy = (
         as_mapping(request.get("repricing_policy"))
         or as_mapping(payload.get("repricing_policy"))
         or as_mapping(payload.get("repricing"))
+        or as_mapping(execution_policy.get("repricing_policy"))
+        or as_mapping(execution_policy.get("repricing"))
         or as_mapping(exit_policy.get("repricing"))
     )
+    if not policy:
+        return {}
+    lifecycle_action = as_text(execution_policy.get("stale_order_action"))
+    if lifecycle_action is not None and "stale_order_action" not in policy:
+        return {**policy, "stale_order_action": lifecycle_action}
+    return policy
 
 
 def _policy_enabled(policy: dict[str, Any]) -> bool:
@@ -350,15 +359,14 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
     if current_limit is None:
         return None
     policy = _repricing_policy(intent, attempt)
+    if not policy or not _policy_enabled(policy):
+        return None
     action_type = _intent_action_type(intent, attempt)
-    if action_type == "close":
-        if not policy or not _policy_enabled(policy):
-            return None
-        max_reprices = coerce_int(policy.get("max_reprices", policy.get("max_reprice_count")))
-        if max_reprices is None:
-            max_reprices = 3
-        if _reprice_count(intent) >= max(max_reprices, 0):
-            return None
+    max_reprices = coerce_int(policy.get("max_reprices", policy.get("max_reprice_count")))
+    if max_reprices is None:
+        max_reprices = 3
+    if _reprice_count(intent) >= max(max_reprices, 0):
+        return None
     natural_value = coerce_float(candidate.get("natural_credit") or candidate.get("natural_debit") or candidate.get("natural_value"))
     max_credit_concession = max(
         coerce_float(

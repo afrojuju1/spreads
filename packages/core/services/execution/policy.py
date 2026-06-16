@@ -124,6 +124,22 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             raw_policy,
             risk_policy=(source.get("risk_policy") if isinstance(source.get("risk_policy"), Mapping) else None),
         )
+        preserved_policy_fields = {
+            key: value
+            for key, value in {
+                "order_type": as_text(raw_policy.get("order_type")),
+                "time_in_force": as_text(raw_policy.get("time_in_force")),
+                "max_quote_age_seconds": coerce_int(raw_policy.get("max_quote_age_seconds")),
+                "stale_quote_after_seconds": coerce_int(raw_policy.get("stale_quote_after_seconds")),
+                "submit_ttl_minutes": coerce_int(raw_policy.get("submit_ttl_minutes") or raw_policy.get("ttl_minutes")),
+                "stale_order_action": as_text(raw_policy.get("stale_order_action")),
+                "unsupported_structure_behavior": as_text(raw_policy.get("unsupported_structure_behavior")),
+            }.items()
+            if value is not None
+        }
+        repricing_policy = raw_policy.get("repricing_policy") or raw_policy.get("repricing")
+        if isinstance(repricing_policy, Mapping):
+            preserved_policy_fields["repricing_policy"] = dict(repricing_policy)
     else:
         deployment_mode = "shadow"
         quantity_configured = False
@@ -131,6 +147,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         pricing_mode = DEFAULT_ENTRY_PRICING_MODE
         min_credit_retention_pct = DEFAULT_MIN_CREDIT_RETENTION_PCT
         max_credit_concession = DEFAULT_MAX_CREDIT_CONCESSION
+        preserved_policy_fields = {}
     enabled = deployment_mode_auto_executes(deployment_mode)
     if pricing_mode not in {
         "midpoint",
@@ -151,6 +168,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             "pricing_mode": pricing_mode,
             "min_credit_retention_pct": min_credit_retention_pct,
             "max_credit_concession": max_credit_concession,
+            **preserved_policy_fields,
         }
     mode = as_text(raw_policy.get("mode")) if isinstance(raw_policy, dict) else None
     if mode == "disabled":
@@ -167,6 +185,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         "pricing_mode": pricing_mode,
         "min_credit_retention_pct": min_credit_retention_pct,
         "max_credit_concession": max_credit_concession,
+        **preserved_policy_fields,
     }
 
 

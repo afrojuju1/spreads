@@ -82,6 +82,7 @@ def _strategy_profile(strategy: TradingStrategyConfig) -> dict[str, Any]:
         "execution_mode": strategy.execution.mode,
         "execution_runtime": strategy.execution.runtime,
         "approval_mode": strategy.execution.approval,
+        "executor_profile_id": strategy.execution.executor_profile_id,
         "config_hash": strategy.config_hash,
         "enabled": strategy.enabled,
         "paused": strategy.paused,

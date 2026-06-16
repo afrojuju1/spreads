@@ -42,6 +42,8 @@ def _strategy_payload(strategy: TradingStrategyConfig) -> dict[str, Any]:
         "paused": strategy.paused,
         "execution_mode": strategy.execution.mode,
         "execution_runtime": strategy.execution.runtime,
+        "approval_mode": strategy.execution.approval,
+        "execution": strategy.execution.as_dict(),
         "config_hash": strategy.config_hash,
     }
 

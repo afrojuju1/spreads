@@ -62,7 +62,7 @@ When documenting current ownership, update:
 
 - [docs/current_system_state.md](../../../docs/current_system_state.md)
 
-That document owns the vocabulary and service ownership for signals, decisions, admissions, intents, attempts, orders, fills, positions, closes, reconciliation, broker sync, trading ops state, and storage ops state.
+That document owns the vocabulary and service ownership for signals, decisions, admissions, executor profiles, intents, attempts, orders, fills, positions, closes, reconciliation, broker sync, trading ops state, and storage ops state.
 
 Repo-local skills should remain workflow playbooks that point to the canonical doc.
 

@@ -49,7 +49,6 @@ from core.services.trading_strategies import load_active_trading_strategies, rou
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_observation_runtime, resolve_entry_runtime
 from core.value_coercion import unique_text_list, utc_expiry_iso, utc_now, utc_now_iso as _utc_now
 
-ENTRY_INTENT_TTL_MINUTES = 5
 ENTRY_MONITOR_LIMIT = 12
 NATURAL_ENTRY_PROVENANCE = "natural_strategy"
 OBSERVATION_ENTRY_PROVENANCE = "strategy_observation"
@@ -1075,7 +1074,11 @@ def _run_trading_strategy_entry(
             market_date=resolved_market_date,
         )
         execution_intent_id = _intent_id(str(decision["trade_decision_id"]))
-        intent_expires_at = utc_expiry_iso(minutes=ENTRY_INTENT_TTL_MINUTES, minimum_seconds=60)
+        open_execution_policy = runtime.strategy.execution.execution_policy_for_action("open")
+        intent_expires_at = utc_expiry_iso(
+            minutes=int(open_execution_policy["submit_ttl_minutes"]),
+            minimum_seconds=60,
+        )
         selected_admission = _persist_trade_admission(
             engine_facts=engine_facts,
             runtime=runtime,
@@ -1115,6 +1118,12 @@ def _run_trading_strategy_entry(
         )
         admissible_quantity = _positive_int(selected_admission.get("admissible_quantity"), default=requested_quantity)
         intent_quantity = min(requested_quantity, admissible_quantity)
+        open_execution_policy = runtime.strategy.execution.execution_policy_for_action(
+            "open",
+            quantity=intent_quantity,
+        )
+        open_repricing_policy = dict(open_execution_policy.get("repricing_policy") or {})
+        open_executor_profile = runtime.strategy.execution.executor_profile_snapshot("open")
         selected_intent = issue_pending_execution_intent(
             execution_store,
             execution_intent_id=execution_intent_id,
@@ -1147,6 +1156,9 @@ def _run_trading_strategy_entry(
                 "execution_mode": runtime.strategy.execution.mode,
                 "approval_mode": runtime.strategy.execution.approval,
                 "execution_runtime": runtime.strategy.execution.runtime,
+                "executor_profile": open_executor_profile,
+                "execution_policy": open_execution_policy,
+                "repricing_policy": open_repricing_policy,
                 "validation_provenance": NATURAL_ENTRY_PROVENANCE,
                 "execution_admission": selected_admission,
                 "exit_policy": build_exit_policy_from_recipe_refs(tuple(runtime.strategy.management_recipe_refs)),
@@ -1157,6 +1169,8 @@ def _run_trading_strategy_entry(
                 "admission_decision_id": selected_admission["admission_decision_id"],
                 "slot_key": slot_key,
                 "execution_runtime": runtime.strategy.execution.runtime,
+                "executor_profile_id": open_executor_profile.get("executor_profile_id"),
+                "submit_ttl_minutes": open_execution_policy.get("submit_ttl_minutes"),
                 "leg_count": len(signal_legs),
                 "order_class": signal_order_payload.get("order_class") or ("mleg" if len(signal_legs) > 1 else "single"),
             },

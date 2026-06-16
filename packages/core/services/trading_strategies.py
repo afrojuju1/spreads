@@ -715,6 +715,7 @@ def _compose_strategy_payload(
     execution_payload = _deep_merge(
         normalize_mapping(executor_profile),
         {
+            "executor_profile_id": executor_profile_ref,
             "mode": strategy.execution.mode,
             **({} if strategy.execution.approval is None else {"approval": strategy.execution.approval}),
             **({} if strategy.execution.runtime is None else {"runtime": strategy.execution.runtime}),
