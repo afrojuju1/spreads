@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -9,6 +8,7 @@ from core.value_coercion import coerce_float
 from core.services.company_valuation.contracts import (
     CompanyValuationDocument,
     CompanyValuationIdentity,
+    CompanyValuationContractModel,
     CompanyValuationScreenRow,
     QualityBreakdown,
     ValuationSummary,
@@ -40,15 +40,11 @@ TEMPLATE_MULTIPLES: dict[str, dict[str, float]] = {
 }
 
 
-@dataclass(frozen=True)
-class CompanyValuationRecomputeResult:
+class CompanyValuationRecomputeResult(CompanyValuationContractModel):
     feature_snapshot: dict[str, Any]
     company_valuation_snapshot: dict[str, Any]
     screening_row: dict[str, Any]
     document: dict[str, Any]
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def _normalized_as_of(value: str | datetime | None) -> datetime:

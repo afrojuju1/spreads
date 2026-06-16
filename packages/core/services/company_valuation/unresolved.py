@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.identifiers import (
     load_official_13f_list,
     resolve_cusip_to_security,
@@ -18,16 +18,14 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date
 
 
-@dataclass(frozen=True)
-class ResolveUnresolvedInstitutionalPositionsRequest:
+class ResolveUnresolvedInstitutionalPositionsRequest(CompanyValuationContractModel):
     report_period: datetime | None = None
     limit_rows: int = 20000
     batch_cusips: int = 50
     max_attempts: int = 5
 
 
-@dataclass(frozen=True)
-class ResolveUnresolvedInstitutionalPositionsResult:
+class ResolveUnresolvedInstitutionalPositionsResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
@@ -37,10 +35,7 @@ class ResolveUnresolvedInstitutionalPositionsResult:
     identifier_mappings_persisted: int = 0
     pending_rows: int = 0
     failed_rows: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def _retry_delay(attempt_count: int) -> timedelta:

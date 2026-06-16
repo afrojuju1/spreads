@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
 import yaml
 
+from core.model_contracts import DomainModel
 from core.services.config_inheritance import resolve_policy_mapping
 from core.services.payload_validation import (
     normalize_mapping,
@@ -71,9 +72,7 @@ def _yaml_file_signature(path: Path) -> tuple[str, int, int] | None:
     return (path.name, stat.st_mtime_ns, stat.st_size)
 
 
-class UniverseYamlPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class UniverseYamlPayload(DomainModel):
     symbols: tuple[str, ...]
 
     @field_validator("symbols", mode="before")
@@ -82,9 +81,7 @@ class UniverseYamlPayload(BaseModel):
         return normalize_text_tuple(value, uppercase=True, require_non_empty=True)
 
 
-class TradingStrategyRiskPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class TradingStrategyRiskPayload(DomainModel):
     limits: dict[str, Any] = Field(default_factory=dict)
     sizing: StrategyRiskDefaults = Field(default_factory=StrategyRiskDefaults)
 
@@ -94,9 +91,7 @@ class TradingStrategyRiskPayload(BaseModel):
         return normalize_mapping(value)
 
 
-class TradingStrategyPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class TradingStrategyPayload(DomainModel):
     trading_strategy_id: str
     name: str
     enabled: bool = True
@@ -122,9 +117,7 @@ class TradingStrategyPayload(BaseModel):
         return normalize_mapping(value)
 
 
-class StrategyActivationPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class StrategyActivationPayload(DomainModel):
     state: Literal["active", "disabled"] = "active"
     paused: bool = False
 
@@ -137,9 +130,7 @@ class StrategyActivationPayload(BaseModel):
         return rendered
 
 
-class StrategyCatalogExecutionPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class StrategyCatalogExecutionPayload(DomainModel):
     mode: Literal["shadow", "paper", "live"]
     approval: str | None = None
     runtime: str | None = None
@@ -159,9 +150,7 @@ class StrategyCatalogExecutionPayload(BaseModel):
         return normalize_optional_text(value)
 
 
-class StrategyCatalogRoutinePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class StrategyCatalogRoutinePayload(DomainModel):
     routine_profile: str | None = None
     exit_controller: str | None = None
     enabled: bool = True
@@ -186,9 +175,7 @@ class StrategyCatalogRoutinePayload(BaseModel):
         return normalize_text_tuple(value)
 
 
-class StrategyCatalogEntryPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class StrategyCatalogEntryPayload(DomainModel):
     trading_strategy_id: str
     name: str
     activation: StrategyActivationPayload = Field(default_factory=StrategyActivationPayload)
@@ -231,9 +218,7 @@ class StrategyCatalogEntryPayload(BaseModel):
         return normalize_optional_text(value)
 
 
-class StrategyCatalogPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class StrategyCatalogPayload(DomainModel):
     version: int = 1
     profiles: str = "profiles.yaml"
     strategies: tuple[StrategyCatalogEntryPayload, ...]

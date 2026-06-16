@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
+from core.model_contracts import DomainModel
 from core.services.trading_strategy_build_models import (
     EntrySelectionPolicy,
     RoutineSchedule,
@@ -25,11 +26,7 @@ if TYPE_CHECKING:
     from core.services.trade_structure_specs import TradeStructureSpec
 
 
-class StrategyRuntimeConfigModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True, arbitrary_types_allowed=True)
-
-
-class StrategySource(StrategyRuntimeConfigModel):
+class StrategySource(DomainModel):
     kind: str = Field(validation_alias=AliasChoices("kind", "type"), serialization_alias="type")
     ref: str
     max_age_seconds: int | None = None
@@ -67,7 +64,7 @@ class StrategySource(StrategyRuntimeConfigModel):
         return self.kind == "dynamic"
 
 
-class StrategyRoutine(StrategyRuntimeConfigModel):
+class StrategyRoutine(DomainModel):
     routine: str
     schedule: RoutineSchedule
     enabled: bool

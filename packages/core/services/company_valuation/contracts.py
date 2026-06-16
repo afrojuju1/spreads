@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
 
+from core.model_contracts import DomainModel
 
 OwnershipSourceType: TypeAlias = Literal["form3", "form4", "form5", "13d", "13g", "13f"]
 TemplateStatus: TypeAlias = Literal["active", "inactive"]
@@ -16,9 +17,7 @@ SupportTier: TypeAlias = Literal["core", "expanded"]
 CompanyValuationDocumentPayload: TypeAlias = dict[str, Any]
 
 
-class CompanyValuationContractModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class CompanyValuationContractModel(DomainModel):
     @field_validator("*", mode="before")
     @classmethod
     def _normalize_blank_strings(cls, value: Any) -> Any:

@@ -2,24 +2,16 @@ from __future__ import annotations
 
 from typing import Any, TypeAlias
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import AliasChoices, Field, TypeAdapter, field_validator, model_validator
 from whenever import Time
 
 from core.domain.profiles import RankingPolicyConfig
+from core.model_contracts import DomainModel
 
 RANKING_POLICY_CONFIG = TypeAdapter(RankingPolicyConfig)
 
 
-class BuildConfigModel(BaseModel):
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        populate_by_name=True,
-        arbitrary_types_allowed=True,
-    )
-
-
-class DteRange(BuildConfigModel):
+class DteRange(DomainModel):
     minimum: int = Field(validation_alias=AliasChoices("minimum", "min"))
     maximum: int = Field(validation_alias=AliasChoices("maximum", "max"))
 
@@ -30,7 +22,7 @@ class DteRange(BuildConfigModel):
         return self
 
 
-class DeltaRange(BuildConfigModel):
+class DeltaRange(DomainModel):
     minimum: float = Field(validation_alias=AliasChoices("minimum", "min"))
     maximum: float = Field(validation_alias=AliasChoices("maximum", "max"))
     target: float | None = None
@@ -44,7 +36,7 @@ class DeltaRange(BuildConfigModel):
         return self
 
 
-class ExpectedMoveGuard(BuildConfigModel):
+class ExpectedMoveGuard(DomainModel):
     min_short_vs_expected_move_ratio: float | None = None
     min_breakeven_vs_expected_move_ratio: float | None = None
 
@@ -68,7 +60,7 @@ class ExpectedMoveGuard(BuildConfigModel):
         return self.model_dump(exclude_none=True)
 
 
-class VerticalSpreadBuildConfig(BuildConfigModel):
+class VerticalSpreadBuildConfig(DomainModel):
     dte: DteRange
     short_delta: DeltaRange
     widths: tuple[float, ...]
@@ -124,7 +116,7 @@ class IronCondorBuildConfig(VerticalSpreadBuildConfig):
         return payload
 
 
-class LongVolBuildConfig(BuildConfigModel):
+class LongVolBuildConfig(DomainModel):
     dte: DteRange
     entry_delta: DeltaRange = Field(validation_alias=AliasChoices("entry_delta", "short_delta"))
     min_fill_ratio: float | None = None
@@ -161,7 +153,7 @@ class LongVolBuildConfig(BuildConfigModel):
 StrategyBuildConfig: TypeAlias = VerticalSpreadBuildConfig | IronCondorBuildConfig | LongVolBuildConfig
 
 
-class StrategyRecipes(BuildConfigModel):
+class StrategyRecipes(DomainModel):
     entry: tuple[str, ...] = ()
     management: tuple[str, ...] = ()
 
@@ -175,7 +167,7 @@ class StrategyRecipes(BuildConfigModel):
         return tuple(str(item).strip() for item in value if str(item or "").strip())
 
 
-class StrategyLiquidityRules(BuildConfigModel):
+class StrategyLiquidityRules(DomainModel):
     min_open_interest: int | None = None
     max_leg_spread_pct_mid: float | None = None
     max_quote_age_seconds: int | None = None
@@ -191,7 +183,7 @@ class StrategyLiquidityRules(BuildConfigModel):
         return self
 
 
-class RoutineScheduleWindow(BuildConfigModel):
+class RoutineScheduleWindow(DomainModel):
     start_et: str | None = None
     end_et: str | None = None
 
@@ -210,7 +202,7 @@ class RoutineScheduleWindow(BuildConfigModel):
         return f"{parsed.hour:02d}:{parsed.minute:02d}"
 
 
-class RoutineSchedule(BuildConfigModel):
+class RoutineSchedule(DomainModel):
     cadence_minutes: int
     market_hours_only: bool = False
     offset_seconds: int = 0
@@ -238,11 +230,11 @@ class RoutineSchedule(BuildConfigModel):
         return payload
 
 
-class EntrySelectionPolicy(BuildConfigModel):
+class EntrySelectionPolicy(DomainModel):
     min_signal_score: float | None = None
 
 
-class StrategyEntryQualityPolicy(BuildConfigModel):
+class StrategyEntryQualityPolicy(DomainModel):
     profile_id: str | None = Field(default=None, validation_alias=AliasChoices("profile_id", "quality_profile"), serialization_alias="quality_profile")
     overrides: dict[str, Any] = Field(
         default_factory=dict,

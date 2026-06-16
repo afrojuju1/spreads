@@ -21,6 +21,12 @@
 - For Python quality checks, use the required and advisory Ruff commands in [docs/development/python_quality.md](docs/development/python_quality.md). Keep complexity scans report-only unless a bead explicitly includes that cleanup.
 - Before implementing, check whether the change duplicates logic, creates a parallel path, or deepens a weak abstraction. If it does, prefer a small structural cleanup or shared helper/service extraction.
 - Extend one canonical path per behavior instead of maintaining near-duplicate flows.
+- For owned Pydantic contracts, use `core.model_contracts.DomainModel` as the default base. It owns the shared repo defaults: frozen models, extra-field rejection, alias population, arbitrary type support, and `to_payload()`.
+- Do not create thin Pydantic base classes, wrapper methods, or compatibility layers that only rename `DomainModel` behavior. Add a domain-specific base only when it carries real domain rules, such as company valuation blank-string normalization.
+- Keep public serialization surfaces consistent. If a model has `to_payload()`, callers should use that method; the implementation can delegate to Pydantic internals such as `model_dump(mode="json")`.
+- Leave intentionally open Pydantic shapes on `BaseModel` when their behavior differs from `DomainModel`, such as `extra="allow"` vendor/dynamic payloads or `extra="ignore"` override payloads. Do not force those through `DomainModel`.
+- Prefer library-backed primitives and repo-level helpers over hand-rolled parsing, money math, time parsing, clamping, or serialization. If a helper only wraps one obvious library call, remove it unless it encodes domain language or policy.
+- Keep local model transforms declarative with Pydantic validators, aliases, and `model_dump`/`model_validate` before writing manual object-to-dict plumbing.
 - For trading-engine architecture, strategy-quality, scanner/source, execution, risk, or portfolio refactor work, start from [docs/planning/2026-06-08_trading_engine_inspiration_repos.md](docs/planning/2026-06-08_trading_engine_inspiration_repos.md) and borrow patterns from the listed inspiration repos before inventing a local shape.
 - If research surfaces another repo or framework with a clearly better pattern for the active design problem, propose adding it to the inspiration list with the specific pattern to borrow and what not to copy. Do not silently expand the inspiration set or chase broad framework rewrites.
 - Keep the current runtime boundary explicit:

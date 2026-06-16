@@ -4,10 +4,10 @@ import csv
 import io
 import zipfile
 from calendar import monthrange
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.identifiers import (
     load_official_13f_list,
     resolve_cusip_to_security,
@@ -25,15 +25,13 @@ from core.services.company_valuation.sec_client import SecEdgarClient
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
-@dataclass(frozen=True)
-class Sec13FIngestionRequest:
+class Sec13FIngestionRequest(CompanyValuationContractModel):
     report_period: date | None = None
     manager_cik: str | None = None
     allow_openfigi_fallback: bool = False
 
 
-@dataclass(frozen=True)
-class Sec13FIngestionResult:
+class Sec13FIngestionResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
@@ -47,10 +45,7 @@ class Sec13FIngestionResult:
     positions_persisted: int = 0
     identifier_mappings_persisted: int = 0
     unresolved_positions: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def _parse_dataset_date(value: str | None) -> date | None:

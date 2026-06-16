@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import build_issuer_id
 from core.services.company_valuation.ingestion.submission_history import (
     filter_submission_filing_payloads,
@@ -17,8 +17,7 @@ from core.services.company_valuation.sec_client import SecEdgarClient, SecReques
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
-@dataclass(frozen=True)
-class SecBeneficialOwnershipIngestionRequest:
+class SecBeneficialOwnershipIngestionRequest(CompanyValuationContractModel):
     cik: str | None = None
     ticker: str | None = None
     since: datetime | None = None
@@ -35,8 +34,7 @@ class SecBeneficialOwnershipIngestionRequest:
     )
 
 
-@dataclass(frozen=True)
-class SecBeneficialOwnershipIngestionResult:
+class SecBeneficialOwnershipIngestionResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
@@ -48,10 +46,7 @@ class SecBeneficialOwnershipIngestionResult:
     owners_persisted: int = 0
     positions_persisted: int = 0
     groups_persisted: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def _resolve_request_cik(

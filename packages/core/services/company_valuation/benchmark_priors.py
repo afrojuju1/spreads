@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import statistics
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +12,7 @@ from core.value_coercion import as_text, coerce_float, normalize_symbol
 from core.services.company_valuation.contracts import (
     CompanyValuationBenchmarkPriorEntry,
     CompanyValuationBenchmarkPriorSet,
+    CompanyValuationContractModel,
 )
 from core.services.company_valuation.evaluation import recompute_company_valuation
 from core.services.company_valuation.taxonomy import (
@@ -122,8 +122,7 @@ def _benchmark_target_for_entry(
     raise ValueError(f"Unsupported benchmark target field: {target_field}")
 
 
-@dataclass(frozen=True)
-class CompanyValuationBenchmarkPriorReportRequest:
+class CompanyValuationBenchmarkPriorReportRequest(CompanyValuationContractModel):
     prior_set_id: str
     as_of: str | datetime | None = None
     supported_only: bool | None = None
@@ -131,8 +130,7 @@ class CompanyValuationBenchmarkPriorReportRequest:
     config_root: str | None = None
 
 
-@dataclass(frozen=True)
-class CompanyValuationBenchmarkPriorReportRow:
+class CompanyValuationBenchmarkPriorReportRow(CompanyValuationContractModel):
     ticker: str
     support_status: str
     support_reason: str
@@ -152,12 +150,8 @@ class CompanyValuationBenchmarkPriorReportRow:
     consensus_rating: str | None = None
     source_url: str | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationBenchmarkPriorReportResult:
+class CompanyValuationBenchmarkPriorReportResult(CompanyValuationContractModel):
     status: str
     prior_set_id: str
     basket_id: str
@@ -185,13 +179,6 @@ class CompanyValuationBenchmarkPriorReportResult:
     rows_path: str | None = None
     rows: tuple[CompanyValuationBenchmarkPriorReportRow, ...] = ()
     errors: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["as_of"] = _json_default(self.as_of)
-        payload["rows"] = [row.to_payload() for row in self.rows]
-        payload["errors"] = list(self.errors)
-        return payload
 
 
 def _summary_markdown(
@@ -409,9 +396,8 @@ def report_company_valuation_benchmark_priors(
         _summary_markdown(prior_set=prior_set, result=result),
         encoding="utf-8",
     )
-    updated_result = CompanyValuationBenchmarkPriorReportResult(
-        **{
-            **result.__dict__,
+    updated_result = result.model_copy(
+        update={
             "manifest_path": manifest_path,
             "summary_path": summary_path,
             "rows_path": rows_path,

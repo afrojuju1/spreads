@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import build_issuer_id, build_security_id
 from core.services.company_valuation.ingestion.submission_history import (
     filter_submission_filing_payloads,
@@ -25,8 +25,7 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 DEFAULT_COMPANY_VALUATION_NORMALIZATION_VERSION = "v1"
 
 
-@dataclass(frozen=True)
-class SecFilingsIngestionRequest:
+class SecFilingsIngestionRequest(CompanyValuationContractModel):
     cik: str | None = None
     ticker: str | None = None
     since: datetime | None = None
@@ -36,8 +35,7 @@ class SecFilingsIngestionRequest:
     config_root: str | None = None
 
 
-@dataclass(frozen=True)
-class SecFilingsIngestionResult:
+class SecFilingsIngestionResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
@@ -48,10 +46,7 @@ class SecFilingsIngestionResult:
     filings_persisted: int = 0
     facts_persisted: int = 0
     statement_snapshots_persisted: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 def _resolve_request_cik(
     request: SecFilingsIngestionRequest,

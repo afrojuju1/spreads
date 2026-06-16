@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from dotenv import dotenv_values
 
+from core.model_contracts import DomainModel
 from core.services.config_inheritance import load_yaml_mapping
 from core.services.payload_validation import format_validation_error, normalize_optional_text, normalize_required_text, normalize_text_tuple
 from core.value_coercion import as_text
@@ -50,9 +51,7 @@ class DeploymentConfigError(ValueError):
     """Raised when deployment target configuration is invalid."""
 
 
-class DeployTargetYamlPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class DeployTargetYamlPayload(DomainModel):
     name: str | None = None
     mode: Literal["local", "ssh"]
     description: str | None = None

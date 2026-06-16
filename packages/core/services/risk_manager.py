@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from core.money import money_float, money_scaled_float, money_sum_float, option_contract_notional
+from core.model_contracts import DomainModel
 from core.services.account_capacity import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
@@ -95,9 +96,7 @@ TERMINAL_ENTRY_ATTEMPT_STATUSES = {
     "rejected",
 }
 
-class BaselineRiskPolicyYamlPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class BaselineRiskPolicyYamlPayload(DomainModel):
     enabled: bool
     allow_live: bool
     max_open_positions_per_session: int = Field(gt=0)

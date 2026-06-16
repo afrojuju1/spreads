@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from pydantic import Field
 from sklearn.cluster import HDBSCAN, MiniBatchKMeans
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.preprocessing import StandardScaler
+
 from core.value_coercion import coerce_float
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 
 DEFAULT_CLUSTER_FEATURE_COLUMNS = (
     "ff__revenue_ttm_growth",
@@ -64,8 +66,7 @@ DEFAULT_SUMMARY_COLUMNS = (
 )
 
 
-@dataclass(frozen=True)
-class CompanyValuationClusteringRequest:
+class CompanyValuationClusteringRequest(CompanyValuationContractModel):
     dataset_root: str
     output_root: str | None = None
     template_ids: tuple[str, ...] | None = None
@@ -76,22 +77,18 @@ class CompanyValuationClusteringRequest:
     min_rows_per_cluster: int = 12
 
 
-@dataclass(frozen=True)
-class CompanyValuationClusteringResult:
+class CompanyValuationClusteringResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
     dataset_root: str
     output_root: str
-    template_summaries: dict[str, Any] = field(default_factory=dict)
+    template_summaries: dict[str, Any] = Field(default_factory=dict)
     assignment_count: int = 0
     summary_path: str | None = None
     assignments_path: str | None = None
     markdown_path: str | None = None
     errors: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def _normalized_template_ids(values: tuple[str, ...] | None) -> tuple[str, ...]:

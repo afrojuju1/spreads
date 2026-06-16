@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from sqlalchemy import delete, or_, select
 
+from core.model_contracts import DomainModel
 from core.storage.base import RepositoryBase
 from core.storage.engine_models import (
     CandidateRunModel,
@@ -140,9 +141,7 @@ class CandidateSymbolDiagnosticPayload(BaseModel):
         return coerce_int(value) or 0
 
 
-class TradeDecisionSignalQuery(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
+class TradeDecisionSignalQuery(DomainModel):
     decision_states: list[str] = Field(default_factory=list)
     trading_strategy_ids: list[str] = Field(default_factory=list)
     routine: str | None = None

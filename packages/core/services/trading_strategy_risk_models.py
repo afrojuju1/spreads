@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from whenever import Time
+
+from core.model_contracts import DomainModel
 
 PROTECTION_RULE_KEYS = frozenset(
     {
@@ -20,11 +22,7 @@ PROTECTION_RULE_KEYS = frozenset(
 )
 
 
-class RiskConfigModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
-
-
-class StrategyRiskDefaults(RiskConfigModel):
+class StrategyRiskDefaults(DomainModel):
     min_return_on_risk: float | None = None
     position_size_pct_of_available_balance: float | None = None
     max_risk_per_trade: float | None = None
@@ -45,7 +43,7 @@ class StrategyRiskDefaults(RiskConfigModel):
         return self
 
 
-class StrategyPortfolioAdmissionLimits(RiskConfigModel):
+class StrategyPortfolioAdmissionLimits(DomainModel):
     max_strategy_open_positions: int | None = None
     max_family_open_positions: int | None = None
     max_symbol_family_open_positions: int | None = None
@@ -109,7 +107,7 @@ class StrategyPortfolioAdmissionLimits(RiskConfigModel):
         }
 
 
-class StrategyRiskLimits(RiskConfigModel):
+class StrategyRiskLimits(DomainModel):
     max_open_positions: int = 0
     max_daily_actions: int = 0
     max_new_entries_per_day: int | None = None
@@ -135,7 +133,7 @@ class StrategyRiskLimits(RiskConfigModel):
         return payload
 
 
-class StrategyProtectionPolicy(RiskConfigModel):
+class StrategyProtectionPolicy(DomainModel):
     profile_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("protection_model_id", "profile_id"),
@@ -162,7 +160,7 @@ class StrategyProtectionPolicy(RiskConfigModel):
         return bool(self.rules)
 
 
-class StrategyRuntimeControls(RiskConfigModel):
+class StrategyRuntimeControls(DomainModel):
     cancel_pending_entries_after_et: str | None = None
     flatten_positions_at_et: str | None = None
     paused: bool = False

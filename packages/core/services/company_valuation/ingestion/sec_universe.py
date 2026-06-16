@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import build_issuer_id, build_security_id, normalize_cik, normalize_ticker
 from core.services.company_valuation.sec_client import SecEdgarClient
 from core.services.company_valuation.templates import (
@@ -22,8 +22,7 @@ DEFAULT_BOOTSTRAP_EXCHANGES = (
 )
 
 
-@dataclass(frozen=True)
-class SecUniverseBootstrapRequest:
+class SecUniverseBootstrapRequest(CompanyValuationContractModel):
     limit: int | None = None
     include_otc: bool = False
     include_adr_like: bool = False
@@ -31,8 +30,7 @@ class SecUniverseBootstrapRequest:
     config_root: str | None = None
 
 
-@dataclass(frozen=True)
-class SecUniverseBootstrapResult:
+class SecUniverseBootstrapResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
@@ -40,10 +38,7 @@ class SecUniverseBootstrapResult:
     issuers_seen: int = 0
     issuers_persisted: int = 0
     securities_persisted: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def _normalized_exchange(value: str | None) -> str:

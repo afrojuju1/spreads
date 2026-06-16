@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from core.model_contracts import DomainModel
 from core.services.config_inheritance import load_yaml_mapping as _load_yaml_mapping
 from core.services.payload_validation import (
     normalize_mapping,
@@ -59,9 +60,7 @@ class ScheduleYamlPayload(BaseModel):
         return payload
 
 
-class DeclaredJobYamlPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class DeclaredJobYamlPayload(DomainModel):
     job_key: str
     job_type: str
     enabled: bool = True
@@ -91,9 +90,7 @@ class DeclaredJobYamlPayload(BaseModel):
         return normalize_optional_text(value)
 
 
-class TickerSourceYamlPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class TickerSourceYamlPayload(DomainModel):
     ticker_source_id: str
     job_key: str
     enabled: bool = True

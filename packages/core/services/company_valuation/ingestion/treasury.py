@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time
 
 from core.integrations.http_client import VendorHttpClient
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import build_treasury_curve_snapshot_id
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
@@ -52,23 +52,18 @@ def _parse_curve_row(row: dict[str, str]) -> tuple[date, dict[str, float]]:
     return curve_date, curve_points
 
 
-@dataclass(frozen=True)
-class TreasuryCurveIngestionRequest:
+class TreasuryCurveIngestionRequest(CompanyValuationContractModel):
     curve_date: date | None = None
 
 
-@dataclass(frozen=True)
-class TreasuryCurveIngestionResult:
+class TreasuryCurveIngestionResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
     completed_at: datetime
     curve_date: date | None = None
     curve_points_persisted: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def ingest_treasury_curve(

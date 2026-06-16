@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
+from core.value_coercion import as_text
 from core.services.company_valuation.normalization import extract_submission_issuer_profile
 from core.services.company_valuation.sec_client import SecEdgarClient
 from core.services.company_valuation.taxonomy import (
@@ -18,8 +19,7 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.services.company_valuation.ids import normalize_ticker
 
 
-@dataclass(frozen=True)
-class CompanyValuationClassificationBackfillRequest:
+class CompanyValuationClassificationBackfillRequest(CompanyValuationContractModel):
     tickers: tuple[str, ...] | None = None
     ciks: tuple[str, ...] | None = None
     issuer_ids: tuple[str, ...] | None = None
@@ -32,8 +32,7 @@ class CompanyValuationClassificationBackfillRequest:
     continue_on_error: bool = True
 
 
-@dataclass(frozen=True)
-class CompanyValuationClassificationBackfillSample:
+class CompanyValuationClassificationBackfillSample(CompanyValuationContractModel):
     issuer_id: str
     cik: str
     ticker: str | None
@@ -45,12 +44,8 @@ class CompanyValuationClassificationBackfillSample:
     previous_naics: str | None
     next_naics: str | None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationClassificationBackfillResult:
+class CompanyValuationClassificationBackfillResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
@@ -68,11 +63,6 @@ class CompanyValuationClassificationBackfillResult:
     taxonomy_sync: dict[str, Any] | None = None
     notes: tuple[str, ...] = ()
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["samples"] = [row.to_payload() for row in self.samples]
-        return payload
-
 
 def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
     if heartbeat is not None:
@@ -81,11 +71,6 @@ def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
 
 def _has_raw_classification(issuer_row: dict[str, Any]) -> bool:
     return bool(issuer_row.get("sic")) and bool(issuer_row.get("sic_description"))
-
-
-def _normalize_optional_text(value: Any) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
 
 
 def _resolved_ticker_scope(
@@ -179,14 +164,14 @@ def backfill_company_valuation_raw_classification(
             submissions_payload = sec_client.get_submissions(str(issuer_row["cik"]))
             profile = extract_submission_issuer_profile(submissions_payload)
             sec_profiles_loaded += 1
-            previous_sic = _normalize_optional_text(issuer_row.get("sic"))
-            previous_sic_description = _normalize_optional_text(
+            previous_sic = as_text(issuer_row.get("sic"))
+            previous_sic_description = as_text(
                 issuer_row.get("sic_description")
             )
-            previous_naics = _normalize_optional_text(issuer_row.get("naics"))
-            next_sic = _normalize_optional_text(profile.sic)
-            next_sic_description = _normalize_optional_text(profile.sic_description)
-            next_naics = _normalize_optional_text(profile.naics)
+            previous_naics = as_text(issuer_row.get("naics"))
+            next_sic = as_text(profile.sic)
+            next_sic_description = as_text(profile.sic_description)
+            next_naics = as_text(profile.naics)
 
             changed = False
             payload: dict[str, Any] = {

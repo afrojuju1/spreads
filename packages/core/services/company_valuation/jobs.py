@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 import hashlib
 import json
@@ -18,6 +17,7 @@ from core.jobs.registry import (
 )
 from core.runtime.config import default_database_url
 from core.services.company_valuation.bootstrap import CompanyValuationBootstrapRequest
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.unresolved import (
     ResolveUnresolvedInstitutionalPositionsRequest,
 )
@@ -25,8 +25,7 @@ from core.storage.factory import build_job_repository
 from core.storage.serializers import parse_date, parse_datetime
 
 
-@dataclass(frozen=True)
-class CompanyValuationScreenRefreshRequest:
+class CompanyValuationScreenRefreshRequest(CompanyValuationContractModel):
     as_of: datetime | None = None
     template_id: str | None = None
     tickers: tuple[str, ...] | None = None
@@ -36,8 +35,7 @@ class CompanyValuationScreenRefreshRequest:
     config_root: str | None = None
 
 
-@dataclass(frozen=True)
-class QueuedCompanyValuationJob:
+class QueuedCompanyValuationJob(CompanyValuationContractModel):
     job_run_id: str
     job_key: str
     job_type: str
@@ -45,9 +43,6 @@ class QueuedCompanyValuationJob:
     status: str
     scheduled_for: str
     payload: dict[str, Any]
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def _isoformat(value: datetime | None) -> str | None:

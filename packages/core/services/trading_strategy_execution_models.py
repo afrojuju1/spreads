@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
+
+from core.model_contracts import DomainModel
 
 
-class ExecutionConfigModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
-
-
-class StrategyOrderStylePolicy(ExecutionConfigModel):
+class StrategyOrderStylePolicy(DomainModel):
     order_type: Literal["limit"] = Field(default="limit", validation_alias=AliasChoices("order_type", "type"))
     time_in_force: Literal["day", "gtc"] = "day"
     pricing_mode: Literal["midpoint", "adaptive_credit", "adaptive_debit", "adaptive"] = "adaptive_credit"
@@ -27,7 +25,7 @@ class StrategyOrderStylePolicy(ExecutionConfigModel):
         return self
 
 
-class StrategyQuoteFreshnessPolicy(ExecutionConfigModel):
+class StrategyQuoteFreshnessPolicy(DomainModel):
     max_age_seconds: int = 180
 
     @model_validator(mode="after")
@@ -37,7 +35,7 @@ class StrategyQuoteFreshnessPolicy(ExecutionConfigModel):
         return self
 
 
-class StrategyOrderRepricingPolicy(ExecutionConfigModel):
+class StrategyOrderRepricingPolicy(DomainModel):
     enabled: bool = True
     stale_after_seconds: int = Field(default=75, validation_alias=AliasChoices("stale_after_seconds", "ttl_seconds"))
     max_reprices: int = Field(default=3, validation_alias=AliasChoices("max_reprices", "max_reprice_count"))
@@ -57,7 +55,7 @@ class StrategyOrderRepricingPolicy(ExecutionConfigModel):
         return self
 
 
-class StrategyOrderLifecyclePolicy(ExecutionConfigModel):
+class StrategyOrderLifecyclePolicy(DomainModel):
     submit_ttl_minutes: int = Field(default=5, validation_alias=AliasChoices("submit_ttl_minutes", "ttl_minutes"))
     stale_order_action: Literal["cancel_and_reprice", "leave_working", "fail_closed"] = "cancel_and_reprice"
     repricing: StrategyOrderRepricingPolicy = Field(default_factory=StrategyOrderRepricingPolicy)
@@ -74,7 +72,7 @@ class StrategyOrderLifecyclePolicy(ExecutionConfigModel):
         return self
 
 
-class StrategyExecutionPolicy(ExecutionConfigModel):
+class StrategyExecutionPolicy(DomainModel):
     approval: Literal["auto", "manual"] = Field(validation_alias=AliasChoices("approval", "approval_mode"))
     mode: Literal["paper", "live", "shadow"]
     runtime: Literal["alpaca_direct"] = "alpaca_direct"

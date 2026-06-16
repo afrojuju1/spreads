@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import build_issuer_id
 from core.services.company_valuation.ingestion.submission_history import (
     filter_submission_filing_payloads,
@@ -17,8 +17,7 @@ from core.services.company_valuation.sec_client import SecEdgarClient, SecReques
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
-@dataclass(frozen=True)
-class SecInsidersIngestionRequest:
+class SecInsidersIngestionRequest(CompanyValuationContractModel):
     cik: str | None = None
     ticker: str | None = None
     since: datetime | None = None
@@ -26,8 +25,7 @@ class SecInsidersIngestionRequest:
     forms: tuple[str, ...] = ("3", "4", "5")
 
 
-@dataclass(frozen=True)
-class SecInsidersIngestionResult:
+class SecInsidersIngestionResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
@@ -38,10 +36,7 @@ class SecInsidersIngestionResult:
     filings_persisted: int = 0
     owners_persisted: int = 0
     transactions_persisted: int = 0
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def _resolve_request_cik(

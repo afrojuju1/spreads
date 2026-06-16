@@ -3,14 +3,15 @@ from __future__ import annotations
 import json
 import shutil
 from collections import Counter
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
+from pydantic import Field
 
 from core.value_coercion import coerce_float
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.company_valuation.evaluation import (
     COMPANY_VALUATION_FEATURE_VERSION,
@@ -31,8 +32,7 @@ DEFAULT_RESEARCH_TEMPLATE_IDS = (
 PERIODIC_RESEARCH_FORMS = {"10-K", "10-Q"}
 
 
-@dataclass(frozen=True)
-class CompanyValuationResearchExportRequest:
+class CompanyValuationResearchExportRequest(CompanyValuationContractModel):
     years: int = 10
     end_as_of: datetime | None = None
     template_ids: tuple[str, ...] = DEFAULT_RESEARCH_TEMPLATE_IDS
@@ -45,8 +45,7 @@ class CompanyValuationResearchExportRequest:
     periodic_forms: tuple[str, ...] = ("10-K", "10-Q")
 
 
-@dataclass(frozen=True)
-class CompanyValuationResearchExportResult:
+class CompanyValuationResearchExportResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
@@ -58,12 +57,9 @@ class CompanyValuationResearchExportResult:
     row_count: int
     issuers_considered: int
     issuers_exported: int
-    template_counts: dict[str, int] = field(default_factory=dict)
+    template_counts: dict[str, int] = Field(default_factory=dict)
     errors: tuple[str, ...] = ()
     manifest_path: str | None = None
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def _normalized_templates(values: tuple[str, ...] | None) -> tuple[str, ...]:

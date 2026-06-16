@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from core.model_contracts import DomainModel
 
 
-class EquityOrderRequest(BaseModel):
+class EquityOrderRequest(DomainModel):
     symbol: str = Field(min_length=1, max_length=12)
     side: Literal["buy", "sell"]
     quantity: int = Field(ge=1, le=100_000)

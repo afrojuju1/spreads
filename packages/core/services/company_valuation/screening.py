@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from collections.abc import Callable
 from typing import Any
 
 from core.common import clamp
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.evaluation import recompute_company_valuation
 from core.services.company_valuation.ids import normalize_ticker
 from core.services.company_valuation.taxonomy import (
@@ -19,15 +19,11 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_datetime
 
 
-@dataclass(frozen=True)
-class CompanyValuationScreenMaterializationResult:
+class CompanyValuationScreenMaterializationResult(CompanyValuationContractModel):
     as_of: datetime
     issuers_considered: int
     issuers_recomputed: int
     rows_ranked: int
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def _normalized_as_of(value: str | datetime | None) -> datetime:

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import normalize_ticker
 from core.services.company_valuation.taxonomy import supported_company_valuation_tickers
 from core.services.company_valuation.templates import (
@@ -13,8 +12,7 @@ from core.services.company_valuation.templates import (
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
-@dataclass(frozen=True)
-class CompanyValuationTemplateAssignmentRefreshRequest:
+class CompanyValuationTemplateAssignmentRefreshRequest(CompanyValuationContractModel):
     tickers: tuple[str, ...] | None = None
     ciks: tuple[str, ...] | None = None
     issuer_ids: tuple[str, ...] | None = None
@@ -25,8 +23,7 @@ class CompanyValuationTemplateAssignmentRefreshRequest:
     config_root: str | None = None
 
 
-@dataclass(frozen=True)
-class CompanyValuationTemplateAssignmentRefreshSample:
+class CompanyValuationTemplateAssignmentRefreshSample(CompanyValuationContractModel):
     issuer_id: str
     cik: str
     ticker: str | None
@@ -38,12 +35,8 @@ class CompanyValuationTemplateAssignmentRefreshSample:
     previous_stressed_operator_flag: bool
     next_stressed_operator_flag: bool
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationTemplateAssignmentRefreshResult:
+class CompanyValuationTemplateAssignmentRefreshResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
@@ -54,11 +47,6 @@ class CompanyValuationTemplateAssignmentRefreshResult:
     errors: tuple[str, ...] = ()
     samples: tuple[CompanyValuationTemplateAssignmentRefreshSample, ...] = ()
     notes: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["samples"] = [row.to_payload() for row in self.samples]
-        return payload
 
 
 def _heartbeat(heartbeat: Callable[[], None] | None) -> None:

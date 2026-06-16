@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from core.common import parse_float
 from core.services.alpaca import create_alpaca_client_from_env
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.ids import build_market_snapshot_id
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_datetime
@@ -70,15 +70,13 @@ def _resolve_price(snapshot: dict[str, Any]) -> tuple[float | None, datetime | N
     return (None, None)
 
 
-@dataclass(frozen=True)
-class MarketInputsIngestionRequest:
+class MarketInputsIngestionRequest(CompanyValuationContractModel):
     ticker: str | None = None
     issuer_id: str | None = None
     stock_feed: str = "iex"
 
 
-@dataclass(frozen=True)
-class MarketInputsIngestionResult:
+class MarketInputsIngestionResult(CompanyValuationContractModel):
     status: str
     source: str
     started_at: datetime
@@ -87,10 +85,7 @@ class MarketInputsIngestionResult:
     ticker: str | None = None
     snapshots_persisted: int = 0
     price: float | None = None
-    notes: tuple[str, ...] = field(default_factory=tuple)
-
-    def to_payload(self) -> dict[str, object]:
-        return asdict(self)
+    notes: tuple[str, ...] = ()
 
 
 def ingest_market_inputs(

@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field
+
 from core.services.company_valuation.contracts import (
+    CompanyValuationContractModel,
     CompanyValuationOverlayRule,
     CompanyValuationTaxonomyResolution,
 )
@@ -37,8 +39,7 @@ TAXONOMY_LEVEL_ORDER = {
 }
 
 
-@dataclass(frozen=True)
-class CompanyValuationTaxonomySyncRequest:
+class CompanyValuationTaxonomySyncRequest(CompanyValuationContractModel):
     tickers: tuple[str, ...] | None = None
     ciks: tuple[str, ...] | None = None
     issuer_ids: tuple[str, ...] | None = None
@@ -49,8 +50,7 @@ class CompanyValuationTaxonomySyncRequest:
     output_root: str | None = None
 
 
-@dataclass(frozen=True)
-class CompanyValuationTaxonomySyncSample:
+class CompanyValuationTaxonomySyncSample(CompanyValuationContractModel):
     issuer_id: str
     cik: str
     ticker: str | None
@@ -67,14 +67,10 @@ class CompanyValuationTaxonomySyncSample:
     support_tier: str | None = None
     expected_template_id: str | None = None
     expected_template_match: bool | None = None
-    overlay_flags: dict[str, bool] = field(default_factory=dict)
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
+    overlay_flags: dict[str, bool] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class CompanyValuationTaxonomySyncResult:
+class CompanyValuationTaxonomySyncResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
@@ -91,10 +87,10 @@ class CompanyValuationTaxonomySyncResult:
     expected_template_mismatch_count: int
     taxonomy_override_count: int
     current_template_override_count: int
-    classification_source_counts: dict[str, int] = field(default_factory=dict)
-    support_status_counts: dict[str, int] = field(default_factory=dict)
-    template_mismatch_pair_counts: dict[str, int] = field(default_factory=dict)
-    overlay_true_counts: dict[str, int] = field(default_factory=dict)
+    classification_source_counts: dict[str, int] = Field(default_factory=dict)
+    support_status_counts: dict[str, int] = Field(default_factory=dict)
+    template_mismatch_pair_counts: dict[str, int] = Field(default_factory=dict)
+    overlay_true_counts: dict[str, int] = Field(default_factory=dict)
     mismatch_samples: tuple[CompanyValuationTaxonomySyncSample, ...] = ()
     unclassified_samples: tuple[CompanyValuationTaxonomySyncSample, ...] = ()
     output_root: str | None = None
@@ -103,14 +99,6 @@ class CompanyValuationTaxonomySyncResult:
     mismatch_report_path: str | None = None
     unclassified_report_path: str | None = None
     notes: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["mismatch_samples"] = [row.to_payload() for row in self.mismatch_samples]
-        payload["unclassified_samples"] = [
-            row.to_payload() for row in self.unclassified_samples
-        ]
-        return payload
 
 
 def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
@@ -396,9 +384,8 @@ def _write_report_artifacts(
     markdown_path = output_root / "summary.md"
     mismatch_report_path = output_root / "mismatch_rows.jsonl"
     unclassified_report_path = output_root / "unclassified_rows.jsonl"
-    enriched_result = CompanyValuationTaxonomySyncResult(
-        **{
-            **result.__dict__,
+    enriched_result = result.model_copy(
+        update={
             "output_root": str(output_root),
             "manifest_path": str(manifest_path),
             "markdown_path": str(markdown_path),

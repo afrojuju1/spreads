@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from core.domain.profiles import (
     PROFILE_CONFIGS,
@@ -14,6 +14,7 @@ from core.domain.profiles import (
     resolve_strategy_profile_override,
 )
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
+from core.model_contracts import DomainModel
 from core.integrations.calendar_events import classify_underlying_type
 from core.services.option_structures import normalize_strategy_family
 from core.services.payload_validation import normalize_optional_text
@@ -106,9 +107,7 @@ def _default_data_base_url() -> str:
     return os.environ.get("ALPACA_DATA_BASE_URL", DEFAULT_DATA_BASE_URL)
 
 
-class CandidateBuildParameters(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class CandidateBuildParameters(DomainModel):
     symbol: str | None = None
     symbols: tuple[str, ...] = ()
     candidate_builder_key: str = "call_credit"

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from collections.abc import Callable
 from typing import Any
 
+from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.evaluation import recompute_company_valuation
 from core.services.company_valuation.ingestion.market_inputs import (
     MarketInputsIngestionRequest,
@@ -32,10 +32,10 @@ from core.services.company_valuation.ingestion.treasury import (
 )
 from core.services.company_valuation.screening import materialize_company_valuation_screen
 from core.storage.company_valuation_repository import CompanyValuationRepository
+from core.value_coercion import normalize_symbol
 
 
-@dataclass(frozen=True)
-class CompanyValuationBootstrapTickerResult:
+class CompanyValuationBootstrapTickerResult(CompanyValuationContractModel):
     ticker: str
     filings: dict[str, Any] | None = None
     insiders: dict[str, Any] | None = None
@@ -44,12 +44,8 @@ class CompanyValuationBootstrapTickerResult:
     recompute: dict[str, Any] | None = None
     error: str | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationBootstrapRequest:
+class CompanyValuationBootstrapRequest(CompanyValuationContractModel):
     tickers: tuple[str, ...]
     as_of: datetime | None = None
     bootstrap_universe: bool = False
@@ -70,8 +66,7 @@ class CompanyValuationBootstrapRequest:
     config_root: str | None = None
 
 
-@dataclass(frozen=True)
-class CompanyValuationBootstrapResult:
+class CompanyValuationBootstrapResult(CompanyValuationContractModel):
     status: str
     started_at: datetime
     completed_at: datetime
@@ -82,14 +77,9 @@ class CompanyValuationBootstrapResult:
     screening: dict[str, Any] | None = None
     errors: tuple[str, ...] = ()
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["ticker_results"] = [row.to_payload() for row in self.ticker_results]
-        return payload
-
 
 def _normalized_tickers(values: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(str(value).upper().strip() for value in values if str(value or "").strip()))
+    return tuple(dict.fromkeys(symbol for value in values if (symbol := normalize_symbol(value)) is not None))
 
 
 def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
