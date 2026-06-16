@@ -770,8 +770,9 @@ class EngineFactRepository(RepositoryBase):
         self,
         *,
         decision_states: list[str] | None = None,
-        trading_strategy_id: str | None = None,
+        trading_strategy_ids: list[str] | None = None,
         routine: str | None = None,
+        session_date: str | date | None = None,
         as_of: str | None = None,
         limit: int = 100,
     ) -> list[StorageRow]:
@@ -781,10 +782,12 @@ class EngineFactRepository(RepositoryBase):
         )
         if decision_states:
             statement = statement.where(TradeDecisionModel.decision_state.in_(decision_states))
-        if trading_strategy_id is not None:
-            statement = statement.where(TradeDecisionModel.trading_strategy_id == trading_strategy_id)
+        if trading_strategy_ids:
+            statement = statement.where(TradeDecisionModel.trading_strategy_id.in_(trading_strategy_ids))
         if routine is not None:
             statement = statement.where(TradeDecisionModel.routine == routine)
+        if session_date is not None:
+            statement = statement.where(TradeSignalModel.session_date == parse_date(session_date))
         if as_of_dt is not None:
             statement = statement.where(or_(TradeSignalModel.expires_at.is_(None), TradeSignalModel.expires_at > as_of_dt))
         statement = statement.order_by(

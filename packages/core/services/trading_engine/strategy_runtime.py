@@ -24,6 +24,7 @@ from core.services.candidate_fields import (
 )
 from core.services.runtime_policy import resolve_runtime_policy_fields
 from core.services.risk_manager import (
+    build_allocation_plan_snapshot,
     build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,
     build_portfolio_admission_snapshot,
@@ -44,7 +45,7 @@ from core.services.trading_engine.entry_selection import EntrySelectionEngine, c
 from core.services.trading_engine.facts import entry_trade_signal_id, persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
-from core.services.trading_strategies import routine_should_run_now
+from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_observation_runtime, resolve_entry_runtime
 from core.value_coercion import unique_text_list, utc_expiry_iso, utc_now, utc_now_iso as _utc_now
 
@@ -79,24 +80,26 @@ def _positive_int(value: Any, *, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-def _portfolio_admission_policy(
+def _portfolio_admission_policy_for_strategy(
     *,
-    runtime: EntryRuntime,
+    strategy: Any,
+    trading_strategy_id: str,
+    trade_structure: str,
     position_size_policy: dict[str, Any],
 ) -> dict[str, Any]:
-    portfolio_limits = getattr(getattr(runtime.strategy, "risk_limits", None), "portfolio_admission", None)
+    portfolio_limits = getattr(getattr(strategy, "risk_limits", None), "portfolio_admission", None)
     if portfolio_limits is not None and bool(getattr(portfolio_limits, "configured", False)):
         return portfolio_limits.as_policy(
-            trading_strategy_id=runtime.trading_strategy_id,
-            strategy_family=runtime.trade_structure,
+            trading_strategy_id=trading_strategy_id,
+            strategy_family=trade_structure,
         )
 
-    is_long_call = runtime.trade_structure == "long_call"
+    is_long_call = trade_structure == "long_call"
     default_strategy_cap = 10 if is_long_call else 2
     default_family_cap = 10 if is_long_call else 2
-    strategy_cap = _positive_int(runtime.strategy.max_open_positions, default=default_strategy_cap)
+    strategy_cap = _positive_int(strategy.max_open_positions, default=default_strategy_cap)
     daily_cap = _positive_int(
-        runtime.strategy.max_new_entries_per_day or runtime.strategy.max_daily_actions,
+        strategy.max_new_entries_per_day or strategy.max_daily_actions,
         default=strategy_cap,
     )
     max_risk_per_trade = position_size_policy.get("max_risk_per_trade")
@@ -104,8 +107,8 @@ def _portfolio_admission_policy(
     if max_risk_per_trade is not None:
         max_total_strategy_risk = round(float(max_risk_per_trade) * strategy_cap, 2)
     return {
-        "trading_strategy_id": runtime.trading_strategy_id,
-        "strategy_family": runtime.trade_structure,
+        "trading_strategy_id": trading_strategy_id,
+        "strategy_family": trade_structure,
         "policy_source": "runtime_fallback",
         "max_strategy_open_positions": strategy_cap,
         "max_family_open_positions": max(default_family_cap, min(strategy_cap, default_family_cap)),
@@ -114,6 +117,18 @@ def _portfolio_admission_policy(
         "max_total_strategy_risk": max_total_strategy_risk,
         "max_correlated_group_open_positions": 6 if is_long_call else 3,
     }
+
+
+def _allocation_portfolio_policies() -> dict[str, dict[str, Any]]:
+    policies: dict[str, dict[str, Any]] = {}
+    for strategy in load_active_trading_strategies().values():
+        policies[strategy.trading_strategy_id] = _portfolio_admission_policy_for_strategy(
+            strategy=strategy,
+            trading_strategy_id=strategy.trading_strategy_id,
+            trade_structure=strategy.trade_structure,
+            position_size_policy=resolve_position_size_policy(strategy.risk_defaults),
+        )
+    return policies
 
 
 def _entry_candidate_limit(runtime: EntryRuntime) -> int:
@@ -784,8 +799,10 @@ def _refresh_entry_runtime_signals(
 
 def _selected_execution_admission(
     *,
+    engine_facts: Any,
     execution_store: Any,
     runtime: Any,
+    decision: dict[str, Any],
     signal: dict[str, Any],
     market_date: str,
 ) -> dict[str, Any]:
@@ -796,18 +813,36 @@ def _selected_execution_admission(
         signal_order_payload.get("qty") or signal_order_payload.get("quantity") or signal_execution_shape.get("quantity"),
         default=1,
     )
+    portfolio_policies = _allocation_portfolio_policies()
+    current_policy = portfolio_policies.get(runtime.trading_strategy_id) or _portfolio_admission_policy_for_strategy(
+        strategy=runtime.strategy,
+        trading_strategy_id=runtime.trading_strategy_id,
+        trade_structure=runtime.trade_structure,
+        position_size_policy=position_size_policy,
+    )
+    allocation_plan = build_allocation_plan_snapshot(
+        engine_facts=engine_facts,
+        execution_store=execution_store,
+        selected_decision=decision,
+        selected_signal=signal,
+        trading_strategy_id=runtime.trading_strategy_id,
+        strategy_family=runtime.trade_structure,
+        session_date=market_date,
+        active_strategy_ids=tuple(sorted({*portfolio_policies, runtime.trading_strategy_id})),
+        portfolio_policies=portfolio_policies,
+        quantity=quantity,
+        limit_price=None,
+    )
     portfolio_admission = build_portfolio_admission_snapshot(
         execution_store=execution_store,
         candidate=signal,
         trading_strategy_id=runtime.trading_strategy_id,
         strategy_family=runtime.trade_structure,
         session_date=market_date,
-        policy=_portfolio_admission_policy(
-            runtime=runtime,
-            position_size_policy=position_size_policy,
-        ),
+        policy=current_policy,
         quantity=quantity,
         limit_price=None,
+        allocation_plan=allocation_plan,
     )
     portfolio_status = str(portfolio_admission.get("status") or "").lower()
     if portfolio_status not in {"admissible", "approved", "ok", "pass", "passed"}:
@@ -1032,8 +1067,10 @@ def _run_trading_strategy_entry(
         if trade_decision_state != "selected":
             continue
         selected_execution_admission = _selected_execution_admission(
+            engine_facts=engine_facts,
             execution_store=execution_store,
             runtime=runtime,
+            decision=decision,
             signal=signal,
             market_date=resolved_market_date,
         )

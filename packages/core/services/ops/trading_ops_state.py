@@ -1069,6 +1069,10 @@ def _latest_flow_facts(
 def _portfolio_admission_state(row: TradeAdmissionModel) -> dict[str, Any]:
     evidence = as_mapping(row.evidence_json)
     portfolio_admission = as_mapping(evidence.get("portfolio_admission"))
+    allocation_plan = as_mapping(portfolio_admission.get("allocation_plan")) or as_mapping(as_mapping(portfolio_admission.get("evidence")).get("allocation_plan"))
+    allocation_decision = as_mapping(as_mapping(portfolio_admission.get("evidence")).get("allocation_decision")) or as_mapping(
+        allocation_plan.get("current_decision")
+    )
     status = as_text(evidence.get("portfolio_admission_status")) or as_text(portfolio_admission.get("status")) or "not_evaluated"
     reason = as_text(evidence.get("portfolio_admission_reason")) or as_text(portfolio_admission.get("reason"))
     return {
@@ -1080,6 +1084,8 @@ def _portfolio_admission_state(row: TradeAdmissionModel) -> dict[str, Any]:
         "decided_at": utc_iso(row.decided_at),
         "policy": as_mapping(portfolio_admission.get("policy")),
         "metrics": as_mapping(portfolio_admission.get("metrics")),
+        "allocation_plan": allocation_plan,
+        "allocation_decision": allocation_decision,
         "blockers": as_list(portfolio_admission.get("blockers")),
         "reason_codes": as_list(portfolio_admission.get("reason_codes")),
     }

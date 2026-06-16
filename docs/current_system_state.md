@@ -192,7 +192,7 @@ Current default-enabled strategies:
 
 `momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, applies `entry.quality_profile: momentum_long_call_v1`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
 
-`short_dated_index_call_credit` is the first deliberately enabled non-long-call paper proof family. It consumes the static `liquid_index_etfs` source, applies `entry.quality_profile: call_credit_spread_v1`, and remains subject to portfolio admission plus execution-submit structure guards before any Alpaca paper submission.
+`short_dated_index_call_credit` is the first deliberately enabled non-long-call paper proof family. It consumes the static `liquid_index_etfs` source, applies `entry.quality_profile: call_credit_spread_v1`, and remains subject to AllocationPlan, portfolio admission, and execution-submit structure guards before any Alpaca paper submission.
 
 `short_dated_index_put_credit` and `short_dated_index_iron_condor` consume the same `liquid_index_etfs` source and run defined-risk index premium strategies through `put_credit_spread_v1` and `iron_condor_v1`.
 
@@ -224,19 +224,19 @@ Config keeps three concerns separate:
 - `activation.paused`: operator/runtime pause state for an otherwise active strategy.
 - `execution.mode`: `shadow`, `paper`, or `live` execution posture for the canonical lifecycle.
 
-An active shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. An active paper strategy may submit only when its execution posture, observed broker environment, approval mode, portfolio admission, execution admission, and risk gates all allow it. Live mode is reserved for an explicitly approved live-money rollout using the same lifecycle plus live deployment guards.
+An active shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. An active paper strategy may submit only when its execution posture, observed broker environment, approval mode, AllocationPlan, portfolio admission, execution admission, and risk gates all allow it. Live mode is reserved for an explicitly approved live-money rollout using the same lifecycle plus live deployment guards.
 
 For non-long-call families, the required gate order is:
 
 ```text
-quality profile -> account-agnostic selection -> portfolio admission -> execution admission -> queued broker submission
+quality profile -> account-agnostic selection -> AllocationPlan -> portfolio admission -> execution admission -> queued broker submission
 ```
 
-`quality profile` proves the candidate is structurally and economically worth considering for that family. `selection` chooses the best account-agnostic idea. `portfolio admission` decides whether the account should add this exposure now. `execution admission` validates broker-submission readiness, including leg shape, net debit/credit sign, quote freshness, and adapter support. Broker submission remains behind `execution_intent_dispatch` and `execution_submit`.
+`quality profile` proves the candidate is structurally and economically worth considering for that family. `selection` chooses the best account-agnostic idea per strategy. `AllocationPlan` ranks observed same-day selected decisions across active strategies under capital, buying power, strategy budgets, duplicate/correlation exposure, active intents/attempts, open positions, and schedule evidence. `portfolio admission` consumes the plan decision and persists the allocation evidence alongside cap checks. `execution admission` validates broker-submission readiness, including leg shape, net debit/credit sign, quote freshness, and adapter support. Broker submission remains behind `execution_intent_dispatch` and `execution_submit`.
 
-Portfolio admission is evaluated after a selected natural entry decision and before pending intent creation. It reads current portfolio positions, open entry attempts, and active entry intents, then persists a `portfolio_admission` sub-payload on the trade admission alongside `capacity_admission` and deferred `execution_readiness`. The policy blocks duplicate symbol/family exposure, strategy and family caps, daily new-entry caps, correlated broad-index ETF crowding, and total strategy max-loss exposure when the strategy exposes a computable risk budget. Active strategies must declare these caps under `risk.limits.portfolio_admission`; runtime fallback defaults exist only for older configs and must not be used to justify enabling a second non-long-call family. `TradingOpsState` projects the resolved strategy risk config and portfolio admission state separately under each trading flow, and summarizes portfolio block counts/reasons separately from quality blockers and execution-submit guards.
+Portfolio admission is evaluated after AllocationPlan selects a natural entry decision and before pending intent creation. It reads current portfolio positions, open entry attempts, active entry intents, and the current allocation decision, then persists a `portfolio_admission` sub-payload on the trade admission alongside `capacity_admission`, `allocation_plan`, and deferred `execution_readiness`. The policy blocks duplicate symbol/family exposure, strategy and family caps, daily new-entry caps, correlated broad-index ETF crowding, and total strategy max-loss exposure when the strategy exposes a computable risk budget. Active strategies must declare these caps under `risk.limits.portfolio_admission`; runtime fallback defaults exist only for older configs and must not be used to justify enabling a second non-long-call family. `TradingOpsState` projects the resolved strategy risk config, allocation decision, and portfolio admission state separately under each trading flow, and summarizes portfolio block counts/reasons separately from quality blockers and execution-submit guards.
 
-Shadow and paper are distinct activation modes. A shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. A paper strategy may submit only when its execution posture, observed broker environment, approval mode, portfolio admission, execution admission, and risk gates all allow it. Do not use disabled strategy breadth as a hidden auto-allocator.
+Shadow and paper are distinct activation modes. A shadow strategy may persist analysis-only evidence, but it must not produce selected entry decisions or execution intents. A paper strategy may submit only when its execution posture, observed broker environment, approval mode, AllocationPlan, portfolio admission, execution admission, and risk gates all allow it. Do not use disabled strategy breadth as a hidden auto-allocator.
 
 ## Paper Execution Contract
 
@@ -299,7 +299,7 @@ Legacy posture flags are not active config. Execution decisions must use `execut
 
 Strategy entry follows the current Spreads-owned lifecycle spine:
 
-`DataEngine -> engine facts/read models -> StrategyEngine -> RiskEngine -> ExecutionEngine -> PortfolioEngine -> Ops projections`.
+`DataEngine -> engine facts/read models -> StrategyEngine -> AllocationPlan -> RiskEngine -> ExecutionEngine -> PortfolioEngine -> Ops projections`.
 
 The active entry owner is `PostgresStrategyEngine` in `services/trading_engine/strategy_runtime.py`. It resolves tickers through DataEngine, builds candidates once, delegates account-agnostic quality and selection to `EntrySelectionEngine`, plans trade decisions, runs admission, and creates execution intents.
 
@@ -310,7 +310,7 @@ Current entry selection runtime:
 - Candidate diagnostics enrich `underlying_setup` with SPY/QQQ relative-strength and broad-market regime facts from lightweight underlying benchmark slices. Sector ETF comparison is intentionally deferred until sector mapping exists cleanly.
 - `EntryQualityPipeline` resolves configured quality-profile thresholds and operator overrides, evaluates pre-selection quality for candidate filtering, and evaluates post-selection readiness only after live signal fields exist.
 - `EntrySelectionEngine` owns quality analysis, candidate quality filtering, live signal selection, and selected/monitored/rejected candidate output. It does not inspect account buying power, broker positions, or execution runtime state.
-- Entry admission in `services/risk_manager.py` is the first account-aware boundary. It emits stable `capacity_admission`, `execution_readiness`, `reason_codes`, and `blockers` evidence; final execution readiness is explicitly deferred to the execution submit path.
+- Allocation and entry admission in `services/risk_manager.py` are the first account-aware boundaries. Allocation ranks observed selected decisions across active strategies, then admission emits stable `allocation_plan`, `portfolio_admission`, `capacity_admission`, `execution_readiness`, `reason_codes`, and `blockers` evidence; final execution readiness is explicitly deferred to the execution submit path.
 
 The quality pipeline does not rebuild candidates, fetch market data, or own execution admission.
 

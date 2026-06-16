@@ -244,6 +244,7 @@ Required non-long-call gate order:
 ```text
 quality profile
   -> account-agnostic selection
+  -> AllocationPlan
   -> portfolio admission
   -> execution admission
   -> queued broker submission
