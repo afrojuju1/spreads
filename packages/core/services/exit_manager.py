@@ -9,7 +9,7 @@ from core.services.admission_lifecycle import admission_allows_attempt
 from core.services.execution_intents.position_close import issue_close_execution_intent
 from core.services.trading_strategy_runtime import resolve_management_runtimes
 from core.services.trading_engine.exit_runtime import (
-    PostgresExitEngine,
+    ExitEngine,
     attach_close_decision_intent,
     blocked_close_decision_projection,
     build_exit_run_ref,
@@ -20,7 +20,7 @@ from core.services.trading_engine.exit_runtime import (
     persist_close_intent_admission,
 )
 from core.services.trading_engine.portfolio_runtime import (
-    PostgresPortfolioEngine,
+    PortfolioEngine,
     build_position_snapshot,
 )
 from core.services.trading_engine.risk_runtime import (
@@ -178,10 +178,10 @@ def run_trading_strategy_manage(
     broker_sync = _broker_sync_snapshot(storage, now=now)
     management_runtimes = tuple(resolve_management_runtimes())
     engine_facts = getattr(storage, "engine_facts", None)
-    portfolio_engine = PostgresPortfolioEngine(
+    portfolio_engine = PortfolioEngine(
         execution_store=execution_store,
     )
-    exit_engine = PostgresExitEngine(
+    exit_engine = ExitEngine(
         execution_store=execution_store,
         engine_facts=engine_facts,
         now=now,

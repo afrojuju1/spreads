@@ -61,7 +61,7 @@ def entry_engine_strategy_run_id(run_id: str, trading_strategy_id: str) -> str:
     return f"strategy_run:{run_id}:{trading_strategy_id}:entry"
 
 
-class PostgresDataEngine:
+class DataEngine:
     def __init__(self, context: EngineContext) -> None:
         self.context = context
 
@@ -337,7 +337,7 @@ class PostgresDataEngine:
 
 
 __all__ = [
-    "PostgresDataEngine",
+    "DataEngine",
     "entry_engine_label",
     "entry_engine_strategy_run_id",
     "entry_runtime_with_symbols",

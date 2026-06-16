@@ -356,7 +356,7 @@ def describe_position_exit_state(
     }
 
 
-class PostgresExitEngine:
+class ExitEngine:
     def __init__(
         self,
         *,
@@ -543,7 +543,7 @@ def persist_close_intent_admission(
 
 
 __all__ = [
-    "PostgresExitEngine",
+    "ExitEngine",
     "blocked_close_decision_projection",
     "build_blocked_close_decision",
     "build_exit_run_ref",

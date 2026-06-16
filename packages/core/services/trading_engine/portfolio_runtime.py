@@ -22,7 +22,7 @@ def build_position_snapshot(position: Mapping[str, Any]) -> PositionSnapshot:
     )
 
 
-class PostgresPortfolioEngine:
+class PortfolioEngine:
     def __init__(
         self,
         *,
@@ -46,6 +46,6 @@ class PostgresPortfolioEngine:
 
 __all__ = [
     "OPEN_POSITION_STATUSES",
-    "PostgresPortfolioEngine",
+    "PortfolioEngine",
     "build_position_snapshot",
 ]

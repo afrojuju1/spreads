@@ -3,9 +3,8 @@
 This package names the engine roles first; runtime wiring moves here bead by bead.
 """
 
-from .data import DataEngine
 from .capture_targets import refresh_engine_capture_targets
-from .data_runtime import PostgresDataEngine
+from .data_runtime import DataEngine
 from .entry_quality import (
     ENTRY_QUALITY_PROFILE_REGISTRY,
     MOMENTUM_LONG_CALL_PROFILE_ID,
@@ -43,13 +42,9 @@ from .feature_snapshots import (
     register_feature_snapshot_builder,
     resolve_feature_snapshot_builder,
 )
-from .execution import ExecutionEngine
-from .exit_runtime import PostgresExitEngine
+from .exit_runtime import ExitEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
-from .portfolio import PortfolioEngine
-from .portfolio_runtime import PostgresPortfolioEngine
-from .risk import RiskEngine
-from .strategy import StrategyEngine
+from .portfolio_runtime import PortfolioEngine
 
 __all__ = [
     "DataEngine",
@@ -68,7 +63,6 @@ __all__ = [
     "EntryQualityWaterfall",
     "EntrySelectionEngine",
     "EntrySelectionResult",
-    "ExecutionEngine",
     "FEATURE_SNAPSHOT_BUILDER_REGISTRY",
     "FeatureSnapshot",
     "FeatureSnapshotBuilder",
@@ -82,11 +76,7 @@ __all__ = [
     "POST_SELECTION_ENTRY_QUALITY_STAGES",
     "PRE_SELECTION_ENTRY_QUALITY_STAGES",
     "PortfolioEngine",
-    "PostgresDataEngine",
-    "PostgresExitEngine",
-    "PostgresPortfolioEngine",
-    "RiskEngine",
-    "StrategyEngine",
+    "ExitEngine",
     "build_entry_quality_analysis",
     "build_feature_snapshots_for_strategy",
     "build_momentum_long_call_feature_snapshots",

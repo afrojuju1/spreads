@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from .kernel import EngineEvidence, EnginePayload, EngineSummary, EngineRunRef
 
 if TYPE_CHECKING:
-    from core.services.trading_engine.entry_quality import FeatureSnapshot
     from core.services.trading_strategy_runtime_models import EntryRuntime
 
 
@@ -78,31 +77,3 @@ class CaptureTargetDeclaration:
     request_count: int
     target_counts: Mapping[str, int] = field(default_factory=dict)
     reason: str | None = None
-
-
-class DataEngine(Protocol):
-    def resolve_tickers(
-        self,
-        *,
-        source: TickerSourceSpec,
-        as_of: datetime,
-    ) -> ResolvedTickerSet: ...
-
-    def build_trade_candidates(
-        self,
-        request: CandidateBuildRequest,
-    ) -> CandidateBuildResult: ...
-
-    def build_feature_snapshots(
-        self,
-        *,
-        trade_structure: str,
-        quality_profile_id: str,
-        ticker_set: ResolvedTickerSet,
-        candidate_result: CandidateBuildResult,
-    ) -> tuple[FeatureSnapshot, ...]: ...
-
-    def declare_capture_targets(
-        self,
-        requests: Sequence[CaptureTargetRequest],
-    ) -> CaptureTargetDeclaration: ...

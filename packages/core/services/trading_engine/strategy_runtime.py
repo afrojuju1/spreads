@@ -34,7 +34,7 @@ from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
 from core.services.trading_engine.data import CandidateBuildRequest, ResolvedTickerSet
 from core.services.trading_engine.data_runtime import (
-    PostgresDataEngine,
+    DataEngine,
     entry_engine_label,
     entry_engine_strategy_run_id,
     entry_runtime_with_symbols,
@@ -593,7 +593,7 @@ def _refresh_entry_runtime_signals(
             "observation_only": observation_only,
         },
     )
-    data_engine = PostgresDataEngine(context)
+    data_engine = DataEngine(context)
     source_spec = ticker_source_spec_from_strategy_source(runtime.strategy.source)
     ticker_set = data_engine.resolve_tickers(
         source=source_spec,
@@ -1286,7 +1286,7 @@ def _run_trading_strategy_entry(
     }
 
 
-class PostgresStrategyEngine:
+class StrategyEngine:
     def __init__(self, context: EngineContext) -> None:
         self.context = context
 
@@ -1335,7 +1335,7 @@ def run_trading_strategy_entry(
         storage=storage,
         job_run_id=planner_job_run_id,
     )
-    result = PostgresStrategyEngine(context).run_entry(
+    result = StrategyEngine(context).run_entry(
         StrategyEntryRequest(
             run_ref=EngineRunRef(
                 role=EngineComponentRole.STRATEGY,
@@ -1371,4 +1371,4 @@ def run_trading_strategy_entry_observation(
     )
 
 
-__all__ = ["PostgresStrategyEngine", "run_trading_strategy_entry", "run_trading_strategy_entry_observation"]
+__all__ = ["StrategyEngine", "run_trading_strategy_entry", "run_trading_strategy_entry_observation"]
