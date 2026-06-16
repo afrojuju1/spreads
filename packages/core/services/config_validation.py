@@ -44,6 +44,9 @@ def _strategy_payload(strategy: TradingStrategyConfig) -> dict[str, Any]:
         "execution_runtime": strategy.execution.runtime,
         "approval_mode": strategy.execution.approval,
         "execution": strategy.execution.as_dict(),
+        "protection_model_id": strategy.protection.profile_id,
+        "protection_rule_count": len(strategy.protection.rules),
+        "protection_rules": sorted(strategy.protection.rules),
         "config_hash": strategy.config_hash,
     }
 

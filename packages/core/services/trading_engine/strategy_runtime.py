@@ -28,6 +28,7 @@ from core.services.risk_manager import (
     build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,
     build_portfolio_admission_snapshot,
+    build_protection_admission_snapshot,
     resolve_position_size_policy,
 )
 from core.services.runtime_policy import build_runtime_policy_ref
@@ -261,6 +262,7 @@ def _persist_trade_admission(
             "admissible_quantity": admission_snapshot.get("admissible_quantity"),
             "required_buying_power": admission_snapshot.get("required_buying_power"),
             "available_buying_power": admission_snapshot.get("available_buying_power"),
+            "protection_admission": dict(admission_snapshot.get("protection_admission") or {}),
             "portfolio_admission": dict(admission_snapshot.get("portfolio_admission") or {}),
         },
         evidence={
@@ -273,11 +275,14 @@ def _persist_trade_admission(
             "admission_boundary": admission_snapshot.get("admission_boundary"),
             "capacity_admission_kind": admission_snapshot.get("capacity_admission_kind"),
             "capacity_admission_status": admission_snapshot.get("capacity_admission_status"),
+            "protection_admission_status": admission_snapshot.get("protection_admission_status"),
+            "protection_admission_reason": admission_snapshot.get("protection_admission_reason"),
             "portfolio_admission_status": admission_snapshot.get("portfolio_admission_status"),
             "portfolio_admission_reason": admission_snapshot.get("portfolio_admission_reason"),
             "execution_readiness_status": admission_snapshot.get("execution_readiness_status"),
             "execution_readiness_reason": admission_snapshot.get("execution_readiness_reason"),
             "capacity_admission": dict(admission_snapshot.get("capacity_admission") or {}),
+            "protection_admission": dict(admission_snapshot.get("protection_admission") or {}),
             "portfolio_admission": dict(admission_snapshot.get("portfolio_admission") or {}),
             "execution_readiness": dict(admission_snapshot.get("execution_readiness") or {}),
             **_quality_evidence_summary(signal),
@@ -832,6 +837,31 @@ def _selected_execution_admission(
         quantity=quantity,
         limit_price=None,
     )
+    protection_admission = build_protection_admission_snapshot(
+        execution_store=execution_store,
+        candidate=signal,
+        trading_strategy_id=runtime.trading_strategy_id,
+        strategy_family=runtime.trade_structure,
+        session_date=market_date,
+        policy=runtime.strategy.protection.as_dict(),
+        quantity=quantity,
+        limit_price=None,
+        allocation_plan=allocation_plan,
+    )
+    protection_status = str(protection_admission.get("status") or "").lower()
+    if protection_status not in {"admissible", "approved", "ok", "pass", "passed"}:
+        return build_entry_capacity_admission_payload(
+            status="not_evaluated",
+            reason=None,
+            message=None,
+            evaluated_at=_utc_now(),
+            admissible_quantity=None,
+            required_buying_power=None,
+            available_buying_power=None,
+            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            protection_admission=protection_admission,
+        )
     portfolio_admission = build_portfolio_admission_snapshot(
         execution_store=execution_store,
         candidate=signal,
@@ -855,6 +885,7 @@ def _selected_execution_admission(
             available_buying_power=None,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            protection_admission=protection_admission,
             portfolio_admission=portfolio_admission,
         )
     try:
@@ -864,6 +895,7 @@ def _selected_execution_admission(
             limit_price=None,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            protection_admission=protection_admission,
             portfolio_admission=portfolio_admission,
         )
     except Exception as exc:
@@ -877,6 +909,7 @@ def _selected_execution_admission(
             available_buying_power=None,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+            protection_admission=protection_admission,
             portfolio_admission=portfolio_admission,
         )
 
@@ -936,6 +969,8 @@ def _run_trading_strategy_entry(
         "entry_run_mode": "observation" if observation_only else "natural",
         "validation_provenance": provenance,
         "observation_only": observation_only,
+        "protection_model_id": runtime.strategy.protection.profile_id,
+        "protection_rule_count": len(runtime.strategy.protection.rules),
     }
     candidate_generation = _refresh_entry_runtime_signals(
         db_target=db_target,

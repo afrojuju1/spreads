@@ -1097,11 +1097,31 @@ def _portfolio_admission_state(row: TradeAdmissionModel) -> dict[str, Any]:
     }
 
 
-def _latest_portfolio_admissions(
+def _protection_admission_state(row: TradeAdmissionModel) -> dict[str, Any]:
+    evidence = as_mapping(row.evidence_json)
+    protection_admission = as_mapping(evidence.get("protection_admission"))
+    status = as_text(evidence.get("protection_admission_status")) or as_text(protection_admission.get("status")) or "not_evaluated"
+    reason = as_text(evidence.get("protection_admission_reason")) or as_text(protection_admission.get("reason"))
+    return {
+        "status": status,
+        "reason": reason,
+        "message": as_text(protection_admission.get("message")),
+        "latest_admission_decision_id": row.admission_decision_id,
+        "admission_state": row.admission_state,
+        "decided_at": utc_iso(row.decided_at),
+        "policy": as_mapping(protection_admission.get("policy")),
+        "metrics": as_mapping(protection_admission.get("metrics")),
+        "blockers": as_list(protection_admission.get("blockers")),
+        "reason_codes": as_list(protection_admission.get("reason_codes")),
+    }
+
+
+def _latest_entry_admission_states(
     *,
     storage: Any,
     market_date: str,
     strategy_ids: set[str],
+    state_builder: Any,
 ) -> dict[str, dict[str, Any]]:
     if not strategy_ids or not storage.engine_facts.schema_ready():
         return {}
@@ -1125,11 +1145,46 @@ def _latest_portfolio_admissions(
         key = str(strategy_id)
         if key in latest:
             continue
-        state = _portfolio_admission_state(row)
+        state = state_builder(row)
         if state.get("status") == "not_evaluated" and not state.get("reason"):
             continue
         latest[key] = state
     return latest
+
+
+def _latest_portfolio_admissions(
+    *,
+    storage: Any,
+    market_date: str,
+    strategy_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    return _latest_entry_admission_states(
+        storage=storage,
+        market_date=market_date,
+        strategy_ids=strategy_ids,
+        state_builder=_portfolio_admission_state,
+    )
+
+
+def _latest_protection_admissions(
+    *,
+    storage: Any,
+    market_date: str,
+    strategy_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    return _latest_entry_admission_states(
+        storage=storage,
+        market_date=market_date,
+        strategy_ids=strategy_ids,
+        state_builder=_protection_admission_state,
+    )
+
+
+def _admission_flow_status(state: Mapping[str, Any]) -> str:
+    status = as_text(as_mapping(state).get("status"))
+    if status in {"blocked", "unknown"}:
+        return status
+    return "healthy"
 
 
 def _source_state(
@@ -1513,6 +1568,11 @@ def _build_trading_flows(
         market_date=market_date,
         strategy_ids={strategy.trading_strategy_id for strategy in strategies},
     )
+    latest_protection_admissions = _latest_protection_admissions(
+        storage=storage,
+        market_date=market_date,
+        strategy_ids={strategy.trading_strategy_id for strategy in strategies},
+    )
     flows: list[dict[str, Any]] = []
     for strategy in strategies:
         latest_source = latest_sources.get(strategy.source.ref)
@@ -1565,6 +1625,14 @@ def _build_trading_flows(
                 "message": "No selected entry has reached portfolio admission today.",
             },
         )
+        protection_admission = latest_protection_admissions.get(
+            strategy.trading_strategy_id,
+            {
+                "status": "not_evaluated",
+                "reason": "no_entry_admission_today",
+                "message": "No selected entry has reached protection admission today.",
+            },
+        )
         flows.append(
             {
                 "trading_strategy_id": strategy.trading_strategy_id,
@@ -1572,6 +1640,7 @@ def _build_trading_flows(
                 "trade_structure": strategy.trade_structure,
                 "enabled": strategy.enabled,
                 "runtime": strategy.runtime.as_dict(),
+                "protection": strategy.protection.as_dict(),
                 "execution": strategy.execution.as_dict(),
                 "execution_contract": execution_contract,
                 "source": strategy.source.as_dict(),
@@ -1598,6 +1667,7 @@ def _build_trading_flows(
                 "entry_posture": entry_posture,
                 "intent_state": intent_summary,
                 "position_state": position_summary,
+                "protection_admission": protection_admission,
                 "portfolio_admission": portfolio_admission,
                 "capacity": {
                     "open_position_count": position_summary.get("open_position_count"),
@@ -1605,11 +1675,13 @@ def _build_trading_flows(
                     "session_entry_count": used_entries,
                     "max_daily_entries": max_entries,
                     "remaining_daily_entries": remaining_entries,
+                    "protection_admission": protection_admission,
                     "portfolio_admission": portfolio_admission,
                 },
                 "status": _combine_statuses(
                     str(source_state.get("status") or "unknown"),
                     str(candidate_state.get("status") or "unknown"),
+                    _admission_flow_status(protection_admission),
                     str(intent_summary.get("status") or "unknown"),
                     str(position_summary.get("status") or "unknown"),
                     _execution_contract_status(execution_contract),
@@ -2511,8 +2583,16 @@ def build_trading_ops_state(
         for flow in flows.trading_flows
         if as_mapping(flow.get("portfolio_admission")).get("status") not in {None, "", "not_evaluated"}
     ]
+    protection_admission_states = [
+        as_mapping(flow.get("protection_admission"))
+        for flow in flows.trading_flows
+        if as_mapping(flow.get("protection_admission")).get("status") not in {None, "", "not_evaluated"}
+    ]
     portfolio_block_reasons = Counter(
         as_text(state.get("reason")) or "unknown" for state in portfolio_admission_states if as_text(state.get("status")) == "blocked"
+    )
+    protection_block_reasons = Counter(
+        as_text(state.get("reason")) or "unknown" for state in protection_admission_states if as_text(state.get("status")) == "blocked"
     )
     primary_flow = next(
         (flow for flow in flows.trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"),
@@ -2552,6 +2632,10 @@ def build_trading_ops_state(
         "open_position_count": len(positions.open_positions),
         "open_execution_count": len(execution.open_execution_attempts),
         "active_intent_count": active_intent_count,
+        "protection_admission_evaluated_strategy_count": len(protection_admission_states),
+        "protection_blocked_strategy_count": sum(1 for state in protection_admission_states if as_text(state.get("status")) == "blocked"),
+        "protection_unknown_strategy_count": sum(1 for state in protection_admission_states if as_text(state.get("status")) == "unknown"),
+        "protection_block_reasons": dict(sorted(protection_block_reasons.items())),
         "portfolio_admission_evaluated_strategy_count": len(portfolio_admission_states),
         "portfolio_blocked_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "blocked"),
         "portfolio_unknown_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "unknown"),
@@ -2606,6 +2690,17 @@ def build_trading_ops_state(
         "top_positions": positions.top_positions,
         "trading_flows": flows.trading_flows,
         "primary_trading_flow": primary_flow,
+        "protection_admission": {
+            "evaluated_strategy_count": len(protection_admission_states),
+            "blocked_strategy_count": sum(1 for state in protection_admission_states if as_text(state.get("status")) == "blocked"),
+            "unknown_strategy_count": sum(1 for state in protection_admission_states if as_text(state.get("status")) == "unknown"),
+            "block_reasons": dict(sorted(protection_block_reasons.items())),
+            "latest_by_strategy": {
+                str(flow.get("trading_strategy_id")): as_mapping(flow.get("protection_admission"))
+                for flow in flows.trading_flows
+                if as_mapping(flow.get("protection_admission")).get("status") not in {None, "", "not_evaluated"}
+            },
+        },
         "portfolio_admission": {
             "evaluated_strategy_count": len(portfolio_admission_states),
             "blocked_strategy_count": sum(1 for state in portfolio_admission_states if as_text(state.get("status")) == "blocked"),

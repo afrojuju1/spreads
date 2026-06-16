@@ -374,14 +374,54 @@ portfolio_models:
 
 protection_models:
   short_dated_default_protections:
+    rules:
+      account_emergency_stop:
+        enabled: true
+        halted: false
+      daily_drawdown_halt:
+        enabled: true
+        scope: account
+        max_realized_loss: 500
+        max_net_loss: 750
+      rolling_drawdown_halt:
+        enabled: true
+        scope: account
+        window_days: 5
+        max_realized_loss: 1500
+        max_net_loss: 2000
+      loss_streak_cooldown:
+        enabled: true
+        scope: strategy
+        max_consecutive_losses: 3
+        cooldown_minutes: 120
+      strategy_family_cooldown:
+        enabled: true
+        cooldown_minutes_after_entry: 0
+        cooldown_minutes_after_loss: 120
+      event_calendar_block:
+        enabled: true
+        blocked_dates: []
+        blocked_symbols: []
+        events: []
+      duplicate_underlying_theme_cap:
+        enabled: true
+        max_open_same_underlying: 1
+        max_open_same_theme: 4
+      options_exposure_scenario_cap:
+        enabled: true
+        max_open_option_contracts: 30
+        max_short_option_contracts: 30
+        max_total_max_loss: 250000
     runtime:
       extends: short_dated_default
   momentum_intraday_protections:
+    extends: short_dated_default_protections
     runtime:
       cancel_pending_entries_after_et: "15:30"
       flatten_positions_at_et: "15:45"
       paused: false
   iron_condor_late_day_protections:
+    extends: short_dated_default_protections
     runtime:
       extends: short_dated_default
       cancel_pending_entries_after_et: "15:00"

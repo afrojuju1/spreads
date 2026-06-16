@@ -667,6 +667,28 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
                 )
             console.print(table)
 
+        protection_rows = [
+            row
+            for row in flow_rows
+            if isinstance(row.get("protection_admission"), dict)
+            and dict(row.get("protection_admission") or {}).get("status") not in {None, "", "not_evaluated"}
+        ]
+        if protection_rows:
+            table = Table(title="Protection Admission", header_style="bold")
+            table.add_column("Strategy")
+            table.add_column("Status")
+            table.add_column("Reason", max_width=40, overflow="ellipsis", no_wrap=True)
+            table.add_column("Blockers", max_width=52, overflow="ellipsis", no_wrap=True)
+            for row in protection_rows:
+                protection = dict(row.get("protection_admission") or {})
+                table.add_row(
+                    str(row.get("trading_strategy_id") or row.get("name") or "-"),
+                    _status_text(protection.get("status")),
+                    _render_value(protection.get("reason")),
+                    _render_group_labels(protection.get("blockers"), limit=3, item_length=72),
+                )
+            console.print(table)
+
         table = Table(title="Trading Flows", header_style="bold")
         table.add_column("Strategy")
         table.add_column("Status")

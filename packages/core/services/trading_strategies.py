@@ -28,6 +28,7 @@ from core.services.trading_strategy_models import (
     StrategyExecutionPolicy,
     StrategyEntryQualityPolicy,
     StrategyLiquidityRules,
+    StrategyProtectionPolicy,
     StrategyRiskDefaults,
     StrategyRiskLimits,
     StrategyRuntimeControls,
@@ -163,6 +164,7 @@ class TradingStrategyPayload(BaseModel):
     management: StrategyRoutinePayload | None = None
     liquidity: dict[str, Any] = Field(default_factory=dict)
     risk: dict[str, Any] = Field(default_factory=dict)
+    protection: dict[str, Any] = Field(default_factory=dict)
     runtime: dict[str, Any] = Field(default_factory=dict)
     execution: dict[str, Any] = Field(default_factory=dict)
 
@@ -171,7 +173,7 @@ class TradingStrategyPayload(BaseModel):
     def _normalize_required_text(cls, value: Any) -> str:
         return normalize_required_text(value)
 
-    @field_validator("build", "liquidity", "risk", "runtime", "execution", mode="before")
+    @field_validator("build", "liquidity", "risk", "protection", "runtime", "execution", mode="before")
     @classmethod
     def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
         return normalize_mapping(value)
@@ -408,6 +410,7 @@ class TradingStrategyConfig:
     liquidity: StrategyLiquidityRules
     position_sizing: StrategyRiskDefaults
     risk_limits: StrategyRiskLimits
+    protection: StrategyProtectionPolicy
     runtime: StrategyRuntimeControls
     execution: StrategyExecutionPolicy
     enabled: bool
@@ -492,6 +495,7 @@ def _strategy_payload(strategy: TradingStrategyConfig) -> dict[str, Any]:
         "liquidity": strategy.liquidity.as_dict(),
         "position_sizing": strategy.position_sizing.as_dict(),
         "risk_limits": strategy.risk_limits.as_dict(),
+        "protection": strategy.protection.as_dict(),
         "runtime": strategy.runtime.as_dict(),
         "execution": strategy.execution.as_dict(),
     }
@@ -744,6 +748,10 @@ def _compose_strategy_payload(
             "limits": normalize_mapping(portfolio_model.get("limits")),
             "sizing": normalize_mapping(portfolio_model.get("sizing")),
         },
+        "protection": {
+            "protection_model_id": protection_model_ref,
+            "rules": normalize_mapping(protection_model.get("rules")),
+        },
         "runtime": runtime_payload,
         "execution": execution_payload,
     }
@@ -774,9 +782,10 @@ def _load_trading_strategies_cached(
     profiles_signature: tuple[str, int, int] | None,
     limits_policy_signature: tuple[tuple[str, int, int], ...],
     runtime_policy_signature: tuple[tuple[str, int, int], ...],
+    protection_policy_signature: tuple[tuple[str, int, int], ...],
     universe_signature: tuple[tuple[str, int, int], ...],
 ) -> tuple[TradingStrategyConfig, ...]:
-    del catalog_signature, profiles_signature, limits_policy_signature, runtime_policy_signature, universe_signature
+    del catalog_signature, profiles_signature, limits_policy_signature, runtime_policy_signature, protection_policy_signature, universe_signature
     catalog_path = Path(catalog_key)
     profiles_path = Path(profiles_key)
     config_root = catalog_path.parents[1]
@@ -807,6 +816,13 @@ def _load_trading_strategies_cached(
             config_root=config_root,
             config_path=catalog_path,
         )
+        protection_payload = resolve_policy_mapping(
+            payload.protection,
+            field_name="protection",
+            policy_kind="strategy_protection",
+            config_root=config_root,
+            config_path=catalog_path,
+        )
         strategy = TradingStrategyConfig(
             trading_strategy_id=payload.trading_strategy_id,
             name=payload.name,
@@ -819,6 +835,7 @@ def _load_trading_strategies_cached(
             liquidity=StrategyLiquidityRules.from_payload(payload.liquidity),
             position_sizing=StrategyRiskDefaults.from_payload(payload.risk.get("sizing")),
             risk_limits=StrategyRiskLimits.from_payload(risk_limits_payload),
+            protection=StrategyProtectionPolicy.from_payload(protection_payload),
             runtime=StrategyRuntimeControls.from_payload(runtime_payload),
             execution=StrategyExecutionPolicy.from_payload(payload.execution),
             enabled=payload.enabled,
@@ -860,6 +877,7 @@ def load_trading_strategies(
             _yaml_file_signature(profiles_path),
             _yaml_directory_signature(config_root_path / "policies" / "strategy_limits"),
             _yaml_directory_signature(config_root_path / "policies" / "strategy_runtime"),
+            _yaml_directory_signature(config_root_path / "policies" / "strategy_protection"),
             _yaml_directory_signature(config_root_path / "universes"),
         )
     }

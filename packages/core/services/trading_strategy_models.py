@@ -6,6 +6,19 @@ from typing import Any, TypeAlias
 
 from core.domain.profiles import RankingPolicyConfig, RankingWeightsConfig
 
+PROTECTION_RULE_KEYS = frozenset(
+    {
+        "account_emergency_stop",
+        "daily_drawdown_halt",
+        "rolling_drawdown_halt",
+        "loss_streak_cooldown",
+        "strategy_family_cooldown",
+        "event_calendar_block",
+        "duplicate_underlying_theme_cap",
+        "options_exposure_scenario_cap",
+    }
+)
+
 
 def _require_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
     if value is None:
@@ -953,6 +966,52 @@ class StrategyRiskLimits:
 
 
 @dataclass(frozen=True)
+class StrategyProtectionPolicy:
+    profile_id: str | None = None
+    rules: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        unknown = sorted(set(self.rules) - PROTECTION_RULE_KEYS)
+        if unknown:
+            joined = ", ".join(unknown)
+            raise ValueError(f"protection.rules contains unsupported rule(s): {joined}")
+        for rule_name, rule_payload in self.rules.items():
+            if not isinstance(rule_payload, Mapping):
+                raise ValueError(f"protection.rules.{rule_name} must be a mapping")
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, Any] | None,
+    ) -> StrategyProtectionPolicy:
+        mapping = _require_mapping(payload, field_name="protection")
+        raw_rules = _require_mapping(mapping.get("rules"), field_name="protection.rules")
+        rules: dict[str, Mapping[str, Any]] = {}
+        for raw_rule_name, raw_rule_payload in raw_rules.items():
+            rule_name = _required_text(raw_rule_name, field_name="protection.rules key")
+            rules[rule_name] = dict(
+                _require_mapping(
+                    raw_rule_payload,
+                    field_name=f"protection.rules.{rule_name}",
+                )
+            )
+        return cls(
+            profile_id=_optional_text(mapping.get("protection_model_id") or mapping.get("profile_id")),
+            rules=rules,
+        )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.rules)
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"rules": {key: dict(value) for key, value in self.rules.items()}}
+        if self.profile_id is not None:
+            payload["protection_model_id"] = self.profile_id
+        return payload
+
+
+@dataclass(frozen=True)
 class StrategyRuntimeControls:
     cancel_pending_entries_after_et: str | None = None
     flatten_positions_at_et: str | None = None
@@ -993,6 +1052,7 @@ __all__ = [
     "RoutineScheduleWindow",
     "EntrySelectionPolicy",
     "StrategyPortfolioAdmissionLimits",
+    "StrategyProtectionPolicy",
     "StrategyRiskLimits",
     "StrategyRuntimeControls",
     "DeltaRange",
