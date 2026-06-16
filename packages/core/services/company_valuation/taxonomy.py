@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from core.services.company_valuation.contracts import (
     CompanyValuationCanonicalTaxonomy,
@@ -18,9 +17,6 @@ from core.services.company_valuation.contracts import (
     CompanyValuationTaxonomyOverride,
     CompanyValuationTaxonomyResolution,
     CompanyValuationTemplateMapping,
-    TaxonomyLevel,
-    TaxonomyMatchMode,
-    TaxonomySourceStandard,
 )
 from core.services.company_valuation.ids import normalize_cik, normalize_ticker
 from core.services.company_valuation.templates import (
@@ -31,66 +27,7 @@ from core.services.trading_strategies import (
     _load_yaml_file,
     _yaml_file_signature,
 )
-
-
-def _as_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError(f"{field_name} must be a mapping")
-    return dict(value)
-
-
-def _as_text(value: Any, *, field_name: str) -> str:
-    rendered = str(value or "").strip()
-    if not rendered:
-        raise ValueError(f"{field_name} is required")
-    return rendered
-
-
-def _as_optional_text(value: Any) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
-
-
-def _as_text_tuple(value: Any, *, field_name: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list")
-    return tuple(str(item).strip() for item in value if str(item or "").strip())
-
-
-def _as_taxonomy_level(value: Any, *, field_name: str) -> TaxonomyLevel:
-    rendered = _as_text(value, field_name=field_name)
-    if rendered not in {"sector", "industry_group", "industry", "subindustry"}:
-        raise ValueError(f"{field_name} must be one of sector, industry_group, industry, subindustry")
-    return rendered  # type: ignore[return-value]
-
-
-def _as_source_standard(
-    value: Any,
-    *,
-    field_name: str,
-) -> TaxonomySourceStandard:
-    rendered = _as_text(value, field_name=field_name)
-    if rendered not in {"sic", "naics", "issuer_override"}:
-        raise ValueError(f"{field_name} must be one of sic, naics, issuer_override")
-    return rendered  # type: ignore[return-value]
-
-
-def _as_match_mode(value: Any, *, field_name: str) -> TaxonomyMatchMode:
-    rendered = _as_text(value, field_name=field_name)
-    if rendered not in {"exact", "prefix"}:
-        raise ValueError(f"{field_name} must be exact or prefix")
-    return rendered  # type: ignore[return-value]
-
-
-def _as_support_tier(value: Any, *, field_name: str) -> str:
-    rendered = _as_text(value, field_name=field_name)
-    if rendered not in {"core", "expanded"}:
-        raise ValueError(f"{field_name} must be core or expanded")
-    return rendered
+from core.value_coercion import as_text, coerce_bool
 
 
 def _normalized_text(value: str | None) -> str:
@@ -136,10 +73,9 @@ def _load_company_valuation_taxonomy_nodes_cached(
     if not path.exists():
         return ()
     payload = _load_yaml_file(path)
-    taxonomy_version = _as_text(
-        payload.get("taxonomy_version"),
-        field_name="taxonomy_version",
-    )
+    taxonomy_version = as_text(payload.get("taxonomy_version"))
+    if taxonomy_version is None:
+        raise ValueError("taxonomy_version is required")
     raw_nodes = payload.get("nodes")
     if raw_nodes is None:
         return ()
@@ -149,32 +85,7 @@ def _load_company_valuation_taxonomy_nodes_cached(
     for item in raw_nodes:
         if not isinstance(item, dict):
             raise ValueError("taxonomy node entries must be mappings")
-        nodes.append(
-            CompanyValuationTaxonomyNode(
-                taxonomy_node_id=_as_text(
-                    item.get("taxonomy_node_id"),
-                    field_name="taxonomy_node_id",
-                ),
-                taxonomy_version=_as_text(
-                    item.get("taxonomy_version") or taxonomy_version,
-                    field_name="taxonomy_version",
-                ),
-                taxonomy_level=_as_taxonomy_level(
-                    item.get("taxonomy_level"),
-                    field_name="taxonomy_level",
-                ),
-                taxonomy_code=_as_text(
-                    item.get("taxonomy_code"),
-                    field_name="taxonomy_code",
-                ),
-                taxonomy_name=_as_text(
-                    item.get("taxonomy_name"),
-                    field_name="taxonomy_name",
-                ),
-                parent_taxonomy_node_id=_as_optional_text(item.get("parent_taxonomy_node_id")),
-                active=bool(item.get("active", True)),
-            )
-        )
+        nodes.append(CompanyValuationTaxonomyNode.model_validate({**item, "taxonomy_version": item.get("taxonomy_version") or taxonomy_version}))
     by_id = {node.taxonomy_node_id: node for node in nodes}
     if len(by_id) != len(nodes):
         raise ValueError(f"Duplicate taxonomy_node_id in {path}")
@@ -206,10 +117,9 @@ def _load_company_valuation_taxonomy_mappings_cached(
     if not path.exists():
         return ()
     payload = _load_yaml_file(path)
-    mapping_version = _as_text(
-        payload.get("mapping_version"),
-        field_name="mapping_version",
-    )
+    mapping_version = as_text(payload.get("mapping_version"))
+    if mapping_version is None:
+        raise ValueError("mapping_version is required")
     raw_mappings = payload.get("mappings")
     if raw_mappings is None:
         return ()
@@ -219,32 +129,7 @@ def _load_company_valuation_taxonomy_mappings_cached(
     for item in raw_mappings:
         if not isinstance(item, dict):
             raise ValueError("taxonomy mapping entries must be mappings")
-        mappings.append(
-            CompanyValuationTaxonomyMapping(
-                mapping_id=_as_text(item.get("mapping_id"), field_name="mapping_id"),
-                mapping_version=_as_text(
-                    item.get("mapping_version") or mapping_version,
-                    field_name="mapping_version",
-                ),
-                source_standard=_as_source_standard(
-                    item.get("source_standard"),
-                    field_name="source_standard",
-                ),
-                source_code=_as_text(item.get("source_code"), field_name="source_code"),
-                source_title=_as_optional_text(item.get("source_title")),
-                match_mode=_as_match_mode(
-                    item.get("match_mode", "exact"),
-                    field_name="match_mode",
-                ),
-                canonical_sector_id=_as_optional_text(item.get("canonical_sector_id")),
-                canonical_industry_group_id=_as_optional_text(item.get("canonical_industry_group_id")),
-                canonical_industry_id=_as_optional_text(item.get("canonical_industry_id")),
-                canonical_subindustry_id=_as_optional_text(item.get("canonical_subindustry_id")),
-                priority=int(item.get("priority", 100)),
-                active=bool(item.get("active", True)),
-                notes=_as_optional_text(item.get("notes")),
-            )
-        )
+        mappings.append(CompanyValuationTaxonomyMapping.model_validate({**item, "mapping_version": item.get("mapping_version") or mapping_version}))
     by_id = {mapping.mapping_id: mapping for mapping in mappings}
     if len(by_id) != len(mappings):
         raise ValueError(f"Duplicate mapping_id in {path}")
@@ -281,10 +166,9 @@ def _load_company_valuation_template_mappings_cached(
     if not path.exists():
         return ()
     payload = _load_yaml_file(path)
-    mapping_version = _as_text(
-        payload.get("mapping_version"),
-        field_name="mapping_version",
-    )
+    mapping_version = as_text(payload.get("mapping_version"))
+    if mapping_version is None:
+        raise ValueError("mapping_version is required")
     raw_mappings = payload.get("mappings")
     if raw_mappings is None:
         return ()
@@ -294,26 +178,7 @@ def _load_company_valuation_template_mappings_cached(
     for item in raw_mappings:
         if not isinstance(item, dict):
             raise ValueError("template mapping entries must be mappings")
-        mappings.append(
-            CompanyValuationTemplateMapping(
-                mapping_id=_as_text(item.get("mapping_id"), field_name="mapping_id"),
-                mapping_version=_as_text(
-                    item.get("mapping_version") or mapping_version,
-                    field_name="mapping_version",
-                ),
-                taxonomy_node_id=_as_text(
-                    item.get("taxonomy_node_id"),
-                    field_name="taxonomy_node_id",
-                ),
-                taxonomy_level=_as_taxonomy_level(
-                    item.get("taxonomy_level"),
-                    field_name="taxonomy_level",
-                ),
-                template_id=_as_text(item.get("template_id"), field_name="template_id"),
-                active=bool(item.get("active", True)),
-                notes=_as_optional_text(item.get("notes")),
-            )
-        )
+        mappings.append(CompanyValuationTemplateMapping.model_validate({**item, "mapping_version": item.get("mapping_version") or mapping_version}))
     by_node_id = {mapping.taxonomy_node_id: mapping for mapping in mappings if mapping.active}
     if len(by_node_id) != len([mapping for mapping in mappings if mapping.active]):
         raise ValueError(f"Duplicate active taxonomy_node_id in {path}")
@@ -344,7 +209,9 @@ def _load_company_valuation_overlay_rules_cached(
     if not path.exists():
         return ()
     payload = _load_yaml_file(path)
-    rule_version = _as_text(payload.get("rule_version"), field_name="rule_version")
+    rule_version = as_text(payload.get("rule_version"))
+    if rule_version is None:
+        raise ValueError("rule_version is required")
     raw_rules = payload.get("rules")
     if raw_rules is None:
         return ()
@@ -354,38 +221,7 @@ def _load_company_valuation_overlay_rules_cached(
     for item in raw_rules:
         if not isinstance(item, dict):
             raise ValueError("overlay rule entries must be mappings")
-        rules.append(
-            CompanyValuationOverlayRule(
-                rule_id=_as_text(item.get("rule_id"), field_name="rule_id"),
-                rule_version=_as_text(
-                    item.get("rule_version") or rule_version,
-                    field_name="rule_version",
-                ),
-                flag_key=_as_text(item.get("flag_key"), field_name="flag_key"),
-                reason=_as_text(item.get("reason"), field_name="reason"),
-                company_name_keywords=_as_text_tuple(
-                    item.get("company_name_keywords"),
-                    field_name="company_name_keywords",
-                ),
-                sic_title_keywords=_as_text_tuple(
-                    item.get("sic_title_keywords"),
-                    field_name="sic_title_keywords",
-                ),
-                sic_prefixes=_as_text_tuple(
-                    item.get("sic_prefixes"),
-                    field_name="sic_prefixes",
-                ),
-                naics_prefixes=_as_text_tuple(
-                    item.get("naics_prefixes"),
-                    field_name="naics_prefixes",
-                ),
-                issuer_ciks=_as_text_tuple(
-                    item.get("issuer_ciks"),
-                    field_name="issuer_ciks",
-                ),
-                active=bool(item.get("active", True)),
-            )
-        )
+        rules.append(CompanyValuationOverlayRule.model_validate({**item, "rule_version": item.get("rule_version") or rule_version}))
     by_id = {rule.rule_id: rule for rule in rules}
     if len(by_id) != len(rules):
         raise ValueError(f"Duplicate rule_id in {path}")
@@ -420,20 +256,7 @@ def _load_company_valuation_taxonomy_overrides_cached(
     for item in raw_overrides:
         if not isinstance(item, dict):
             raise ValueError("taxonomy override entries must be mappings")
-        overrides.append(
-            CompanyValuationTaxonomyOverride(
-                issuer_cik=normalize_cik(item.get("issuer_cik")),
-                canonical_sector_id=_as_text(
-                    item.get("canonical_sector_id"),
-                    field_name="canonical_sector_id",
-                ),
-                canonical_industry_group_id=_as_optional_text(item.get("canonical_industry_group_id")),
-                canonical_industry_id=_as_optional_text(item.get("canonical_industry_id")),
-                canonical_subindustry_id=_as_optional_text(item.get("canonical_subindustry_id")),
-                reason=_as_text(item.get("reason"), field_name="reason"),
-                active=bool(item.get("active", True)),
-            )
-        )
+        overrides.append(CompanyValuationTaxonomyOverride.model_validate({**item, "issuer_cik": normalize_cik(item.get("issuer_cik"))}))
     by_cik = {override.issuer_cik: override for override in overrides}
     if len(by_cik) != len(overrides):
         raise ValueError(f"Duplicate issuer_cik in {path}")
@@ -462,15 +285,16 @@ def _load_company_valuation_support_policy_cached(
     if not path.exists():
         return CompanyValuationSupportPolicy(policy_version="v1")
     payload = _load_yaml_file(path)
-    policy_version = _as_text(
-        payload.get("policy_version"),
-        field_name="policy_version",
-    )
+    policy_version = as_text(payload.get("policy_version"))
+    if policy_version is None:
+        raise ValueError("policy_version is required")
     raw_supported_template_ids = payload.get("supported_template_ids")
-    supported_template_ids = _as_text_tuple(
-        raw_supported_template_ids,
-        field_name="supported_template_ids",
-    )
+    if raw_supported_template_ids is None:
+        supported_template_ids: tuple[str, ...] = ()
+    elif not isinstance(raw_supported_template_ids, list):
+        raise ValueError("supported_template_ids must be a list")
+    else:
+        supported_template_ids = tuple(str(item).strip() for item in raw_supported_template_ids if str(item or "").strip())
     raw_supported_issuers = payload.get("supported_issuers")
     if raw_supported_issuers is None:
         supported_issuers: list[CompanyValuationSupportedIssuer] = []
@@ -482,23 +306,14 @@ def _load_company_valuation_support_policy_cached(
             if not isinstance(item, dict):
                 raise ValueError("supported_issuer entries must be mappings")
             supported_issuers.append(
-                CompanyValuationSupportedIssuer(
-                    ticker=normalize_ticker(_as_text(item.get("ticker"), field_name="ticker")),
-                    expected_template_id=_as_optional_text(item.get("expected_template_id")),
-                    support_tier=_as_support_tier(
-                        item.get("support_tier", "core"),
-                        field_name="support_tier",
-                    ),
-                    reason=_as_text(item.get("reason"), field_name="reason"),
-                    active=bool(item.get("active", True)),
-                )
+                CompanyValuationSupportedIssuer.model_validate({**item, "ticker": normalize_ticker(item.get("ticker"))})
             )
     by_ticker = {issuer.ticker: issuer for issuer in supported_issuers if issuer.active}
     if len(by_ticker) != len([issuer for issuer in supported_issuers if issuer.active]):
         raise ValueError(f"Duplicate active supported issuer ticker in {path}")
     return CompanyValuationSupportPolicy(
         policy_version=policy_version,
-        allowlist_required=bool(payload.get("allowlist_required", True)),
+        allowlist_required=bool(coerce_bool(payload.get("allowlist_required"), default=True)),
         supported_template_ids=supported_template_ids,
         supported_issuers=tuple(supported_issuers),
     )
@@ -529,10 +344,10 @@ def resolve_company_valuation_raw_classification(
     naics_title: str | None = None,
 ) -> CompanyValuationRawClassification:
     return CompanyValuationRawClassification(
-        sic_code=_as_optional_text(sic),
-        sic_title=_as_optional_text(sic_title),
-        naics_code=_as_optional_text(naics),
-        naics_title=_as_optional_text(naics_title),
+        sic_code=as_text(sic),
+        sic_title=as_text(sic_title),
+        naics_code=as_text(naics),
+        naics_title=as_text(naics_title),
     )
 
 

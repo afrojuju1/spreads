@@ -10,9 +10,19 @@ import time
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from pydantic import BaseModel, ConfigDict, field_validator
+
 from core.services.alert_delivery import plan_alert_delivery
 from core.services.ticker_sources import get_latest_ticker_source_snapshot
-from core.value_coercion import as_text as _as_text, utc_now as _utc_now, utc_now_iso as _utc_now_text
+from core.value_coercion import (
+    as_text as _as_text,
+    coerce_bool,
+    coerce_int,
+    normalize_symbol,
+    safe_component,
+    utc_now as _utc_now,
+    utc_now_iso as _utc_now_text,
+)
 from core.storage.serializers import parse_datetime
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -25,53 +35,93 @@ QUALITY_MESSAGE_VALUE_RE = re.compile(
 )
 
 
-def _as_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+class TradingAgentsScanPayload(BaseModel):
+    model_config = ConfigDict(extra="allow", frozen=True)
 
+    source_id: str = "finviz_momentum"
+    source_job_key: str | None = None
+    max_source_age_seconds: int | None = None
+    label: str = "finviz_tradingagents"
+    session_id: str | None = None
+    max_tickers: int = 5
+    output_root: str | None = None
+    tradingagents_dir: str | None = None
+    timeout_seconds: int = 1800
+    heartbeat_seconds: int = 30
+    profile: str = "fast"
+    llm_provider: str | None = None
+    quick_model: str | None = None
+    deep_model: str | None = None
+    backend_url: str | None = None
+    prefetch: bool | None = None
+    require_sec: bool = False
+    allow_quality_warn: bool = False
+    actionable_signals: tuple[str, ...] = DEFAULT_ACTIONABLE_SIGNALS
+    uv_project_environment: str | None = None
 
-def _as_bool(value: Any, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    rendered = str(value).strip().lower()
-    if rendered in {"1", "true", "yes", "y", "on"}:
-        return True
-    if rendered in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
+    @field_validator(
+        "source_id",
+        "source_job_key",
+        "label",
+        "session_id",
+        "output_root",
+        "tradingagents_dir",
+        "profile",
+        "llm_provider",
+        "quick_model",
+        "deep_model",
+        "backend_url",
+        "uv_project_environment",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text_fields(cls, value: Any, info: Any) -> str | None:
+        rendered = _as_text(value)
+        if rendered is None and info.field_name in {"source_id", "label", "profile"}:
+            return str(cls.model_fields[info.field_name].default)
+        return rendered
 
+    @field_validator("max_source_age_seconds", mode="before")
+    @classmethod
+    def _normalize_optional_count(cls, value: Any) -> int | None:
+        normalized = coerce_int(value)
+        return None if normalized is None else max(normalized, 0)
 
-def _as_optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return max(_as_int(value, 0), 0)
+    @field_validator("max_tickers", "timeout_seconds", "heartbeat_seconds", mode="before")
+    @classmethod
+    def _normalize_positive_count(cls, value: Any, info: Any) -> int:
+        default = int(cls.model_fields[info.field_name].default)
+        return max(coerce_int(value) or default, 1)
 
+    @field_validator("prefetch", mode="before")
+    @classmethod
+    def _normalize_optional_bool(cls, value: Any) -> bool | None:
+        return coerce_bool(value, default=None)
 
-def _as_text_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
-    if value in (None, ""):
-        return default
-    if isinstance(value, str):
-        raw_items = value.split(",")
-    elif isinstance(value, (list, tuple, set)):
-        raw_items = list(value)
-    else:
-        return default
-    return tuple(str(item).strip() for item in raw_items if str(item).strip())
+    @field_validator("require_sec", "allow_quality_warn", mode="before")
+    @classmethod
+    def _normalize_bool(cls, value: Any) -> bool:
+        return bool(coerce_bool(value, default=False))
 
-
-def _safe_component(value: Any) -> str:
-    rendered = str(value or "").strip()
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", rendered) or "unknown"
+    @field_validator("actionable_signals", mode="before")
+    @classmethod
+    def _normalize_actionable_signals(cls, value: Any) -> tuple[str, ...]:
+        if value in (None, ""):
+            return DEFAULT_ACTIONABLE_SIGNALS
+        if isinstance(value, str):
+            raw_items = value.split(",")
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = list(value)
+        else:
+            return DEFAULT_ACTIONABLE_SIGNALS
+        signals = tuple(str(item).strip() for item in raw_items if str(item).strip())
+        return signals or DEFAULT_ACTIONABLE_SIGNALS
 
 
 def _unique_symbols(values: Any) -> tuple[str, ...]:
     if not isinstance(values, list):
         return ()
-    return tuple(dict.fromkeys(str(value or "").upper().strip() for value in values if str(value or "").strip()))
+    return tuple(dict.fromkeys(symbol for value in values if (symbol := normalize_symbol(value)) is not None))
 
 
 def _session_date(payload: Mapping[str, Any]) -> str:
@@ -131,7 +181,7 @@ def _find_latest_metadata_path(
     ticker: str,
     started_epoch: float,
 ) -> Path | None:
-    safe_ticker = _safe_component(ticker)
+    safe_ticker = safe_component(ticker)
     candidates = list(output_root.glob(f"{safe_ticker}_*/run_metadata.json"))
     if not candidates:
         candidates = list(output_root.glob("*/run_metadata.json"))
@@ -152,10 +202,7 @@ def _find_latest_metadata_path(
 def _actionable_result(result: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
     allowed = {
         item.lower()
-        for item in _as_text_tuple(
-            payload.get("actionable_signals"),
-            DEFAULT_ACTIONABLE_SIGNALS,
-        )
+        for item in tuple(payload.get("actionable_signals") or DEFAULT_ACTIONABLE_SIGNALS)
     }
     signal = str(result.get("validated_signal") or "").strip()
     quality_status = str(result.get("quality_status") or "").strip().lower()
@@ -163,10 +210,7 @@ def _actionable_result(result: Mapping[str, Any], payload: Mapping[str, Any]) ->
         return False
     if quality_status == "pass":
         return True
-    return quality_status == "warn" and _as_bool(
-        payload.get("allow_quality_warn"),
-        False,
-    )
+    return quality_status == "warn" and bool(payload.get("allow_quality_warn"))
 
 
 def _quality_issue_key(issue: Mapping[str, Any]) -> tuple[str, str, str]:
@@ -252,8 +296,8 @@ def _build_command(
         if value is not None:
             command.extend([flag, value])
     if payload.get("prefetch") is not None:
-        command.append("--prefetch" if _as_bool(payload.get("prefetch")) else "--no-prefetch")
-    if _as_bool(payload.get("require_sec"), False):
+        command.append("--prefetch" if bool(payload.get("prefetch")) else "--no-prefetch")
+    if bool(payload.get("require_sec")):
         command.append("--require-sec")
     return command
 
@@ -279,9 +323,9 @@ def _run_tradingagents_ticker(
     started_at = _utc_now_text()
     started_epoch = time.time()
     started_monotonic = time.monotonic()
-    timeout_seconds = max(_as_int(payload.get("timeout_seconds"), 1800), 1)
-    heartbeat_seconds = max(_as_int(payload.get("heartbeat_seconds"), 30), 1)
-    safe_ticker = _safe_component(ticker)
+    timeout_seconds = max(coerce_int(payload.get("timeout_seconds")) or 1800, 1)
+    heartbeat_seconds = max(coerce_int(payload.get("heartbeat_seconds")) or 30, 1)
+    safe_ticker = safe_component(ticker)
     log_root.mkdir(parents=True, exist_ok=True)
     stdout_path = log_root / f"{safe_ticker}.stdout.log"
     stderr_path = log_root / f"{safe_ticker}.stderr.log"
@@ -471,7 +515,7 @@ def _plan_batch_alert(
             "ticker_results": [_result_summary_line(result) for result in ticker_results],
         },
     }
-    ticker_scope = "_".join(_safe_component(str(ticker).upper()) for ticker in selected_tickers) or "none"
+    ticker_scope = "_".join(safe_component(str(ticker).upper()) for ticker in selected_tickers) or "none"
     dedupe_key = "research_tradingagents_batch_summary|" f"{session_date}|{source_id}|{ticker_scope}"
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
@@ -506,9 +550,10 @@ def run_tradingagents_scan(
     payload: Mapping[str, Any],
     heartbeat: Callable[[], None],
 ) -> dict[str, Any]:
-    source_id = _as_text(payload.get("source_id")) or "finviz_momentum"
+    payload = TradingAgentsScanPayload.model_validate(payload).model_dump()
+    source_id = str(payload["source_id"])
     source_job_key = _as_text(payload.get("source_job_key")) or f"ticker_source:{source_id}"
-    max_source_age_seconds = _as_optional_int(payload.get("max_source_age_seconds"))
+    max_source_age_seconds = payload.get("max_source_age_seconds")
     snapshot = get_latest_ticker_source_snapshot(
         storage.engine_facts,
         source_id=source_id,
@@ -517,7 +562,7 @@ def run_tradingagents_scan(
     )
     snapshot_status = str(snapshot.get("status") or "").strip().lower()
     session_date = _session_date(payload)
-    label = _as_text(payload.get("label")) or "finviz_tradingagents"
+    label = str(payload["label"])
     session_id = _as_text(payload.get("session_id")) or f"research:{label}:{session_date}"
     if snapshot_status not in {"ready", "empty"}:
         return {
@@ -528,7 +573,7 @@ def run_tradingagents_scan(
             "source_snapshot": snapshot,
         }
 
-    max_tickers = max(_as_int(payload.get("max_tickers"), 5), 1)
+    max_tickers = int(payload["max_tickers"])
     selected_tickers = _unique_symbols(snapshot.get("symbols"))[:max_tickers]
     entry_by_symbol = {
         str(entry.get("symbol") or "").upper(): dict(entry)
@@ -541,7 +586,7 @@ def run_tradingagents_scan(
         or "outputs/tradingagents/finviz_momentum",
     )
     output_root.mkdir(parents=True, exist_ok=True)
-    log_root = output_root / "_spreads_logs" / session_date / _safe_component(job_run_id)
+    log_root = output_root / "_spreads_logs" / session_date / safe_component(job_run_id)
 
     ticker_results: list[dict[str, Any]] = []
     alert_results: list[dict[str, Any]] = []

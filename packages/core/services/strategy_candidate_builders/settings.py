@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from core.domain.profiles import (
     PROFILE_CONFIGS,
@@ -15,6 +16,7 @@ from core.domain.profiles import (
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.integrations.calendar_events import classify_underlying_type
 from core.services.option_structures import normalize_strategy_family
+from core.services.payload_validation import normalize_optional_text
 from core.services.strategy_candidate_builders.runtime_context import candidate_session_bucket
 from core.services.trading_strategies import default_config_root, load_trading_strategies
 
@@ -54,6 +56,46 @@ PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES = frozenset(
     }
 )
 CALENDAR_CONFIDENCE_POLICIES = ("strict", "consensus", "off")
+OPTIONAL_TEXT_PARAMETER_FIELDS = (
+    "symbol",
+    "trading_base_url",
+    "history_db",
+    "session_label",
+    "evaluation_timestamp",
+    "evaluation_date",
+    "session_bucket_override",
+    "config_root",
+)
+OPTIONAL_NUMBER_PARAMETER_FIELDS = (
+    "min_dte",
+    "max_dte",
+    "short_delta_min",
+    "short_delta_max",
+    "short_delta_target",
+    "min_width",
+    "max_width",
+    "min_credit",
+    "min_open_interest",
+    "max_relative_spread",
+    "min_return_on_risk",
+    "min_fill_ratio",
+    "min_short_vs_expected_move_ratio",
+    "min_breakeven_vs_expected_move_ratio",
+    "max_quote_age_seconds",
+    *RANKING_POLICY_ARG_KEYS,
+)
+DEFAULT_TEXT_PARAMETER_FIELDS = (
+    "candidate_builder_key",
+    "build_profile",
+    "feed",
+    "stock_feed",
+    "greeks_source",
+    "calendar_policy",
+    "setup_filter",
+    "data_policy",
+    "calendar_confidence_policy",
+    "data_base_url",
+)
 
 
 def _default_trading_base_url() -> str | None:
@@ -64,41 +106,9 @@ def _default_data_base_url() -> str:
     return os.environ.get("ALPACA_DATA_BASE_URL", DEFAULT_DATA_BASE_URL)
 
 
-def _optional_text(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    rendered = str(value).strip()
-    return rendered or None
+class CandidateBuildParameters(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-
-def _symbol_tuple(value: Any) -> tuple[str, ...]:
-    if value in (None, ""):
-        return ()
-    if isinstance(value, str):
-        raw_symbols = value.split(",")
-    else:
-        raw_symbols = list(value or [])
-    return tuple(dict.fromkeys(str(symbol).upper().strip() for symbol in raw_symbols if str(symbol or "").strip()))
-
-
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return int(value)
-
-
-def _optional_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    return float(value)
-
-
-def _ranking_value_payload(context: Any) -> dict[str, float | None]:
-    return {key: _optional_float(getattr(context, key, None)) for key in RANKING_POLICY_ARG_KEYS}
-
-
-@dataclass(frozen=True)
-class CandidateBuildParameters:
     symbol: str | None = None
     symbols: tuple[str, ...] = ()
     candidate_builder_key: str = "call_credit"
@@ -129,8 +139,8 @@ class CandidateBuildParameters:
     calendar_confidence_policy: str = "strict"
     top: int = 10
     per_symbol_top: int = 1
-    trading_base_url: str | None = field(default_factory=_default_trading_base_url)
-    data_base_url: str = field(default_factory=_default_data_base_url)
+    trading_base_url: str | None = Field(default_factory=_default_trading_base_url)
+    data_base_url: str = Field(default_factory=_default_data_base_url)
     history_db: str | None = None
     session_label: str | None = None
     evaluation_timestamp: str | None = None
@@ -149,103 +159,43 @@ class CandidateBuildParameters:
     ranking_weight_entry_slippage_dollars: float | None = None
     ranking_weight_model_implied_volatility: float | None = None
 
+    @field_validator("symbols", mode="before")
     @classmethod
-    def from_context(cls, context: Any) -> CandidateBuildParameters:
-        defaults = cls()
-        return cls(
-            symbol=_optional_text(getattr(context, "symbol", defaults.symbol)),
-            symbols=_symbol_tuple(getattr(context, "symbols", defaults.symbols)),
-            candidate_builder_key=str(getattr(context, "candidate_builder_key", defaults.candidate_builder_key) or defaults.candidate_builder_key),
-            build_profile=str(getattr(context, "build_profile", defaults.build_profile) or defaults.build_profile),
-            min_dte=_optional_int(getattr(context, "min_dte", defaults.min_dte)),
-            max_dte=_optional_int(getattr(context, "max_dte", defaults.max_dte)),
-            short_delta_min=_optional_float(getattr(context, "short_delta_min", defaults.short_delta_min)),
-            short_delta_max=_optional_float(getattr(context, "short_delta_max", defaults.short_delta_max)),
-            short_delta_target=_optional_float(getattr(context, "short_delta_target", defaults.short_delta_target)),
-            min_width=_optional_float(getattr(context, "min_width", defaults.min_width)),
-            max_width=_optional_float(getattr(context, "max_width", defaults.max_width)),
-            min_credit=_optional_float(getattr(context, "min_credit", defaults.min_credit)),
-            min_open_interest=_optional_int(getattr(context, "min_open_interest", defaults.min_open_interest)),
-            max_relative_spread=_optional_float(getattr(context, "max_relative_spread", defaults.max_relative_spread)),
-            min_return_on_risk=_optional_float(getattr(context, "min_return_on_risk", defaults.min_return_on_risk)),
-            min_fill_ratio=_optional_float(getattr(context, "min_fill_ratio", defaults.min_fill_ratio)),
-            min_short_vs_expected_move_ratio=_optional_float(
-                getattr(context, "min_short_vs_expected_move_ratio", defaults.min_short_vs_expected_move_ratio)
-            ),
-            min_breakeven_vs_expected_move_ratio=_optional_float(
-                getattr(context, "min_breakeven_vs_expected_move_ratio", defaults.min_breakeven_vs_expected_move_ratio)
-            ),
-            max_quote_age_seconds=_optional_int(getattr(context, "max_quote_age_seconds", defaults.max_quote_age_seconds)),
-            feed=str(getattr(context, "feed", defaults.feed) or defaults.feed),
-            stock_feed=str(getattr(context, "stock_feed", defaults.stock_feed) or defaults.stock_feed),
-            greeks_source=str(getattr(context, "greeks_source", defaults.greeks_source) or defaults.greeks_source),
-            calendar_policy=str(getattr(context, "calendar_policy", defaults.calendar_policy) or defaults.calendar_policy),
-            refresh_calendar_events=bool(getattr(context, "refresh_calendar_events", defaults.refresh_calendar_events)),
-            expand_duplicates=bool(getattr(context, "expand_duplicates", defaults.expand_duplicates)),
-            setup_filter=str(getattr(context, "setup_filter", defaults.setup_filter) or defaults.setup_filter),
-            data_policy=str(getattr(context, "data_policy", defaults.data_policy) or defaults.data_policy),
-            calendar_confidence_policy=str(
-                getattr(context, "calendar_confidence_policy", defaults.calendar_confidence_policy) or defaults.calendar_confidence_policy
-            ),
-            top=int(getattr(context, "top", defaults.top) or defaults.top),
-            per_symbol_top=int(getattr(context, "per_symbol_top", defaults.per_symbol_top) or defaults.per_symbol_top),
-            trading_base_url=_optional_text(getattr(context, "trading_base_url", defaults.trading_base_url)),
-            data_base_url=str(getattr(context, "data_base_url", defaults.data_base_url) or defaults.data_base_url),
-            history_db=_optional_text(getattr(context, "history_db", defaults.history_db)),
-            session_label=_optional_text(getattr(context, "session_label", defaults.session_label)),
-            evaluation_timestamp=_optional_text(getattr(context, "evaluation_timestamp", defaults.evaluation_timestamp)),
-            evaluation_date=_optional_text(getattr(context, "evaluation_date", defaults.evaluation_date)),
-            session_bucket_override=_optional_text(getattr(context, "session_bucket_override", defaults.session_bucket_override)),
-            config_root=_optional_text(getattr(context, "config_root", defaults.config_root)),
-            **_ranking_value_payload(context),
-        )
+    def _normalize_symbols(cls, value: Any) -> tuple[str, ...]:
+        if value in (None, ""):
+            return ()
+        raw_symbols = value.split(",") if isinstance(value, str) else list(value or [])
+        return tuple(dict.fromkeys(str(symbol).upper().strip() for symbol in raw_symbols if str(symbol or "").strip()))
 
-    def apply_to_context(self, context: Any) -> Any:
-        for key, value in self.as_context_payload().items():
-            setattr(context, key, value)
-        return context
+    @field_validator(*OPTIONAL_TEXT_PARAMETER_FIELDS, mode="before")
+    @classmethod
+    def _normalize_optional_text_fields(cls, value: Any) -> str | None:
+        return normalize_optional_text(value)
 
-    def as_context_payload(self) -> dict[str, Any]:
-        return {
-            "symbol": self.symbol,
-            "candidate_builder_key": self.candidate_builder_key,
-            "build_profile": self.build_profile,
-            "min_dte": self.min_dte,
-            "max_dte": self.max_dte,
-            "short_delta_min": self.short_delta_min,
-            "short_delta_max": self.short_delta_max,
-            "short_delta_target": self.short_delta_target,
-            "min_width": self.min_width,
-            "max_width": self.max_width,
-            "min_credit": self.min_credit,
-            "min_open_interest": self.min_open_interest,
-            "max_relative_spread": self.max_relative_spread,
-            "min_return_on_risk": self.min_return_on_risk,
-            "min_fill_ratio": self.min_fill_ratio,
-            "min_short_vs_expected_move_ratio": self.min_short_vs_expected_move_ratio,
-            "min_breakeven_vs_expected_move_ratio": self.min_breakeven_vs_expected_move_ratio,
-            "max_quote_age_seconds": self.max_quote_age_seconds,
-            "feed": self.feed,
-            "stock_feed": self.stock_feed,
-            "greeks_source": self.greeks_source,
-            "calendar_policy": self.calendar_policy,
-            "refresh_calendar_events": self.refresh_calendar_events,
-            "expand_duplicates": self.expand_duplicates,
-            "setup_filter": self.setup_filter,
-            "data_policy": self.data_policy,
-            "calendar_confidence_policy": self.calendar_confidence_policy,
-            "top": self.top,
-            "per_symbol_top": self.per_symbol_top,
-            "trading_base_url": self.trading_base_url,
-            "data_base_url": self.data_base_url,
-            "history_db": self.history_db,
-            "session_label": self.session_label,
-            "evaluation_timestamp": self.evaluation_timestamp,
-            "evaluation_date": self.evaluation_date,
-            "session_bucket_override": self.session_bucket_override,
-            "config_root": self.config_root,
-            **{key: getattr(self, key) for key in RANKING_POLICY_ARG_KEYS},
-        }
+    @field_validator(*OPTIONAL_NUMBER_PARAMETER_FIELDS, mode="before")
+    @classmethod
+    def _normalize_optional_number_fields(cls, value: Any) -> Any:
+        return None if value in (None, "") else value
+
+    @field_validator(*DEFAULT_TEXT_PARAMETER_FIELDS, mode="before")
+    @classmethod
+    def _normalize_default_text_fields(cls, value: Any, info: ValidationInfo) -> str:
+        rendered = normalize_optional_text(value)
+        if rendered is not None:
+            return rendered
+        default = cls.model_fields[info.field_name].default
+        if isinstance(default, str):
+            return default
+        if info.field_name == "data_base_url":
+            return _default_data_base_url()
+        raise ValueError(f"{info.field_name} is required")
+
+    @field_validator("top", "per_symbol_top", mode="before")
+    @classmethod
+    def _normalize_count_fields(cls, value: Any, info: ValidationInfo) -> int:
+        if value in (None, ""):
+            return int(cls.model_fields[info.field_name].default)
+        return int(value)
 
 
 @lru_cache(maxsize=4)
@@ -442,7 +392,7 @@ def apply_candidate_profile_defaults(
     }
     for key, value in ranking_builder_params.items():
         updates[key] = resolve_profile_value(getattr(parameters, key), value)
-    return replace(parameters, **updates)
+    return parameters.model_copy(update=updates)
 
 
 def apply_strategy_build_settings(
@@ -487,7 +437,7 @@ def apply_strategy_build_settings(
             settings.ranking_policy.get(key),
             getattr(parameters, key),
         )
-    return replace(parameters, **updates)
+    return parameters.model_copy(update=updates)
 
 
 def validate_candidate_profile_scope(symbol: str, parameters: CandidateBuildParameters, underlying_type: str) -> None:
@@ -575,12 +525,13 @@ def resolve_symbol_candidate_build_parameters(
 ) -> tuple[CandidateBuildParameters, str]:
     normalized_symbol = symbol.upper()
     underlying_type = classify_underlying_type(normalized_symbol)
-    parameters = replace(
-        base_parameters,
-        symbol=normalized_symbol,
-        symbols=(normalized_symbol,),
-        per_symbol_top=max(int(base_parameters.per_symbol_top or 1), 1),
-        top=max(int(base_parameters.top or 10), int(base_parameters.per_symbol_top or 1)),
+    parameters = base_parameters.model_copy(
+        update={
+            "symbol": normalized_symbol,
+            "symbols": (normalized_symbol,),
+            "per_symbol_top": max(int(base_parameters.per_symbol_top or 1), 1),
+            "top": max(int(base_parameters.top or 10), int(base_parameters.per_symbol_top or 1)),
+        }
     )
     parameters = apply_strategy_build_settings(parameters, settings)
     parameters = apply_candidate_profile_defaults(
@@ -602,12 +553,13 @@ def build_market_slice_parameters(
     normalized_symbol = symbol.upper()
     dte_mins = [int(parameters.min_dte) for parameters in runtime_parameters if parameters.min_dte is not None]
     dte_maxes = [int(parameters.max_dte) for parameters in runtime_parameters if parameters.max_dte is not None]
-    return replace(
-        base_parameters,
-        symbol=normalized_symbol,
-        symbols=(normalized_symbol,),
-        min_dte=min(dte_mins) if dte_mins else base_parameters.min_dte,
-        max_dte=max(dte_maxes) if dte_maxes else base_parameters.max_dte,
+    return base_parameters.model_copy(
+        update={
+            "symbol": normalized_symbol,
+            "symbols": (normalized_symbol,),
+            "min_dte": min(dte_mins) if dte_mins else base_parameters.min_dte,
+            "max_dte": max(dte_maxes) if dte_maxes else base_parameters.max_dte,
+        }
     )
 
 

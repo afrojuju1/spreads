@@ -192,14 +192,14 @@ def _taxonomy_node_payloads(
             node.taxonomy_code,
         ),
     )
-    return [node.to_payload() for node in ordered_nodes]
+    return [node.model_dump(mode="json") for node in ordered_nodes]
 
 
 def _taxonomy_mapping_payloads(
     config_root: str | None,
 ) -> list[dict[str, Any]]:
     return [
-        mapping.to_payload()
+        mapping.model_dump(mode="json")
         for mapping in load_company_valuation_taxonomy_mappings(config_root)
     ]
 
@@ -208,7 +208,7 @@ def _valuation_template_mapping_payloads(
     config_root: str | None,
 ) -> list[dict[str, Any]]:
     return [
-        mapping.to_payload()
+        mapping.model_dump(mode="json")
         for mapping in load_company_valuation_template_mappings(config_root)
     ]
 

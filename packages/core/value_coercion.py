@@ -87,6 +87,11 @@ def as_text(value: Any) -> str | None:
     return rendered or None
 
 
+def normalize_symbol(value: Any) -> str | None:
+    rendered = as_text(value)
+    return None if rendered is None else rendered.upper()
+
+
 def coerce_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
@@ -157,6 +162,7 @@ __all__ = [
     "coerce_int",
     "coerce_utc_datetime",
     "coerce_utc_iso",
+    "normalize_symbol",
     "safe_component",
     "unique_text_list",
     "utc_expiry_iso",

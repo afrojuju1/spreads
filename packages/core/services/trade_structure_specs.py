@@ -20,7 +20,7 @@ from core.services.strategy_candidate_builders.market_data import (
 
 CoverageCounter = Callable[[SymbolMarketSlice], tuple[int, int, int, int]]
 CandidateBuilder = Callable[[SymbolMarketSlice, Any], list[SpreadCandidate]]
-BuildValidator = Callable[[Mapping[str, Any] | None], StrategyBuildConfig]
+BuildValidator = Callable[[Mapping[str, Any]], StrategyBuildConfig]
 
 
 def _single_side_coverage(
@@ -222,7 +222,7 @@ class TradeStructureSpec:
 
     def validate_build(
         self,
-        payload: Mapping[str, Any] | None,
+        payload: Mapping[str, Any],
     ) -> StrategyBuildConfig:
         return self.build_validator(payload)
 
@@ -250,7 +250,7 @@ _SPEC_LIST = (
         direction="bearish",
         option_type="call",
         aliases=("call_credit", "call_credit_spread"),
-        build_validator=VerticalSpreadBuildConfig.from_payload,
+        build_validator=VerticalSpreadBuildConfig.model_validate,
         candidate_builder=_build_call_verticals,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -264,7 +264,7 @@ _SPEC_LIST = (
         direction="bullish",
         option_type="put",
         aliases=("put_credit", "put_credit_spread"),
-        build_validator=VerticalSpreadBuildConfig.from_payload,
+        build_validator=VerticalSpreadBuildConfig.model_validate,
         candidate_builder=_build_put_verticals,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -278,7 +278,7 @@ _SPEC_LIST = (
         direction="bullish",
         option_type="call",
         aliases=("call_debit", "call_debit_spread"),
-        build_validator=VerticalSpreadBuildConfig.from_payload,
+        build_validator=VerticalSpreadBuildConfig.model_validate,
         candidate_builder=_build_call_verticals,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -292,7 +292,7 @@ _SPEC_LIST = (
         direction="bearish",
         option_type="put",
         aliases=("put_debit", "put_debit_spread"),
-        build_validator=VerticalSpreadBuildConfig.from_payload,
+        build_validator=VerticalSpreadBuildConfig.model_validate,
         candidate_builder=_build_put_verticals,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -306,7 +306,7 @@ _SPEC_LIST = (
         direction="bullish",
         option_type="call",
         aliases=("long_call",),
-        build_validator=LongVolBuildConfig.from_payload,
+        build_validator=LongVolBuildConfig.model_validate,
         candidate_builder=_build_long_call_candidates,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -320,7 +320,7 @@ _SPEC_LIST = (
         direction="bearish",
         option_type="put",
         aliases=("long_put",),
-        build_validator=LongVolBuildConfig.from_payload,
+        build_validator=LongVolBuildConfig.model_validate,
         candidate_builder=_build_long_put_candidates,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -334,7 +334,7 @@ _SPEC_LIST = (
         direction="bearish",
         option_type="call",
         aliases=("short_call",),
-        build_validator=LongVolBuildConfig.from_payload,
+        build_validator=LongVolBuildConfig.model_validate,
         candidate_builder=_build_short_call_candidates,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -348,7 +348,7 @@ _SPEC_LIST = (
         direction="bullish",
         option_type="put",
         aliases=("short_put",),
-        build_validator=LongVolBuildConfig.from_payload,
+        build_validator=LongVolBuildConfig.model_validate,
         candidate_builder=_build_short_put_candidates,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
@@ -362,7 +362,7 @@ _SPEC_LIST = (
         direction="neutral",
         option_type=None,
         aliases=("iron_condor",),
-        build_validator=IronCondorBuildConfig.from_payload,
+        build_validator=IronCondorBuildConfig.model_validate,
         candidate_builder=_build_iron_condor_candidates,
         coverage_counter=_dual_side_coverage,
     ),
@@ -373,7 +373,7 @@ _SPEC_LIST = (
         direction="neutral",
         option_type=None,
         aliases=("long_straddle",),
-        build_validator=LongVolBuildConfig.from_payload,
+        build_validator=LongVolBuildConfig.model_validate,
         candidate_builder=_build_long_straddle_candidates,
         coverage_counter=_dual_side_coverage,
     ),
@@ -384,7 +384,7 @@ _SPEC_LIST = (
         direction="neutral",
         option_type=None,
         aliases=("long_strangle",),
-        build_validator=LongVolBuildConfig.from_payload,
+        build_validator=LongVolBuildConfig.model_validate,
         candidate_builder=_build_long_strangle_candidates,
         coverage_counter=_dual_side_coverage,
     ),

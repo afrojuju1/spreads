@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Any, Literal, TypeAlias
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 OwnershipSourceType: TypeAlias = Literal["form3", "form4", "form5", "13d", "13g", "13f"]
@@ -15,8 +16,19 @@ SupportTier: TypeAlias = Literal["core", "expanded"]
 CompanyValuationDocumentPayload: TypeAlias = dict[str, Any]
 
 
-@dataclass(frozen=True)
-class CompanyValuationTemplate:
+class CompanyValuationContractModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _normalize_blank_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            rendered = value.strip()
+            return rendered or None
+        return value
+
+
+class CompanyValuationTemplate(CompanyValuationContractModel):
     template_id: str
     template_version: str
     status: TemplateStatus
@@ -30,24 +42,16 @@ class CompanyValuationTemplate:
     risk_rules: dict[str, Any]
     unsupported_conditions: tuple[str, ...] = ()
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationTemplateOverride:
+class CompanyValuationTemplateOverride(CompanyValuationContractModel):
     issuer_cik: str
     template_id: str
     reason: str
     active: bool = True
     stressed_operator_flag: bool = False
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationBenchmarkPriorEntry:
+class CompanyValuationBenchmarkPriorEntry(CompanyValuationContractModel):
     ticker: str
     analyst_count: int | None = None
     consensus_rating: str | None = None
@@ -58,12 +62,8 @@ class CompanyValuationBenchmarkPriorEntry:
     source_url: str | None = None
     active: bool = True
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationBenchmarkPriorSet:
+class CompanyValuationBenchmarkPriorSet(CompanyValuationContractModel):
     prior_set_id: str
     basket_id: str
     template_id: str
@@ -77,25 +77,15 @@ class CompanyValuationBenchmarkPriorSet:
     source_notes: str = ""
     entries: tuple[CompanyValuationBenchmarkPriorEntry, ...] = ()
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["entries"] = [entry.to_payload() for entry in self.entries]
-        return payload
 
-
-@dataclass(frozen=True)
-class CompanyValuationRawClassification:
+class CompanyValuationRawClassification(CompanyValuationContractModel):
     sic_code: str | None = None
     sic_title: str | None = None
     naics_code: str | None = None
     naics_title: str | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationTaxonomyNode:
+class CompanyValuationTaxonomyNode(CompanyValuationContractModel):
     taxonomy_node_id: str
     taxonomy_version: str
     taxonomy_level: TaxonomyLevel
@@ -104,12 +94,8 @@ class CompanyValuationTaxonomyNode:
     parent_taxonomy_node_id: str | None = None
     active: bool = True
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationTaxonomyMapping:
+class CompanyValuationTaxonomyMapping(CompanyValuationContractModel):
     mapping_id: str
     mapping_version: str
     source_standard: TaxonomySourceStandard
@@ -124,12 +110,8 @@ class CompanyValuationTaxonomyMapping:
     active: bool = True
     notes: str | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationTemplateMapping:
+class CompanyValuationTemplateMapping(CompanyValuationContractModel):
     mapping_id: str
     mapping_version: str
     taxonomy_node_id: str
@@ -138,12 +120,8 @@ class CompanyValuationTemplateMapping:
     active: bool = True
     notes: str | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationTaxonomyOverride:
+class CompanyValuationTaxonomyOverride(CompanyValuationContractModel):
     issuer_cik: str
     canonical_sector_id: str
     canonical_industry_group_id: str | None = None
@@ -152,12 +130,8 @@ class CompanyValuationTaxonomyOverride:
     reason: str = ""
     active: bool = True
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationOverlayRule:
+class CompanyValuationOverlayRule(CompanyValuationContractModel):
     rule_id: str
     rule_version: str
     flag_key: str
@@ -169,18 +143,8 @@ class CompanyValuationOverlayRule:
     issuer_ciks: tuple[str, ...] = ()
     active: bool = True
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["company_name_keywords"] = list(self.company_name_keywords)
-        payload["sic_title_keywords"] = list(self.sic_title_keywords)
-        payload["sic_prefixes"] = list(self.sic_prefixes)
-        payload["naics_prefixes"] = list(self.naics_prefixes)
-        payload["issuer_ciks"] = list(self.issuer_ciks)
-        return payload
 
-
-@dataclass(frozen=True)
-class CompanyValuationCanonicalTaxonomy:
+class CompanyValuationCanonicalTaxonomy(CompanyValuationContractModel):
     taxonomy_version: str
     canonical_sector_id: str | None = None
     canonical_industry_group_id: str | None = None
@@ -193,12 +157,8 @@ class CompanyValuationCanonicalTaxonomy:
     mapping_version: str | None = None
     reason: str = ""
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationDefaultTemplateResolution:
+class CompanyValuationDefaultTemplateResolution(CompanyValuationContractModel):
     template_id: str
     template_version: str
     source: str
@@ -206,40 +166,23 @@ class CompanyValuationDefaultTemplateResolution:
     mapping_id: str | None = None
     mapping_version: str | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationSupportedIssuer:
+class CompanyValuationSupportedIssuer(CompanyValuationContractModel):
     ticker: str
     expected_template_id: str | None = None
     support_tier: SupportTier = "core"
     reason: str = ""
     active: bool = True
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationSupportPolicy:
+class CompanyValuationSupportPolicy(CompanyValuationContractModel):
     policy_version: str
     allowlist_required: bool = True
     supported_template_ids: tuple[str, ...] = ()
     supported_issuers: tuple[CompanyValuationSupportedIssuer, ...] = ()
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["supported_template_ids"] = list(self.supported_template_ids)
-        payload["supported_issuers"] = [
-            row.to_payload() for row in self.supported_issuers
-        ]
-        return payload
 
-
-@dataclass(frozen=True)
-class CompanyValuationSupportResolution:
+class CompanyValuationSupportResolution(CompanyValuationContractModel):
     status: SupportStatus
     reason: str
     in_curated_universe: bool = False
@@ -247,49 +190,26 @@ class CompanyValuationSupportResolution:
     expected_template_id: str | None = None
     expected_template_match: bool | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
+
+class CompanyValuationOverlayResolution(CompanyValuationContractModel):
+    flags: dict[str, bool] = Field(default_factory=dict)
+    reasons: dict[str, str] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class CompanyValuationOverlayResolution:
-    flags: dict[str, bool] = field(default_factory=dict)
-    reasons: dict[str, str] = field(default_factory=dict)
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "flags": dict(self.flags),
-            "reasons": dict(self.reasons),
-        }
-
-
-@dataclass(frozen=True)
-class CompanyValuationTaxonomyResolution:
+class CompanyValuationTaxonomyResolution(CompanyValuationContractModel):
     raw_classification: CompanyValuationRawClassification
     canonical_taxonomy: CompanyValuationCanonicalTaxonomy
     default_template: CompanyValuationDefaultTemplateResolution
-    support: CompanyValuationSupportResolution = field(
+    support: CompanyValuationSupportResolution = Field(
         default_factory=lambda: CompanyValuationSupportResolution(
             status="out_of_scope",
             reason="support status not resolved",
         )
     )
-    overlays: CompanyValuationOverlayResolution = field(
-        default_factory=CompanyValuationOverlayResolution
-    )
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "raw_classification": self.raw_classification.to_payload(),
-            "canonical_taxonomy": self.canonical_taxonomy.to_payload(),
-            "default_template": self.default_template.to_payload(),
-            "support": self.support.to_payload(),
-            "overlays": self.overlays.to_payload(),
-        }
+    overlays: CompanyValuationOverlayResolution = Field(default_factory=CompanyValuationOverlayResolution)
 
 
-@dataclass(frozen=True)
-class CompanyValuationIdentity:
+class CompanyValuationIdentity(CompanyValuationContractModel):
     issuer_id: str
     cik: str
     ticker: str
@@ -297,12 +217,8 @@ class CompanyValuationIdentity:
     template_id: str
     template_version: str
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class FilingRef:
+class FilingRef(CompanyValuationContractModel):
     filing_id: str
     accession_no: str
     form_type: str
@@ -310,12 +226,8 @@ class FilingRef:
     available_at: datetime
     period_end: date | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class OwnershipEvidence:
+class OwnershipEvidence(CompanyValuationContractModel):
     source_type: OwnershipSourceType
     holder_id: str | None
     group_id: str | None
@@ -323,43 +235,26 @@ class OwnershipEvidence:
     available_at: datetime
     headline: str
     reason_code: str
-    metrics: dict[str, Any] = field(default_factory=dict)
-
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
+    metrics: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class OwnershipSignal:
+class OwnershipSignal(CompanyValuationContractModel):
     score: float
     confidence: float
     freshness_days: int | None
     reason_codes: tuple[str, ...] = ()
     evidence: tuple[OwnershipEvidence, ...] = ()
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["reason_codes"] = list(self.reason_codes)
-        payload["evidence"] = [row.to_payload() for row in self.evidence]
-        return payload
 
-
-@dataclass(frozen=True)
-class QualityBreakdown:
+class QualityBreakdown(CompanyValuationContractModel):
     total_score: float
-    sub_scores: dict[str, float] = field(default_factory=dict)
-    factor_contributions: dict[str, float] = field(default_factory=dict)
+    sub_scores: dict[str, float] = Field(default_factory=dict)
+    factor_contributions: dict[str, float] = Field(default_factory=dict)
     reason_codes: tuple[str, ...] = ()
     confidence: float = 0.0
 
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["reason_codes"] = list(self.reason_codes)
-        return payload
 
-
-@dataclass(frozen=True)
-class ValuationSummary:
+class ValuationSummary(CompanyValuationContractModel):
     intrinsic_value_bear: float | None = None
     intrinsic_value_base: float | None = None
     intrinsic_value_bull: float | None = None
@@ -368,16 +263,10 @@ class ValuationSummary:
     valuation_gap: float | None = None
     confidence: float = 0.0
     reason_codes: tuple[str, ...] = ()
-    assumption_summary: dict[str, Any] = field(default_factory=dict)
-
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["reason_codes"] = list(self.reason_codes)
-        return payload
+    assumption_summary: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class PointInTimeSnapshot:
+class PointInTimeSnapshot(CompanyValuationContractModel):
     issuer_id: str
     ticker: str | None
     as_of: datetime
@@ -389,34 +278,22 @@ class PointInTimeSnapshot:
     latest_ownership_available_at: datetime | None = None
     latest_company_valuation_snapshot: dict[str, Any] | None = None
 
-    def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
 
-
-@dataclass(frozen=True)
-class CompanyValuationDocument:
+class CompanyValuationDocument(CompanyValuationContractModel):
     payload_version: str
     issuer: CompanyValuationIdentity
     as_of: datetime
-    freshness: dict[str, Any] = field(default_factory=dict)
-    source_summary: dict[str, Any] = field(default_factory=dict)
-    quality: QualityBreakdown = field(default_factory=lambda: QualityBreakdown(total_score=0.0))
-    valuation: ValuationSummary = field(default_factory=ValuationSummary)
-    ownership: dict[str, Any] = field(default_factory=dict)
-    risks: dict[str, Any] = field(default_factory=dict)
-    delta_summary: dict[str, Any] = field(default_factory=dict)
-    provenance: dict[str, Any] = field(default_factory=dict)
-
-    def to_payload(self) -> CompanyValuationDocumentPayload:
-        payload = asdict(self)
-        payload["issuer"] = self.issuer.to_payload()
-        payload["quality"] = self.quality.to_payload()
-        payload["valuation"] = self.valuation.to_payload()
-        return payload
+    freshness: dict[str, Any] = Field(default_factory=dict)
+    source_summary: dict[str, Any] = Field(default_factory=dict)
+    quality: QualityBreakdown = Field(default_factory=lambda: QualityBreakdown(total_score=0.0))
+    valuation: ValuationSummary = Field(default_factory=ValuationSummary)
+    ownership: dict[str, Any] = Field(default_factory=dict)
+    risks: dict[str, Any] = Field(default_factory=dict)
+    delta_summary: dict[str, Any] = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class CompanyValuationScreenRow:
+class CompanyValuationScreenRow(CompanyValuationContractModel):
     screening_row_id: str
     issuer_id: str
     ticker: str
@@ -433,8 +310,3 @@ class CompanyValuationScreenRow:
     limited_coverage_flag: bool = False
     stressed_operator_flag: bool = False
     top_reason_codes: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["top_reason_codes"] = list(self.top_reason_codes)
-        return payload

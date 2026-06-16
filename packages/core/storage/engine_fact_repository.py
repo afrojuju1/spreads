@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from sqlalchemy import delete, or_, select
 
 from core.storage.base import RepositoryBase
@@ -19,12 +20,161 @@ from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionMode
 from core.storage.read_models import TradeDecisionSignalRead
 from core.storage.records import StorageRow
 from core.storage.serializers import parse_date, parse_datetime, render_value
+from core.value_coercion import as_text, coerce_float, coerce_int, normalize_symbol, unique_text_list
 
 
-def _optional_date(value: Any) -> date | None:
-    if value in (None, ""):
-        return None
-    return parse_date(value)
+class TickerSourceObservationPayload(BaseModel):
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    symbol: str
+    observation_state: str | None = None
+    state: str | None = None
+    rank: int | None = None
+    score: float | None = None
+    company: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    country: str | None = None
+    price: float | None = None
+    market_cap: int | None = None
+    daily_volume: int | None = None
+    move_percent: float | None = None
+    relative_volume: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _normalize_symbol_field(cls, value: Any) -> str:
+        symbol = normalize_symbol(value)
+        if symbol is None:
+            raise ValueError("symbol is required")
+        return symbol
+
+    @field_validator("observation_state", "state", "company", "sector", "industry", "country", mode="before")
+    @classmethod
+    def _normalize_optional_text_fields(cls, value: Any) -> str | None:
+        return as_text(value)
+
+    @field_validator("rank", "market_cap", "daily_volume", mode="before")
+    @classmethod
+    def _normalize_optional_int_fields(cls, value: Any) -> int | None:
+        return coerce_int(value)
+
+    @field_validator("score", "price", "move_percent", "relative_volume", mode="before")
+    @classmethod
+    def _normalize_optional_float_fields(cls, value: Any) -> float | None:
+        return coerce_float(value)
+
+    @field_validator("reason_codes", mode="before")
+    @classmethod
+    def _normalize_reason_codes(cls, value: Any) -> list[str]:
+        return unique_text_list(value, accept_scalar=True)
+
+    def as_storage_payload(
+        self,
+        *,
+        default_state: str,
+        rank: int | None = None,
+        fallback_reason_codes: Any = None,
+    ) -> dict[str, Any]:
+        payload = self.model_dump(exclude_none=True)
+        payload.pop("state", None)
+        payload["observation_state"] = str(self.observation_state or self.state or default_state).strip().lower()
+        if rank is not None:
+            payload["rank"] = rank
+        if not payload.get("reason_codes"):
+            payload["reason_codes"] = unique_text_list(fallback_reason_codes, accept_scalar=True)
+        return payload
+
+
+class CandidateSymbolDiagnosticPayload(BaseModel):
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    underlying_symbol: str = Field(validation_alias=AliasChoices("underlying_symbol", "symbol"))
+    diagnostic_status: str = Field(default="unknown", validation_alias=AliasChoices("diagnostic_status", "status"))
+    observed_at: datetime | None = None
+    spot_price: float | None = None
+    expiration_count: int = 0
+    contract_count: int = 0
+    snapshot_count: int = 0
+    raw_candidate_count: int = 0
+    postprocess_candidate_count: int = 0
+    runtime_candidate_count: int = 0
+    returned_candidate_count: int = 0
+
+    @field_validator("underlying_symbol", mode="before")
+    @classmethod
+    def _normalize_underlying_symbol(cls, value: Any) -> str:
+        symbol = normalize_symbol(value)
+        if symbol is None:
+            raise ValueError("underlying_symbol is required")
+        return symbol
+
+    @field_validator("diagnostic_status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: Any) -> str:
+        return as_text(value) or "unknown"
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def _normalize_observed_at(cls, value: Any) -> datetime | None:
+        return parse_datetime(value)
+
+    @field_validator("spot_price", mode="before")
+    @classmethod
+    def _normalize_spot_price(cls, value: Any) -> float | None:
+        return coerce_float(value)
+
+    @field_validator(
+        "expiration_count",
+        "contract_count",
+        "snapshot_count",
+        "raw_candidate_count",
+        "postprocess_candidate_count",
+        "runtime_candidate_count",
+        "returned_candidate_count",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_count(cls, value: Any) -> int:
+        return coerce_int(value) or 0
+
+
+class TradeDecisionSignalQuery(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    decision_states: list[str] = Field(default_factory=list)
+    trading_strategy_ids: list[str] = Field(default_factory=list)
+    routine: str | None = None
+    session_date: date | None = None
+    as_of: datetime | None = None
+    limit: int = 100
+
+    @field_validator("decision_states", "trading_strategy_ids", mode="before")
+    @classmethod
+    def _normalize_text_list(cls, value: Any) -> list[str]:
+        return unique_text_list(value, accept_scalar=False)
+
+    @field_validator("routine", mode="before")
+    @classmethod
+    def _normalize_routine(cls, value: Any) -> str | None:
+        return as_text(value)
+
+    @field_validator("session_date", mode="before")
+    @classmethod
+    def _normalize_session_date(cls, value: Any) -> date | None:
+        return None if as_text(value) is None else parse_date(value)
+
+    @field_validator("as_of", mode="before")
+    @classmethod
+    def _normalize_as_of(cls, value: Any) -> datetime | None:
+        return parse_datetime(value)
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def _normalize_limit(cls, value: Any, info: ValidationInfo) -> int:
+        default = cls.model_fields[str(info.field_name)].default
+        return max(coerce_int(value) or int(default), 1)
 
 
 class EngineFactRepository(RepositoryBase):
@@ -66,9 +216,12 @@ class EngineFactRepository(RepositoryBase):
         if generated_at_dt is None or updated_at_dt is None:
             raise ValueError("generated_at and updated_at are required")
         selected_entries = [dict(entry) for entry in list(entries or []) if isinstance(entry, Mapping)]
-        entries_by_symbol = {self._normalize_symbol(entry.get("symbol")): dict(entry) for entry in selected_entries}
-        entries_by_symbol = {symbol: entry for symbol, entry in entries_by_symbol.items() if symbol is not None}
-        normalized_symbols = list(dict.fromkeys(str(symbol).upper() for symbol in symbols if str(symbol or "").strip()))
+        entries_by_symbol = {
+            symbol: dict(entry)
+            for entry in selected_entries
+            if (symbol := normalize_symbol(entry.get("symbol"))) is not None
+        }
+        normalized_symbols = list(dict.fromkeys(symbol for value in symbols if (symbol := normalize_symbol(value)) is not None))
         selected_symbols = set(normalized_symbols)
         observation_rows = self._normalize_observations(
             observations=observations,
@@ -122,7 +275,7 @@ class EngineFactRepository(RepositoryBase):
                     )
                 )
                 entry = entries_by_symbol.get(symbol, {})
-                observation_rank = self._optional_int(observation.get("rank"))
+                observation_rank = coerce_int(observation.get("rank"))
                 if observation_rank is None and str(observation.get("observation_state") or "") == "selected":
                     observation_rank = rank
                 if ticker is None:
@@ -132,17 +285,17 @@ class EngineFactRepository(RepositoryBase):
                         symbol=symbol,
                         observation_state=str(observation.get("observation_state") or "observed"),
                         rank=observation_rank,
-                        score=self._optional_float(observation.get("score")),
-                        company=self._optional_text(observation.get("company")),
-                        sector=self._optional_text(observation.get("sector")),
-                        industry=self._optional_text(observation.get("industry")),
-                        country=self._optional_text(observation.get("country")),
-                        price=self._optional_float(observation.get("price")),
-                        market_cap=self._optional_int(observation.get("market_cap")),
-                        daily_volume=self._optional_int(observation.get("daily_volume")),
-                        move_percent=self._optional_float(observation.get("move_percent")),
-                        relative_volume=self._optional_float(observation.get("relative_volume")),
-                        reason_codes_json=self._text_list(observation.get("reason_codes") or entry.get("reason_codes")),
+                        score=coerce_float(observation.get("score")),
+                        company=as_text(observation.get("company")),
+                        sector=as_text(observation.get("sector")),
+                        industry=as_text(observation.get("industry")),
+                        country=as_text(observation.get("country")),
+                        price=coerce_float(observation.get("price")),
+                        market_cap=coerce_int(observation.get("market_cap")),
+                        daily_volume=coerce_int(observation.get("daily_volume")),
+                        move_percent=coerce_float(observation.get("move_percent")),
+                        relative_volume=coerce_float(observation.get("relative_volume")),
+                        reason_codes_json=unique_text_list(observation.get("reason_codes") or entry.get("reason_codes")),
                         evidence_json=render_value(observation),
                         created_at=updated_at_dt,
                     )
@@ -151,17 +304,17 @@ class EngineFactRepository(RepositoryBase):
                     ticker.ticker_source_id = ticker_source_id
                     ticker.observation_state = str(observation.get("observation_state") or "observed")
                     ticker.rank = observation_rank
-                    ticker.score = self._optional_float(observation.get("score"))
-                    ticker.company = self._optional_text(observation.get("company"))
-                    ticker.sector = self._optional_text(observation.get("sector"))
-                    ticker.industry = self._optional_text(observation.get("industry"))
-                    ticker.country = self._optional_text(observation.get("country"))
-                    ticker.price = self._optional_float(observation.get("price"))
-                    ticker.market_cap = self._optional_int(observation.get("market_cap"))
-                    ticker.daily_volume = self._optional_int(observation.get("daily_volume"))
-                    ticker.move_percent = self._optional_float(observation.get("move_percent"))
-                    ticker.relative_volume = self._optional_float(observation.get("relative_volume"))
-                    ticker.reason_codes_json = self._text_list(observation.get("reason_codes") or entry.get("reason_codes"))
+                    ticker.score = coerce_float(observation.get("score"))
+                    ticker.company = as_text(observation.get("company"))
+                    ticker.sector = as_text(observation.get("sector"))
+                    ticker.industry = as_text(observation.get("industry"))
+                    ticker.country = as_text(observation.get("country"))
+                    ticker.price = coerce_float(observation.get("price"))
+                    ticker.market_cap = coerce_int(observation.get("market_cap"))
+                    ticker.daily_volume = coerce_int(observation.get("daily_volume"))
+                    ticker.move_percent = coerce_float(observation.get("move_percent"))
+                    ticker.relative_volume = coerce_float(observation.get("relative_volume"))
+                    ticker.reason_codes_json = unique_text_list(observation.get("reason_codes") or entry.get("reason_codes"))
                     ticker.evidence_json = render_value(observation)
                 observations_by_symbol[symbol] = ticker
 
@@ -355,37 +508,38 @@ class EngineFactRepository(RepositoryBase):
             raise ValueError("updated_at is required")
 
         rows: list[StorageRow] = []
-        normalized_rows = [
-            dict(row)
-            for row in list(diagnostics or [])
-            if isinstance(row, Mapping) and self._normalize_symbol(row.get("underlying_symbol") or row.get("symbol")) is not None
-        ]
+        normalized_rows: list[CandidateSymbolDiagnosticPayload] = []
+        for raw_diagnostic in list(diagnostics or []):
+            if not isinstance(raw_diagnostic, Mapping):
+                continue
+            try:
+                normalized_rows.append(CandidateSymbolDiagnosticPayload.model_validate(raw_diagnostic))
+            except ValueError:
+                continue
         with self.session_scope() as session:
             session.execute(delete(CandidateSymbolDiagnosticModel).where(CandidateSymbolDiagnosticModel.candidate_run_id == candidate_run_id))
-            for raw in normalized_rows:
-                symbol = self._normalize_symbol(raw.get("underlying_symbol") or raw.get("symbol"))
-                if symbol is None:
-                    continue
-                observed_at_dt = parse_datetime(raw.get("observed_at")) or updated_at_dt
+            for diagnostic in normalized_rows:
+                raw = diagnostic.model_dump()
+                observed_at_dt = diagnostic.observed_at or updated_at_dt
                 row = CandidateSymbolDiagnosticModel(
                     candidate_run_id=candidate_run_id,
-                    underlying_symbol=symbol,
+                    underlying_symbol=diagnostic.underlying_symbol,
                     trading_strategy_id=trading_strategy_id,
                     trade_structure=trade_structure,
                     routine=routine,
                     ticker_source_run_id=ticker_source_run_id,
                     ticker_source_kind=ticker_source_kind,
                     ticker_source_id=ticker_source_id,
-                    diagnostic_status=str(raw.get("diagnostic_status") or raw.get("status") or "unknown"),
+                    diagnostic_status=diagnostic.diagnostic_status,
                     observed_at=observed_at_dt,
-                    spot_price=self._optional_float(raw.get("spot_price")),
-                    expiration_count=self._optional_int(raw.get("expiration_count")) or 0,
-                    contract_count=self._optional_int(raw.get("contract_count")) or 0,
-                    snapshot_count=self._optional_int(raw.get("snapshot_count")) or 0,
-                    raw_candidate_count=self._optional_int(raw.get("raw_candidate_count")) or 0,
-                    postprocess_candidate_count=self._optional_int(raw.get("postprocess_candidate_count")) or 0,
-                    runtime_candidate_count=self._optional_int(raw.get("runtime_candidate_count")) or 0,
-                    returned_candidate_count=self._optional_int(raw.get("returned_candidate_count")) or 0,
+                    spot_price=diagnostic.spot_price,
+                    expiration_count=diagnostic.expiration_count,
+                    contract_count=diagnostic.contract_count,
+                    snapshot_count=diagnostic.snapshot_count,
+                    raw_candidate_count=diagnostic.raw_candidate_count,
+                    postprocess_candidate_count=diagnostic.postprocess_candidate_count,
+                    runtime_candidate_count=diagnostic.runtime_candidate_count,
+                    returned_candidate_count=diagnostic.returned_candidate_count,
                     setup_json=render_value(raw.get("setup") or {}),
                     market_data_json=render_value(raw.get("market_data") or {}),
                     rejection_counts_json=render_value(raw.get("rejection_counts") or {}),
@@ -471,7 +625,7 @@ class EngineFactRepository(RepositoryBase):
                     rank=rank,
                     score=score,
                     confidence=confidence,
-                    expiration_date=_optional_date(expiration_date),
+                    expiration_date=None if as_text(expiration_date) is None else parse_date(expiration_date),
                     selection_state=selection_state,
                     candidate_state=candidate_state,
                     observed_at=observed_at_dt,
@@ -500,7 +654,7 @@ class EngineFactRepository(RepositoryBase):
                 row.rank = rank
                 row.score = score
                 row.confidence = confidence
-                row.expiration_date = _optional_date(expiration_date)
+                row.expiration_date = None if as_text(expiration_date) is None else parse_date(expiration_date)
                 row.selection_state = selection_state
                 row.candidate_state = candidate_state
                 row.observed_at = observed_at_dt
@@ -776,26 +930,35 @@ class EngineFactRepository(RepositoryBase):
         as_of: str | None = None,
         limit: int = 100,
     ) -> list[StorageRow]:
-        as_of_dt = parse_datetime(as_of)
+        query = TradeDecisionSignalQuery.model_validate(
+            {
+                "decision_states": decision_states,
+                "trading_strategy_ids": trading_strategy_ids,
+                "routine": routine,
+                "session_date": session_date,
+                "as_of": as_of,
+                "limit": limit,
+            }
+        )
         statement = select(TradeDecisionModel, TradeSignalModel).join(
             TradeSignalModel, TradeDecisionModel.trade_signal_id == TradeSignalModel.trade_signal_id
         )
-        if decision_states:
-            statement = statement.where(TradeDecisionModel.decision_state.in_(decision_states))
-        if trading_strategy_ids:
-            statement = statement.where(TradeDecisionModel.trading_strategy_id.in_(trading_strategy_ids))
-        if routine is not None:
-            statement = statement.where(TradeDecisionModel.routine == routine)
-        if session_date is not None:
-            statement = statement.where(TradeSignalModel.session_date == parse_date(session_date))
-        if as_of_dt is not None:
-            statement = statement.where(or_(TradeSignalModel.expires_at.is_(None), TradeSignalModel.expires_at > as_of_dt))
+        if query.decision_states:
+            statement = statement.where(TradeDecisionModel.decision_state.in_(query.decision_states))
+        if query.trading_strategy_ids:
+            statement = statement.where(TradeDecisionModel.trading_strategy_id.in_(query.trading_strategy_ids))
+        if query.routine is not None:
+            statement = statement.where(TradeDecisionModel.routine == query.routine)
+        if query.session_date is not None:
+            statement = statement.where(TradeSignalModel.session_date == query.session_date)
+        if query.as_of is not None:
+            statement = statement.where(or_(TradeSignalModel.expires_at.is_(None), TradeSignalModel.expires_at > query.as_of))
         statement = statement.order_by(
             TradeDecisionModel.score.desc().nullslast(),
             TradeDecisionModel.rank.asc().nullslast(),
             TradeDecisionModel.decided_at.desc(),
             TradeDecisionModel.trade_decision_id.asc(),
-        ).limit(max(int(limit), 1))
+        ).limit(query.limit)
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         return [
@@ -1027,26 +1190,29 @@ class EngineFactRepository(RepositoryBase):
         for raw in list(observations or []):
             if not isinstance(raw, Mapping):
                 continue
-            symbol = cls._normalize_symbol(raw.get("symbol"))
-            if symbol is None:
+            try:
+                observation = TickerSourceObservationPayload.model_validate(raw)
+            except ValueError:
                 continue
-            row = dict(raw)
-            row["symbol"] = symbol
-            state = cls._optional_text(row.get("observation_state") or row.get("state"))
-            row["observation_state"] = (state or ("selected" if symbol in selected_symbols else "observed")).strip().lower()
-            rows[symbol] = row
+            rows[observation.symbol] = observation.as_storage_payload(
+                default_state="selected" if observation.symbol in selected_symbols else "observed",
+            )
 
         for rank, raw in enumerate(selected_entries, start=1):
-            symbol = cls._normalize_symbol(raw.get("symbol"))
-            if symbol is None:
+            try:
+                observation = TickerSourceObservationPayload.model_validate(raw)
+            except ValueError:
                 continue
-            row = rows.get(symbol, dict(raw))
-            row["symbol"] = symbol
+            row = rows.get(
+                observation.symbol,
+                observation.as_storage_payload(default_state="selected"),
+            )
+            row["symbol"] = observation.symbol
             row["observation_state"] = "selected"
             row["rank"] = rank
-            row.setdefault("score", raw.get("score"))
-            row.setdefault("reason_codes", raw.get("reason_codes"))
-            rows[symbol] = row
+            row.setdefault("score", observation.score)
+            row.setdefault("reason_codes", observation.reason_codes)
+            rows[observation.symbol] = row
 
         return list(rows.values())
 
@@ -1156,45 +1322,6 @@ class EngineFactRepository(RepositoryBase):
             }.items()
             if value is not None
         }
-
-    @staticmethod
-    def _normalize_symbol(value: Any) -> str | None:
-        rendered = str(value or "").upper().strip()
-        return rendered or None
-
-    @staticmethod
-    def _optional_text(value: Any) -> str | None:
-        rendered = str(value or "").strip()
-        return rendered or None
-
-    @staticmethod
-    def _optional_int(value: Any) -> int | None:
-        if value in (None, ""):
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _optional_float(value: Any) -> float | None:
-        if value in (None, ""):
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _text_list(value: Any) -> list[str]:
-        if not isinstance(value, (list, tuple)):
-            return []
-        normalized: list[str] = []
-        for item in value:
-            rendered = str(item or "").strip()
-            if rendered and rendered not in normalized:
-                normalized.append(rendered)
-        return normalized
 
 
 __all__ = ["EngineFactRepository"]

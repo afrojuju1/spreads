@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from core.money import money_float, money_scaled_float, money_sum_float, option_contract_notional
 from core.services.account_capacity import (
@@ -95,24 +95,6 @@ TERMINAL_ENTRY_ATTEMPT_STATUSES = {
     "rejected",
 }
 
-OPTIONAL_FLOAT_POLICY_KEYS = {
-    "max_position_notional",
-    "max_session_notional",
-    "max_position_max_loss",
-    "max_session_max_loss",
-    "stale_quote_after_seconds",
-}
-INT_POLICY_KEYS = {
-    "max_open_positions_per_session",
-    "max_open_positions_per_underlying",
-    "max_open_positions_per_underlying_strategy",
-    "max_contracts_per_position",
-    "max_contracts_per_session",
-}
-FLOAT_POLICY_KEYS = OPTIONAL_FLOAT_POLICY_KEYS
-BOOL_POLICY_KEYS = {"enabled", "allow_live"}
-
-
 class BaselineRiskPolicyYamlPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -128,6 +110,71 @@ class BaselineRiskPolicyYamlPayload(BaseModel):
     max_position_max_loss: float | None = Field(ge=0)
     max_session_max_loss: float | None = Field(ge=0)
     stale_quote_after_seconds: float = Field(gt=0)
+
+
+class RuntimeRiskPolicyOverride(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    enabled: bool | None = None
+    allow_live: bool | None = None
+    max_open_positions_per_session: int | None = Field(default=None, gt=0)
+    max_open_positions_per_underlying: int | None = Field(default=None, gt=0)
+    max_open_positions_per_underlying_strategy: int | None = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("max_open_positions_per_underlying_strategy", "duplicate_underlying_strategy_limit"),
+    )
+    max_contracts_per_position: int | None = Field(default=None, gt=0)
+    max_contracts_per_session: int | None = Field(default=None, gt=0)
+    max_position_notional: float | None = Field(default=None, ge=0)
+    max_session_notional: float | None = Field(default=None, ge=0)
+    max_position_max_loss: float | None = Field(default=None, ge=0)
+    max_session_max_loss: float | None = Field(default=None, ge=0)
+    stale_quote_after_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("stale_quote_after_seconds", "max_candidate_age_seconds"),
+    )
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+
+class RuntimeRiskPolicy(BaselineRiskPolicyYamlPayload):
+    max_contracts_per_position_configured: bool = False
+
+
+class ProtectionRuleConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+    enabled: bool = False
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+    @property
+    def configured(self) -> bool:
+        return self.enabled or bool(self.__pydantic_extra__ or {})
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return (self.__pydantic_extra__ or {}).get(key, default)
+
+    def positive_int(self, key: str) -> int | None:
+        value = coerce_int(self.get(key))
+        if value is None or value <= 0:
+            return None
+        return value
+
+    def positive_float(self, *keys: str) -> float | None:
+        for key in keys:
+            value = coerce_float(self.get(key))
+            if value is not None and value > 0:
+                return value
+        return None
 
 
 @lru_cache(maxsize=1)
@@ -170,47 +217,15 @@ def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     raw_policy = source.get("risk_policy") if isinstance(source.get("risk_policy"), dict) else source
 
-    policy = dict(_baseline_risk_policy())
-    policy.update(RISK_POLICY_DERIVED_FLAGS)
-    policy["max_contracts_per_position_configured"] = "max_contracts_per_position" in policy
-    stale_quote_after_seconds = coerce_float(raw_policy.get("stale_quote_after_seconds", raw_policy.get("max_candidate_age_seconds")))
-    if stale_quote_after_seconds is not None:
-        policy["stale_quote_after_seconds"] = stale_quote_after_seconds
-
-    duplicate_underlying_strategy_limit = coerce_int(
-        raw_policy.get(
-            "max_open_positions_per_underlying_strategy",
-            raw_policy.get("duplicate_underlying_strategy_limit"),
-        )
-    )
-    if duplicate_underlying_strategy_limit is not None:
-        policy["max_open_positions_per_underlying_strategy"] = duplicate_underlying_strategy_limit
-
-    for key in BOOL_POLICY_KEYS:
-        if key in raw_policy:
-            policy[key] = coerce_bool(raw_policy[key], default=False)
-    for key in INT_POLICY_KEYS:
-        if key not in raw_policy:
-            continue
-        parsed = coerce_int(raw_policy[key])
-        if parsed is not None:
-            policy[key] = parsed
-            if key == "max_contracts_per_position":
-                policy["max_contracts_per_position_configured"] = True
-    for key in FLOAT_POLICY_KEYS:
-        if key not in raw_policy:
-            continue
-        value = raw_policy[key]
-        if value is None:
-            policy[key] = None
-            continue
-        parsed = coerce_float(value)
-        if parsed is not None:
-            policy[key] = parsed
-
-    policy["enabled"] = bool(policy["enabled"])
-    policy["allow_live"] = bool(policy["allow_live"])
-    return policy
+    overrides = RuntimeRiskPolicyOverride.model_validate(raw_policy).model_dump(exclude_unset=True)
+    baseline = _baseline_risk_policy()
+    policy = {
+        **baseline,
+        **RISK_POLICY_DERIVED_FLAGS,
+        **overrides,
+        "max_contracts_per_position_configured": "max_contracts_per_position" in baseline or "max_contracts_per_position" in overrides,
+    }
+    return RuntimeRiskPolicy.model_validate(policy).model_dump()
 
 
 def _current_trading_environment() -> str:
@@ -1412,25 +1427,6 @@ def build_allocation_plan_snapshot(
     }
 
 
-def _protection_rule_enabled(rule: Mapping[str, Any]) -> bool:
-    return bool(coerce_bool(rule.get("enabled"), default=False))
-
-
-def _protection_positive_int(rule: Mapping[str, Any], key: str) -> int | None:
-    value = coerce_int(rule.get(key))
-    if value is None or value <= 0:
-        return None
-    return value
-
-
-def _protection_positive_float(rule: Mapping[str, Any], *keys: str) -> float | None:
-    for key in keys:
-        value = coerce_float(rule.get(key))
-        if value is not None and value > 0:
-            return value
-    return None
-
-
 def _protection_activity_at(row: Mapping[str, Any]) -> datetime | None:
     for key in ("closed_at", "opened_at", "updated_at", "created_at", "requested_at"):
         value = row.get(key)
@@ -1460,7 +1456,7 @@ def _position_net_pnl(row: Mapping[str, Any]) -> float:
 def _scoped_positions(
     positions: list[dict[str, Any]],
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     trading_strategy_id: str,
     strategy_family: str | None,
 ) -> list[dict[str, Any]]:
@@ -1480,8 +1476,8 @@ def _protection_block_item(reason: str, message: str, metrics: Mapping[str, Any]
     }
 
 
-def _account_emergency_stop_block(rule: Mapping[str, Any]) -> dict[str, Any] | None:
-    if not _protection_rule_enabled(rule):
+def _account_emergency_stop_block(rule: ProtectionRuleConfig) -> dict[str, Any] | None:
+    if not rule.enabled:
         return None
     configured_halt = bool(
         coerce_bool(rule.get("halted"), default=False)
@@ -1508,14 +1504,14 @@ def _account_emergency_stop_block(rule: Mapping[str, Any]) -> dict[str, Any] | N
 def _drawdown_block(
     *,
     rule_name: str,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     positions: list[dict[str, Any]],
     trading_strategy_id: str,
     strategy_family: str | None,
     session_date: str,
     now: datetime,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if not _protection_rule_enabled(rule):
+    if not rule.enabled:
         return {"enabled": False}, None
     scoped = _scoped_positions(
         positions,
@@ -1535,7 +1531,7 @@ def _drawdown_block(
             }
         ]
     else:
-        window_days = _protection_positive_int(rule, "window_days") or 5
+        window_days = rule.positive_int("window_days") or 5
         start = now - timedelta(days=window_days)
         window_positions = [
             row
@@ -1547,8 +1543,8 @@ def _drawdown_block(
     realized = money_sum_float(coerce_float(row.get("realized_pnl")) for row in window_positions)
     unrealized = money_sum_float(coerce_float(row.get("unrealized_pnl")) for row in open_positions)
     net = money_sum_float([realized, unrealized])
-    max_realized_loss = _protection_positive_float(rule, "max_realized_loss", "max_loss")
-    max_net_loss = _protection_positive_float(rule, "max_net_loss", "max_drawdown")
+    max_realized_loss = rule.positive_float("max_realized_loss", "max_loss")
+    max_net_loss = rule.positive_float("max_net_loss", "max_drawdown")
     metrics = {
         "enabled": True,
         "scope": as_text(rule.get("scope")) or "account",
@@ -1561,7 +1557,7 @@ def _drawdown_block(
         "max_net_loss": max_net_loss,
     }
     if rule_name == "rolling_drawdown_halt":
-        metrics["window_days"] = _protection_positive_int(rule, "window_days") or 5
+        metrics["window_days"] = rule.positive_int("window_days") or 5
     if max_realized_loss is not None and realized <= -abs(max_realized_loss):
         return metrics, _protection_block_item(
             f"{rule_name}_realized_loss",
@@ -1580,7 +1576,7 @@ def _drawdown_block(
 def _closed_loss_positions(
     positions: list[dict[str, Any]],
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     trading_strategy_id: str,
     strategy_family: str | None,
 ) -> list[dict[str, Any]]:
@@ -1601,13 +1597,13 @@ def _closed_loss_positions(
 
 def _loss_streak_block(
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     positions: list[dict[str, Any]],
     trading_strategy_id: str,
     strategy_family: str | None,
     now: datetime,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if not _protection_rule_enabled(rule):
+    if not rule.enabled:
         return {"enabled": False}, None
     closed = _closed_loss_positions(
         positions,
@@ -1625,8 +1621,8 @@ def _loss_streak_block(
             latest_loss_at = latest_loss_at or _protection_activity_at(row)
             continue
         break
-    max_losses = _protection_positive_int(rule, "max_consecutive_losses")
-    cooldown_minutes = _protection_positive_int(rule, "cooldown_minutes")
+    max_losses = rule.positive_int("max_consecutive_losses")
+    cooldown_minutes = rule.positive_int("cooldown_minutes")
     cooldown_active = False
     if max_losses is not None and streak >= max_losses and latest_loss_at is not None:
         cooldown_active = cooldown_minutes is None or now < latest_loss_at + timedelta(minutes=cooldown_minutes)
@@ -1651,17 +1647,17 @@ def _loss_streak_block(
 
 def _strategy_family_cooldown_block(
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     positions: list[dict[str, Any]],
     trading_strategy_id: str,
     strategy_family: str | None,
     now: datetime,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if not _protection_rule_enabled(rule):
+    if not rule.enabled:
         return {"enabled": False}, None
     family_positions = _scoped_positions(
         positions,
-        rule={"scope": "strategy_family"},
+        rule=rule.model_copy(update={"scope": "strategy_family"}),
         trading_strategy_id=trading_strategy_id,
         strategy_family=strategy_family,
     )
@@ -1669,7 +1665,7 @@ def _strategy_family_cooldown_block(
         (_protection_activity_at(row) for row in family_positions if as_text(row.get("status")) in OPEN_POSITION_STATUSES),
         default=None,
     )
-    loss_rule = {**dict(rule), "scope": "strategy_family"}
+    loss_rule = rule.model_copy(update={"scope": "strategy_family"})
     latest_loss = next(
         (
             row
@@ -1684,8 +1680,8 @@ def _strategy_family_cooldown_block(
         None,
     )
     latest_loss_at = None if latest_loss is None else _protection_activity_at(latest_loss)
-    after_entry_minutes = _protection_positive_int(rule, "cooldown_minutes_after_entry")
-    after_loss_minutes = _protection_positive_int(rule, "cooldown_minutes_after_loss")
+    after_entry_minutes = rule.positive_int("cooldown_minutes_after_entry")
+    after_loss_minutes = rule.positive_int("cooldown_minutes_after_loss")
     entry_cooldown_active = (
         after_entry_minutes is not None and latest_entry_at is not None and now < latest_entry_at + timedelta(minutes=after_entry_minutes)
     )
@@ -1720,12 +1716,12 @@ def _strategy_family_cooldown_block(
 
 def _event_calendar_block(
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     candidate_symbol: str | None,
     session_date: str,
     now: datetime,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if not _protection_rule_enabled(rule):
+    if not rule.enabled:
         return {"enabled": False}, None
     blocked_dates = set(unique_text_list(rule.get("blocked_dates"), accept_scalar=True))
     blocked_symbols = {item.upper() for item in unique_text_list(rule.get("blocked_symbols"), accept_scalar=True)}
@@ -1770,12 +1766,12 @@ def _event_calendar_block(
 
 def _duplicate_exposure_block(
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     active_exposures: list[dict[str, Any]],
     candidate_symbol: str | None,
     candidate_correlation_group: str | None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if not _protection_rule_enabled(rule):
+    if not rule.enabled:
         return {"enabled": False}, None
     same_underlying = [row for row in active_exposures if as_text(row.get("underlying_symbol")) == candidate_symbol]
     same_theme = [
@@ -1785,8 +1781,8 @@ def _duplicate_exposure_block(
         and candidate_correlation_group != candidate_symbol
         and as_text(row.get("correlation_group")) == candidate_correlation_group
     ]
-    max_same_underlying = _protection_positive_int(rule, "max_open_same_underlying")
-    max_same_theme = _protection_positive_int(rule, "max_open_same_theme")
+    max_same_underlying = rule.positive_int("max_open_same_underlying")
+    max_same_theme = rule.positive_int("max_open_same_theme")
     metrics = {
         "enabled": True,
         "candidate_symbol": candidate_symbol,
@@ -1835,22 +1831,22 @@ def _active_short_contract_count(positions: list[dict[str, Any]]) -> float:
 
 def _options_exposure_block(
     *,
-    rule: Mapping[str, Any],
+    rule: ProtectionRuleConfig,
     active_exposures: list[dict[str, Any]],
     positions: list[dict[str, Any]],
     candidate: Mapping[str, Any],
     quantity: float,
     candidate_max_loss: float | None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if not _protection_rule_enabled(rule):
+    if not rule.enabled:
         return {"enabled": False}, None
     active_contracts = money_sum_float(coerce_float(row.get("contract_count")) or 1.0 for row in active_exposures)
     active_max_loss = money_sum_float(coerce_float(row.get("max_loss")) for row in active_exposures)
     active_short_contracts = _active_short_contract_count(positions)
     candidate_short_contracts = _short_leg_contract_count(candidate, quantity)
-    max_open_contracts = _protection_positive_int(rule, "max_open_option_contracts")
-    max_total_max_loss = _protection_positive_float(rule, "max_total_max_loss", "max_scenario_loss")
-    max_short_contracts = _protection_positive_int(rule, "max_short_option_contracts")
+    max_open_contracts = rule.positive_int("max_open_option_contracts")
+    max_total_max_loss = rule.positive_float("max_total_max_loss", "max_scenario_loss")
+    max_short_contracts = rule.positive_int("max_short_option_contracts")
     total_contracts_after = active_contracts + quantity
     total_max_loss_after = None if candidate_max_loss is None else money_sum_float([active_max_loss, candidate_max_loss])
     total_short_after = active_short_contracts + candidate_short_contracts
@@ -1936,7 +1932,7 @@ def build_protection_admission_snapshot(
     now = coerce_utc_datetime(evaluated_at) or datetime.now(UTC)
     normalized_policy = dict(policy or {})
     raw_rules = as_mapping(normalized_policy.get("rules"))
-    rules = {rule_name: as_mapping(raw_rules.get(rule_name)) for rule_name in PROTECTION_RULE_KEYS}
+    rules = {rule_name: ProtectionRuleConfig.model_validate(as_mapping(raw_rules.get(rule_name))) for rule_name in PROTECTION_RULE_KEYS}
     if not _portfolio_schema_ready(execution_store):
         return _protection_payload(
             status="unknown",
@@ -1985,8 +1981,8 @@ def build_protection_admission_snapshot(
         )
 
     metrics: dict[str, Any] = {
-        "rule_count": len([rule for rule in rules.values() if rule]),
-        "enabled_rule_count": sum(1 for rule in rules.values() if _protection_rule_enabled(rule)),
+        "rule_count": len([rule for rule in rules.values() if rule.configured]),
+        "enabled_rule_count": sum(1 for rule in rules.values() if rule.enabled),
         "active_exposure_count": len(active_exposures),
         "position_count": len(positions),
         "candidate_symbol": candidate_symbol,

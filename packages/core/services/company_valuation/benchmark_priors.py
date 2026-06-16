@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.config import default_database_url
-from core.value_coercion import coerce_float
+from core.value_coercion import as_text, coerce_float, normalize_symbol
 from core.services.company_valuation.contracts import (
     CompanyValuationBenchmarkPriorEntry,
     CompanyValuationBenchmarkPriorSet,
@@ -29,46 +29,6 @@ from core.storage.serializers import parse_datetime
 
 def _benchmark_prior_path(config_root: str | Path | None = None) -> Path:
     return default_config_root(config_root) / "company_valuation" / "benchmark_priors.yaml"
-
-
-def _as_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError(f"{field_name} must be a mapping")
-    return dict(value)
-
-
-def _as_text(value: Any, *, field_name: str) -> str:
-    rendered = str(value or "").strip()
-    if not rendered:
-        raise ValueError(f"{field_name} is required")
-    return rendered
-
-
-def _as_int(value: Any, *, field_name: str) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be an integer") from exc
-
-
-def _as_float(value: Any, *, field_name: str) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be numeric") from exc
-
-
-def _as_target_field(value: Any) -> str:
-    rendered = _as_text(value, field_name="target_field")
-    if rendered not in {"average_target", "median_target"}:
-        raise ValueError("target_field must be average_target or median_target")
-    return rendered
 
 
 def _normalized_as_of(value: str | datetime | None) -> datetime:
@@ -100,71 +60,29 @@ def _load_company_valuation_benchmark_priors_cached(
         raise ValueError("prior_sets must be a list")
     prior_sets: list[CompanyValuationBenchmarkPriorSet] = []
     for item in raw_prior_sets:
-        mapping = _as_mapping(item, field_name="prior_set")
+        if not isinstance(item, dict):
+            raise ValueError("prior_set entries must be mappings")
+        mapping = dict(item)
         raw_entries = mapping.get("entries") or []
         if not isinstance(raw_entries, list):
             raise ValueError("entries must be a list")
         entries: list[CompanyValuationBenchmarkPriorEntry] = []
         for raw_entry in raw_entries:
-            entry_mapping = _as_mapping(raw_entry, field_name="entry")
-            entries.append(
-                CompanyValuationBenchmarkPriorEntry(
-                    ticker=_as_text(entry_mapping.get("ticker"), field_name="ticker").upper(),
-                    analyst_count=_as_int(
-                        entry_mapping.get("analyst_count"),
-                        field_name="analyst_count",
-                    ),
-                    consensus_rating=(
-                        str(entry_mapping.get("consensus_rating")).strip() if entry_mapping.get("consensus_rating") not in (None, "") else None
-                    ),
-                    average_target=_as_float(
-                        entry_mapping.get("average_target"),
-                        field_name="average_target",
-                    ),
-                    median_target=_as_float(
-                        entry_mapping.get("median_target"),
-                        field_name="median_target",
-                    ),
-                    low_target=_as_float(
-                        entry_mapping.get("low_target"),
-                        field_name="low_target",
-                    ),
-                    high_target=_as_float(
-                        entry_mapping.get("high_target"),
-                        field_name="high_target",
-                    ),
-                    source_url=(str(entry_mapping.get("source_url")).strip() if entry_mapping.get("source_url") not in (None, "") else None),
-                    active=bool(entry_mapping.get("active", True)),
-                )
-            )
-        prior_sets.append(
-            CompanyValuationBenchmarkPriorSet(
-                prior_set_id=_as_text(
-                    mapping.get("prior_set_id"),
-                    field_name="prior_set_id",
-                ),
-                basket_id=_as_text(mapping.get("basket_id"), field_name="basket_id"),
-                template_id=_as_text(
-                    mapping.get("template_id"),
-                    field_name="template_id",
-                ),
-                as_of=_as_text(mapping.get("as_of"), field_name="as_of"),
-                source_name=_as_text(
-                    mapping.get("source_name"),
-                    field_name="source_name",
-                ),
-                target_field=_as_target_field(mapping.get("target_field", "average_target")),
-                supported_only_default=bool(mapping.get("supported_only_default", True)),
-                minimum_coverage=max(int(mapping.get("minimum_coverage", 1)), 1),
-                trigger_mean_abs_gap_delta=float(mapping.get("trigger_mean_abs_gap_delta", 0.2)),
-                trigger_sign_mismatch_count=max(
-                    int(mapping.get("trigger_sign_mismatch_count", 1)),
-                    0,
-                ),
-                source_notes=str(mapping.get("source_notes") or "").strip(),
-                entries=tuple(entries),
-            )
-        )
+            if not isinstance(raw_entry, dict):
+                raise ValueError("entry values must be mappings")
+            symbol = normalize_symbol(raw_entry.get("ticker"))
+            if symbol is None:
+                raise ValueError("ticker is required")
+            entries.append(CompanyValuationBenchmarkPriorEntry.model_validate({**raw_entry, "ticker": symbol}))
+        target_field = as_text(mapping.get("target_field")) or "average_target"
+        if target_field not in {"average_target", "median_target"}:
+            raise ValueError("target_field must be average_target or median_target")
+        prior_set = CompanyValuationBenchmarkPriorSet.model_validate({**mapping, "target_field": target_field, "entries": tuple(entries)})
+        if prior_set.minimum_coverage < 1:
+            raise ValueError("minimum_coverage must be >= 1")
+        if prior_set.trigger_sign_mismatch_count < 0:
+            raise ValueError("trigger_sign_mismatch_count must be >= 0")
+        prior_sets.append(prior_set)
     return tuple(prior_sets)
 
 

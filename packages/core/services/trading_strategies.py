@@ -82,73 +82,16 @@ class UniverseYamlPayload(BaseModel):
         return normalize_text_tuple(value, uppercase=True, require_non_empty=True)
 
 
-class StrategySourceYamlPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    kind: Literal["static", "dynamic"] = Field(alias="type")
-    ref: str
-    max_age_seconds: int | None = None
-    max_symbols: int | None = None
-    fallback_universe_ref: str | None = None
-
-    @field_validator("kind", mode="before")
-    @classmethod
-    def _normalize_kind(cls, value: Any) -> str:
-        rendered = str(value or "").strip().lower()
-        if rendered not in {STATIC_SOURCE, DYNAMIC_SOURCE}:
-            raise ValueError(f"must be one of: {STATIC_SOURCE}, {DYNAMIC_SOURCE}")
-        return rendered
-
-    @field_validator("ref", mode="before")
-    @classmethod
-    def _normalize_ref(cls, value: Any) -> str:
-        return normalize_required_text(value)
-
-    @field_validator("fallback_universe_ref", mode="before")
-    @classmethod
-    def _normalize_optional_text(cls, value: Any) -> str | None:
-        return normalize_optional_text(value)
-
-    @field_validator("max_age_seconds", "max_symbols", mode="before")
-    @classmethod
-    def _normalize_optional_int(cls, value: Any) -> Any:
-        if value in (None, ""):
-            return None
-        return value
-
-    @field_validator("max_age_seconds", "max_symbols")
-    @classmethod
-    def _require_positive_int(cls, value: int | None) -> int | None:
-        if value is not None and value <= 0:
-            raise ValueError("must be positive")
-        return value
-
-
-class StrategyRoutinePayload(BaseModel):
+class TradingStrategyRiskPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
-    schedule: dict[str, Any] = Field(default_factory=dict)
-    selection: dict[str, Any] = Field(default_factory=dict)
-    quality_profile: str | None = None
-    quality_overrides: dict[str, Any] = Field(default_factory=dict)
-    recipes: tuple[str, ...] = Field(default_factory=tuple)
-    policy: dict[str, Any] = Field(default_factory=dict)
+    limits: dict[str, Any] = Field(default_factory=dict)
+    sizing: StrategyRiskDefaults = Field(default_factory=StrategyRiskDefaults)
 
-    @field_validator("schedule", "selection", "quality_overrides", "policy", mode="before")
+    @field_validator("limits", mode="before")
     @classmethod
     def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
         return normalize_mapping(value)
-
-    @field_validator("quality_profile", mode="before")
-    @classmethod
-    def _normalize_quality_profile(cls, value: Any) -> str | None:
-        return normalize_optional_text(value)
-
-    @field_validator("recipes", mode="before")
-    @classmethod
-    def _normalize_recipes(cls, value: Any) -> tuple[str, ...]:
-        return normalize_text_tuple(value)
 
 
 class TradingStrategyPayload(BaseModel):
@@ -157,23 +100,23 @@ class TradingStrategyPayload(BaseModel):
     trading_strategy_id: str
     name: str
     enabled: bool = True
-    source: StrategySourceYamlPayload
+    source: StrategySource
     trade_structure: str
     build: dict[str, Any] = Field(default_factory=dict)
-    entry: StrategyRoutinePayload | None = None
-    management: StrategyRoutinePayload | None = None
-    liquidity: dict[str, Any] = Field(default_factory=dict)
-    risk: dict[str, Any] = Field(default_factory=dict)
+    entry: StrategyRoutine | None = None
+    management: StrategyRoutine | None = None
+    liquidity: StrategyLiquidityRules = Field(default_factory=StrategyLiquidityRules)
+    risk: TradingStrategyRiskPayload = Field(default_factory=TradingStrategyRiskPayload)
     protection: dict[str, Any] = Field(default_factory=dict)
     runtime: dict[str, Any] = Field(default_factory=dict)
-    execution: dict[str, Any] = Field(default_factory=dict)
+    execution: StrategyExecutionPolicy
 
     @field_validator("trading_strategy_id", "name", "trade_structure", mode="before")
     @classmethod
     def _normalize_required_text(cls, value: Any) -> str:
         return normalize_required_text(value)
 
-    @field_validator("build", "liquidity", "risk", "protection", "runtime", "execution", mode="before")
+    @field_validator("build", "protection", "runtime", mode="before")
     @classmethod
     def _normalize_mapping(cls, value: Any) -> dict[str, Any]:
         return normalize_mapping(value)
@@ -319,17 +262,17 @@ def _strategy_payload(strategy: TradingStrategyConfig) -> dict[str, Any]:
         "trading_strategy_id": strategy.trading_strategy_id,
         "name": strategy.name,
         "enabled": strategy.enabled,
-        "source": strategy.source.as_dict(),
+        "source": strategy.source.model_dump(exclude_none=True, by_alias=True),
         "trade_structure": strategy.trade_structure,
         "build": strategy.build.as_builder_params(),
         "entry": None if strategy.entry is None else strategy.entry.as_dict(),
         "management": None if strategy.management is None else strategy.management.as_dict(),
-        "liquidity": strategy.liquidity.as_dict(),
-        "position_sizing": strategy.position_sizing.as_dict(),
-        "risk_limits": strategy.risk_limits.as_dict(),
-        "protection": strategy.protection.as_dict(),
-        "runtime": strategy.runtime.as_dict(),
-        "execution": strategy.execution.as_dict(),
+        "liquidity": strategy.liquidity.model_dump(exclude_none=True),
+        "position_sizing": strategy.position_sizing.model_dump(exclude_none=True),
+        "risk_limits": strategy.risk_limits.dump_config(),
+        "protection": strategy.protection.model_dump(exclude_none=True, by_alias=True),
+        "runtime": strategy.runtime.model_dump(exclude_none=True),
+        "execution": strategy.execution.model_dump(exclude_none=True),
     }
 
 
@@ -439,6 +382,7 @@ def _compose_entry_routine(
     if routine_profile_ref is None:
         raise ValueError("entry routine profile is required")
     payload: dict[str, Any] = {
+        "routine": "entry",
         "enabled": routine.enabled,
         "schedule": _resolve_profile(profiles, "routine_profiles", routine_profile_ref),
         "selection": dict(routine.selection),
@@ -470,6 +414,7 @@ def _compose_management_routine(
         raise ValueError(f"exit_controller {exit_controller_ref} must declare routine_profile")
     default_recipes = normalize_text_tuple(exit_controller.get("recipes"))
     payload: dict[str, Any] = {
+        "routine": "management",
         "enabled": routine.enabled,
         "schedule": _resolve_profile(profiles, "routine_profiles", routine_profile_ref),
         "selection": dict(routine.selection),
@@ -631,11 +576,11 @@ def _load_trading_strategies_cached(
             path=catalog_path,
             label="trading strategy",
         )
-        source = StrategySource.from_payload(payload.source)
+        source = payload.source
         trade_structure = payload.trade_structure
         trade_structure_spec = resolve_trade_structure_spec(trade_structure)
         risk_limits_payload = resolve_policy_mapping(
-            payload.risk.get("limits"),
+            payload.risk.limits,
             field_name="risk.limits",
             policy_kind="strategy_limits",
             config_root=config_root,
@@ -662,14 +607,14 @@ def _load_trading_strategies_cached(
             trade_structure_spec=trade_structure_spec,
             source=source,
             build=trade_structure_spec.validate_build(payload.build),
-            entry=StrategyRoutine.from_payload("entry", payload.entry),
-            management=StrategyRoutine.from_payload("management", payload.management),
-            liquidity=StrategyLiquidityRules.from_payload(payload.liquidity),
-            position_sizing=StrategyRiskDefaults.from_payload(payload.risk.get("sizing")),
-            risk_limits=StrategyRiskLimits.from_payload(risk_limits_payload),
-            protection=StrategyProtectionPolicy.from_payload(protection_payload),
-            runtime=StrategyRuntimeControls.from_payload(runtime_payload),
-            execution=StrategyExecutionPolicy.from_payload(payload.execution),
+            entry=payload.entry,
+            management=payload.management,
+            liquidity=payload.liquidity,
+            position_sizing=payload.risk.sizing,
+            risk_limits=StrategyRiskLimits.model_validate(risk_limits_payload),
+            protection=StrategyProtectionPolicy.model_validate(protection_payload),
+            runtime=StrategyRuntimeControls.model_validate(runtime_payload),
+            execution=payload.execution,
             enabled=payload.enabled,
             config_path=catalog_path,
             config_hash="",

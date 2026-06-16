@@ -4,7 +4,7 @@ from collections.abc import Mapping
 import os
 from typing import Any
 
-from core.value_coercion import as_text as _as_text
+from core.value_coercion import as_text as _as_text, coerce_bool
 
 DEPLOYMENT_MODE_SHADOW = "shadow"
 DEPLOYMENT_MODE_PAPER_AUTO = "paper_auto"
@@ -14,17 +14,6 @@ DEPLOYMENT_MODES = {
     DEPLOYMENT_MODE_PAPER_AUTO,
     DEPLOYMENT_MODE_LIVE_AUTO,
 }
-
-
-def coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return False
-
 
 def normalize_deployment_mode(value: Any) -> str | None:
     normalized = _as_text(value)
@@ -45,14 +34,14 @@ def resolve_execution_deployment_mode(
     if explicit_mode is not None:
         return explicit_mode
 
-    if not coerce_bool(None if execution_policy is None else execution_policy.get("enabled")):
+    if not coerce_bool(None if execution_policy is None else execution_policy.get("enabled"), default=False):
         return DEPLOYMENT_MODE_SHADOW
 
     allow_live = False
     if isinstance(risk_policy, Mapping) and "allow_live" in risk_policy:
-        allow_live = coerce_bool(risk_policy.get("allow_live"))
+        allow_live = bool(coerce_bool(risk_policy.get("allow_live"), default=False))
     elif isinstance(execution_policy, Mapping) and "allow_live" in execution_policy:
-        allow_live = coerce_bool(execution_policy.get("allow_live"))
+        allow_live = bool(coerce_bool(execution_policy.get("allow_live"), default=False))
     return DEPLOYMENT_MODE_LIVE_AUTO if allow_live else DEPLOYMENT_MODE_PAPER_AUTO
 
 
@@ -72,7 +61,7 @@ def live_deployment_block_reason(
 ) -> str | None:
     if environment != "live":
         return None
-    live_flag_enabled = coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING")) if allow_live_env is None else bool(allow_live_env)
+    live_flag_enabled = coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING"), default=False) if allow_live_env is None else bool(allow_live_env)
     if deployment_mode_allows_live_trading(deployment_mode) and live_flag_enabled:
         return None
     return (

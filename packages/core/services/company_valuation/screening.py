@@ -333,7 +333,7 @@ def get_company_valuation_document(
         source_summary["limited_coverage_flag"] = bool(issuer_row.get("limited_coverage_flag"))
         source_summary["stressed_operator_flag"] = bool(issuer_row.get("stressed_operator_flag"))
         enriched_payload["source_summary"] = source_summary
-        enriched_payload["support"] = resolution.support.to_payload()
+        enriched_payload["support"] = resolution.support.model_dump(mode="json")
         return enriched_payload
     raise ValueError(f"Company valuation snapshot payload is unavailable for ticker {ticker}")
 

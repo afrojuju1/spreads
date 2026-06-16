@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import html
 import math
@@ -10,6 +9,8 @@ import os
 from pathlib import Path
 import re
 from typing import Any
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from core.common import parse_float, parse_int, pick
 from core.integrations.calendar_events.models import EarningsEventConsensusRecord
@@ -22,79 +23,181 @@ from core.services.alpaca import create_alpaca_client_from_env
 from core.services.strategy_candidate_builders.market_data import build_expected_move_estimates, group_contracts_by_expiration
 from core.services.trading_strategies import build_entry_strategy_symbols, load_universe_symbols
 from core.storage.serializers import parse_date as _parse_date, parse_datetime as _parse_datetime
-from core.value_coercion import utc_now_iso as _iso_now
+from core.value_coercion import as_text, coerce_bool, normalize_symbol, utc_now_iso as _iso_now
 
 VALID_TICKER_SOURCE_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter", "earnings_event_window"})
 FINVIZ_HTTP = VendorHttpClient(timeout_seconds=30, user_agent="spreads-finviz-feed/1.0", follow_redirects=True)
 
 
-def _as_optional_text(value: Any) -> str | None:
-    rendered = str(value or "").strip()
-    return rendered or None
+def _normalized_recipe_args(value: Any) -> dict[str, Any]:
+    return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
 
 
-def _recipe_args(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {str(key): item for key, item in value.items()}
+class TickerSourceRecipeArgsModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="allow", populate_by_name=True)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: Any) -> Any:
+        return None if value == "" else value
 
 
-def _as_int(value: Any, default: int) -> int:
-    parsed = parse_int(value)
-    return default if parsed is None else int(parsed)
+class TargetDteOptionFilterConfig(TickerSourceRecipeArgsModel):
+    enabled: bool = False
+    min_dte: int = Field(default=7, ge=0)
+    max_dte: int = Field(default=21, ge=0)
+    feed: str = "opra"
+    stock_feed: str = "sip"
+    require_expected_move: bool = True
+    min_expected_move_count: int = Field(default=1, ge=1)
+
+    @field_validator("feed", "stock_feed", mode="before")
+    @classmethod
+    def _normalize_feed(cls, value: Any, info: ValidationInfo) -> str:
+        return as_text(value) or ("sip" if info.field_name == "stock_feed" else "opra")
+
+    @field_validator("min_dte", "max_dte", "min_expected_move_count", mode="before")
+    @classmethod
+    def _normalize_count(cls, value: Any, info: ValidationInfo) -> Any:
+        return cls.model_fields[info.field_name].default if value in (None, "") else value
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> TargetDteOptionFilterConfig:
+        if self.max_dte < self.min_dte:
+            return self.model_copy(update={"max_dte": self.min_dte})
+        return self
 
 
-def _as_positive_int_or_none(value: Any) -> int | None:
-    parsed = parse_int(value)
-    if parsed is None:
-        return None
-    return max(int(parsed), 1)
+class TargetDteRecipeArgs(TickerSourceRecipeArgsModel):
+    min_dte: int = Field(default=7, ge=0)
+    max_dte: int = Field(default=21, ge=0)
+    feed: str = "opra"
+    stock_feed: str = "sip"
+    target_option_filter: TargetDteOptionFilterConfig = Field(default_factory=TargetDteOptionFilterConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_target_option_filter(cls, value: Any) -> dict[str, Any]:
+        mapping = _normalized_recipe_args(value)
+        raw = mapping.get("target_dte_options", mapping.get("target_dte_option_filter"))
+        nested = dict(raw) if isinstance(raw, Mapping) else {}
+        if not isinstance(raw, Mapping):
+            nested["enabled"] = bool(coerce_bool(raw, default=False))
+        nested.setdefault("enabled", False)
+        nested.setdefault("min_dte", mapping.get("min_dte", 7))
+        nested.setdefault("max_dte", mapping.get("max_dte", 21))
+        nested.setdefault("feed", mapping.get("feed", "opra"))
+        nested.setdefault("stock_feed", mapping.get("stock_feed", "sip"))
+        mapping["target_option_filter"] = nested
+        return mapping
+
+    @field_validator("feed", "stock_feed", mode="before")
+    @classmethod
+    def _normalize_feed(cls, value: Any, info: ValidationInfo) -> str:
+        return as_text(value) or ("sip" if info.field_name == "stock_feed" else "opra")
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> TargetDteRecipeArgs:
+        if self.max_dte < self.min_dte:
+            return self.model_copy(update={"max_dte": self.min_dte})
+        return self
 
 
-def _as_float(value: Any, default: float) -> float:
-    parsed = parse_float(value)
-    return default if parsed is None else float(parsed)
+class StrategyUnionRecipeArgs(TickerSourceRecipeArgsModel):
+    candidate_builder: str | None = None
+    build_profile: str | None = None
+
+    @field_validator("candidate_builder", "build_profile", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return as_text(value)
 
 
-def _as_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    rendered = str(value).strip().lower()
-    if rendered in {"1", "true", "yes", "y", "on"}:
-        return True
-    if rendered in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
+class StockPrefilterRecipeArgs(TickerSourceRecipeArgsModel):
+    top: int = Field(default=15, ge=1)
+    most_actives_top: int | None = Field(default=None, ge=1)
+    movers_top: int | None = Field(default=None, ge=1)
+    min_price: float = Field(default=10.0, ge=0)
+    min_daily_volume: int = Field(default=0, ge=0)
+    news_limit: int | None = Field(default=None, ge=1)
+    most_actives_by: str = "volume"
+    stock_feed: str = "sip"
+    exclude_leveraged_and_inverse_etfs: bool = False
+
+    @field_validator("most_actives_by", "stock_feed", mode="before")
+    @classmethod
+    def _normalize_text(cls, value: Any, info: ValidationInfo) -> str:
+        return as_text(value) or ("sip" if info.field_name == "stock_feed" else "volume")
 
 
-@dataclass(frozen=True)
-class TargetDteOptionFilterConfig:
-    enabled: bool
-    min_dte: int
-    max_dte: int
-    feed: str
-    stock_feed: str
-    require_expected_move: bool
-    min_expected_move_count: int
+class EarningsEventWindowRecipeArgs(TargetDteRecipeArgs):
+    lookahead_days: int = Field(default=30, ge=1, validation_alias=AliasChoices("lookahead_days", "window_days"))
+    front_window_days: int = Field(default=10, ge=1)
+    min_source_confidence: str = "medium"
+    include_conflicts: bool = Field(default=False, validation_alias=AliasChoices("include_conflicts", "allow_conflicts"))
+    min_price: float = Field(default=10.0, ge=0)
+    min_daily_volume: int = Field(default=1_000_000, ge=0, validation_alias=AliasChoices("min_daily_volume", "min_volume"))
+    max_symbols: int = Field(default=25, ge=1)
+    actionability_candidate_limit: int | None = Field(default=None, ge=1)
+    stock_feed: str = "sip"
+
+    @field_validator("min_source_confidence", "stock_feed", mode="before")
+    @classmethod
+    def _normalize_text(cls, value: Any, info: ValidationInfo) -> str:
+        return as_text(value) or ("sip" if info.field_name == "stock_feed" else "medium")
 
 
-def _target_dte_option_filter_config(recipe_args: Mapping[str, Any]) -> TargetDteOptionFilterConfig:
-    raw = recipe_args.get("target_dte_options") or recipe_args.get("target_dte_option_filter")
-    mapping = raw if isinstance(raw, Mapping) else {}
-    enabled = _as_bool(mapping.get("enabled"), False) if isinstance(raw, Mapping) else _as_bool(raw, False)
-    min_dte = max(_as_int(mapping.get("min_dte", recipe_args.get("min_dte")), 7), 0)
-    max_dte = max(_as_int(mapping.get("max_dte", recipe_args.get("max_dte")), 21), min_dte)
-    return TargetDteOptionFilterConfig(
-        enabled=enabled,
-        min_dte=min_dte,
-        max_dte=max_dte,
-        feed=_as_optional_text(mapping.get("feed") or recipe_args.get("feed")) or "opra",
-        stock_feed=_as_optional_text(mapping.get("stock_feed") or recipe_args.get("stock_feed")) or "sip",
-        require_expected_move=_as_bool(mapping.get("require_expected_move"), True),
-        min_expected_move_count=max(_as_int(mapping.get("min_expected_move_count"), 1), 1),
+class FinvizScreenerRecipeArgs(TargetDteRecipeArgs):
+    source: str = "auto"
+    source_url: str | None = None
+    csv_url: str | None = None
+    url: str | None = None
+    source_url_env: str | None = None
+    csv_url_env: str | None = None
+    url_env: str | None = None
+    csv_path: str | None = None
+    path: str | None = None
+    csv_path_env: str | None = None
+    path_env: str | None = None
+    source_symbol_limit: int | None = Field(default=None, ge=1)
+    min_price: float = Field(default=0.0, ge=0)
+    min_market_cap: float = Field(default=0.0, ge=0)
+    min_volume: int = Field(default=0, ge=0, validation_alias=AliasChoices("min_volume", "min_daily_volume"))
+    exclude_industries: tuple[str, ...] = ()
+    exclude_company_keywords: tuple[str, ...] = ()
+    timeout_seconds: int = Field(default=20, ge=1)
+    cookie_env: str = "FINVIZ_COOKIE"
+
+    @field_validator("source", "cookie_env", mode="before")
+    @classmethod
+    def _normalize_default_text(cls, value: Any, info: ValidationInfo) -> str:
+        default = cls.model_fields[info.field_name].default
+        return as_text(value) or str(default)
+
+    @field_validator(
+        "source_url",
+        "csv_url",
+        "url",
+        "source_url_env",
+        "csv_url_env",
+        "url_env",
+        "csv_path",
+        "path",
+        "csv_path_env",
+        "path_env",
+        mode="before",
     )
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> str | None:
+        return as_text(value)
+
+    @field_validator("exclude_industries", "exclude_company_keywords", mode="before")
+    @classmethod
+    def _normalize_text_tuple(cls, value: Any) -> tuple[str, ...]:
+        if value in (None, "", ()):
+            return ()
+        raw_items = value.split(",") if isinstance(value, str) else list(value) if isinstance(value, list | tuple | set) else [value]
+        return tuple(str(item).strip() for item in raw_items if str(item or "").strip())
 
 
 def _target_dte_option_filter_result(
@@ -192,36 +295,33 @@ _ENV_TOKEN_REGEX = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
 def _expand_env_tokens(value: Any) -> str | None:
-    text = _as_optional_text(value)
+    text = as_text(value)
     if text is None:
         return None
     expanded = _ENV_TOKEN_REGEX.sub(
         lambda match: os.environ.get(match.group(1), ""),
         text,
     )
-    return _as_optional_text(expanded)
+    return as_text(expanded)
 
 
 def _recipe_text_arg(
-    recipe_args: Mapping[str, Any],
+    recipe_args: Mapping[str, Any] | BaseModel,
     field_name: str,
     *,
     env_field_name: str | None = None,
 ) -> str | None:
-    direct = _expand_env_tokens(recipe_args.get(field_name))
+    value = recipe_args.get(field_name) if isinstance(recipe_args, Mapping) else getattr(recipe_args, field_name, None)
+    direct = _expand_env_tokens(value)
     if direct is not None:
         return direct
     if env_field_name is None:
         return None
-    env_name = _as_optional_text(recipe_args.get(env_field_name))
+    env_value = recipe_args.get(env_field_name) if isinstance(recipe_args, Mapping) else getattr(recipe_args, env_field_name, None)
+    env_name = as_text(env_value)
     if env_name is None:
         return None
-    return _as_optional_text(os.environ.get(env_name))
-
-
-def _normalize_symbol(value: Any) -> str | None:
-    rendered = str(value or "").strip().upper()
-    return rendered or None
+    return as_text(os.environ.get(env_name))
 
 
 _LEVERAGE_REGEX = re.compile(r"\b(?:[2-9](?:\.\d+)?x|ultra|ultrapro|leveraged|leverage)\b")
@@ -371,15 +471,18 @@ def _build_strategy_union_result(
     recipe_args: Mapping[str, Any],
     config_root: str | None,
 ) -> dict[str, Any]:
+    args = StrategyUnionRecipeArgs.model_validate(recipe_args)
     symbols = build_entry_strategy_symbols(
         config_root=config_root,
-        candidate_builder_key=_as_optional_text(recipe_args.get("candidate_builder")),
-        build_profile=_as_optional_text(recipe_args.get("build_profile")),
+        candidate_builder_key=args.candidate_builder,
+        build_profile=args.build_profile,
     )
     source_tags = [f"recipe:{str(recipe or '').strip().lower()}"]
-    if (build_profile := _as_optional_text(recipe_args.get("build_profile"))) is not None:
+    if args.build_profile is not None:
+        build_profile = args.build_profile
         source_tags.append(f"build_profile:{build_profile}")
-    if (candidate_builder := _as_optional_text(recipe_args.get("candidate_builder"))) is not None:
+    if args.candidate_builder is not None:
+        candidate_builder = args.candidate_builder
         source_tags.append(f"candidate_builder:{candidate_builder}")
     generated_at = _iso_now()
     return {
@@ -425,18 +528,16 @@ def _run_stock_prefilter_feed(
     recipe: str,
     recipe_args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    top = max(_as_int(recipe_args.get("top"), 15), 1)
-    most_actives_top = max(_as_int(recipe_args.get("most_actives_top"), max(top * 2, 25)), 1)
-    movers_top = max(_as_int(recipe_args.get("movers_top"), max(top * 2, 25)), 1)
-    min_price = max(_as_float(recipe_args.get("min_price"), 10.0), 0.0)
-    min_daily_volume = max(_as_int(recipe_args.get("min_daily_volume"), 0), 0)
-    news_limit = max(_as_int(recipe_args.get("news_limit"), max(top * 3, 25)), 1)
-    most_actives_by = _as_optional_text(recipe_args.get("most_actives_by")) or "volume"
-    stock_feed = _as_optional_text(recipe_args.get("stock_feed")) or "sip"
-    exclude_leveraged_and_inverse_etfs = _as_bool(
-        recipe_args.get("exclude_leveraged_and_inverse_etfs"),
-        False,
-    )
+    args = StockPrefilterRecipeArgs.model_validate(recipe_args)
+    top = args.top
+    most_actives_top = args.most_actives_top or max(top * 2, 25)
+    movers_top = args.movers_top or max(top * 2, 25)
+    min_price = args.min_price
+    min_daily_volume = args.min_daily_volume
+    news_limit = args.news_limit or max(top * 3, 25)
+    most_actives_by = args.most_actives_by
+    stock_feed = args.stock_feed
+    exclude_leveraged_and_inverse_etfs = args.exclude_leveraged_and_inverse_etfs
 
     client = create_alpaca_client_from_env()
     issues: list[str] = []
@@ -464,7 +565,7 @@ def _run_stock_prefilter_feed(
             symbol
             for item in [*most_actives, *gainers, *losers]
             if isinstance(item, Mapping)
-            for symbol in [_normalize_symbol(item.get("symbol"))]
+            for symbol in [normalize_symbol(item.get("symbol"))]
             if symbol is not None
         }
     )
@@ -477,7 +578,7 @@ def _run_stock_prefilter_feed(
         for item in client.list_optionable_underlyings():
             if not isinstance(item, Mapping):
                 continue
-            symbol = _normalize_symbol(item.get("symbol"))
+            symbol = normalize_symbol(item.get("symbol"))
             if symbol is None:
                 continue
             optionable_assets_by_symbol[symbol] = dict(item)
@@ -494,23 +595,23 @@ def _run_stock_prefilter_feed(
             if not isinstance(item_symbols, list):
                 continue
             for raw_symbol in item_symbols:
-                symbol = _normalize_symbol(raw_symbol)
+                symbol = normalize_symbol(raw_symbol)
                 if symbol is not None and symbol in candidate_symbols:
                     news_count_by_symbol[symbol] = news_count_by_symbol.get(symbol, 0) + 1
     except AlpacaRequestError:
         issues.append("news_unavailable")
 
     most_active_rank_by_symbol = {
-        symbol: rank for rank, item in enumerate(most_actives) for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None
+        symbol: rank for rank, item in enumerate(most_actives) for symbol in [normalize_symbol(item.get("symbol"))] if symbol is not None
     }
-    most_active_item_by_symbol = {symbol: item for item in most_actives for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None}
+    most_active_item_by_symbol = {symbol: item for item in most_actives for symbol in [normalize_symbol(item.get("symbol"))] if symbol is not None}
     gainer_rank_by_symbol = {
-        symbol: rank for rank, item in enumerate(gainers) for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None
+        symbol: rank for rank, item in enumerate(gainers) for symbol in [normalize_symbol(item.get("symbol"))] if symbol is not None
     }
     loser_rank_by_symbol = {
-        symbol: rank for rank, item in enumerate(losers) for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None
+        symbol: rank for rank, item in enumerate(losers) for symbol in [normalize_symbol(item.get("symbol"))] if symbol is not None
     }
-    mover_item_by_symbol = {symbol: item for item in [*gainers, *losers] for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None}
+    mover_item_by_symbol = {symbol: item for item in [*gainers, *losers] for symbol in [normalize_symbol(item.get("symbol"))] if symbol is not None}
 
     candidates: list[dict[str, Any]] = []
     excluded_leveraged_inverse_count = 0
@@ -667,7 +768,7 @@ def _dedupe_earnings_records_by_symbol(records: list[EarningsEventConsensusRecor
         return (str(record.event_date or ""), str(record.symbol or ""))
 
     for record in sorted(records, key=sort_key):
-        symbol = _normalize_symbol(record.symbol)
+        symbol = normalize_symbol(record.symbol)
         if symbol is None or symbol in deduped:
             continue
         deduped[symbol] = record
@@ -701,22 +802,20 @@ def _run_earnings_event_window_feed(
     recipe: str,
     recipe_args: Mapping[str, Any],
 ) -> dict[str, Any]:
+    args = EarningsEventWindowRecipeArgs.model_validate(recipe_args)
     generated_at = _iso_now()
     now = datetime.now(UTC)
     now_date = datetime.now(NEW_YORK).date()
-    lookahead_days = max(_as_int(recipe_args.get("lookahead_days", recipe_args.get("window_days")), 30), 1)
-    front_window_days = max(_as_int(recipe_args.get("front_window_days"), 10), 1)
-    min_source_confidence = _as_optional_text(recipe_args.get("min_source_confidence")) or "medium"
-    include_conflicts = _as_bool(recipe_args.get("include_conflicts", recipe_args.get("allow_conflicts")), False)
-    min_price = max(_as_float(recipe_args.get("min_price"), 10.0), 0.0)
-    min_daily_volume = max(_as_int(recipe_args.get("min_daily_volume", recipe_args.get("min_volume")), 1_000_000), 0)
-    max_symbols = max(_as_int(recipe_args.get("max_symbols"), 25), 1)
-    actionability_candidate_limit = max(
-        _as_int(recipe_args.get("actionability_candidate_limit"), max(max_symbols * 4, 50)),
-        max_symbols,
-    )
-    stock_feed = _as_optional_text(recipe_args.get("stock_feed")) or "sip"
-    target_option_filter = _target_dte_option_filter_config(recipe_args)
+    lookahead_days = args.lookahead_days
+    front_window_days = args.front_window_days
+    min_source_confidence = args.min_source_confidence
+    include_conflicts = args.include_conflicts
+    min_price = args.min_price
+    min_daily_volume = args.min_daily_volume
+    max_symbols = args.max_symbols
+    actionability_candidate_limit = max(args.actionability_candidate_limit or max(max_symbols * 4, 50), max_symbols)
+    stock_feed = args.stock_feed
+    target_option_filter = args.target_option_filter
     window_start = now_date.isoformat()
     window_end = (now_date + timedelta(days=lookahead_days)).isoformat()
 
@@ -813,7 +912,7 @@ def _run_earnings_event_window_feed(
     optionable_assets_by_symbol: dict[str, dict[str, Any]] = {}
     try:
         for asset in client.list_active_us_equity_assets():
-            symbol = _normalize_symbol(asset.get("symbol"))
+            symbol = normalize_symbol(asset.get("symbol"))
             if symbol is not None:
                 active_assets_by_symbol[symbol] = dict(asset)
     except Exception as exc:
@@ -830,7 +929,7 @@ def _run_earnings_event_window_feed(
     if actionability_candidates:
         try:
             for asset in client.list_optionable_underlyings():
-                symbol = _normalize_symbol(asset.get("symbol"))
+                symbol = normalize_symbol(asset.get("symbol"))
                 if symbol is not None:
                     optionable_assets_by_symbol[symbol] = dict(asset)
         except Exception as exc:
@@ -1146,18 +1245,6 @@ def _parse_finviz_int(value: Any) -> int | None:
     return int(round(parsed))
 
 
-def _finviz_text_list_arg(value: Any) -> tuple[str, ...]:
-    if value in (None, "", ()):
-        return ()
-    if isinstance(value, str):
-        raw_items = value.split(",")
-    elif isinstance(value, (list, tuple, set)):
-        raw_items = value
-    else:
-        raw_items = [value]
-    return tuple(str(item).strip() for item in raw_items if str(item or "").strip())
-
-
 def _finviz_slug(value: Any) -> str:
     text = str(value or "").strip().lower()
     slug = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
@@ -1265,7 +1352,7 @@ def _load_finviz_csv_text(
         "User-Agent": "spreads-finviz-feed/1.0",
     }
     cookie_name = cookie_env or "FINVIZ_COOKIE"
-    cookie_value = _as_optional_text(os.environ.get(cookie_name))
+    cookie_value = as_text(os.environ.get(cookie_name))
     if cookie_value is not None:
         headers["Cookie"] = cookie_value
     client = (
@@ -1277,9 +1364,9 @@ def _load_finviz_csv_text(
 
 
 def _finviz_source_config(
-    recipe_args: Mapping[str, Any],
+    recipe_args: FinvizScreenerRecipeArgs,
 ) -> tuple[str | None, str | None]:
-    source = str(recipe_args.get("source") or "auto").strip().lower()
+    source = str(recipe_args.source or "auto").strip().lower()
     source_url = (
         _recipe_text_arg(recipe_args, "source_url", env_field_name="source_url_env")
         or _recipe_text_arg(recipe_args, "csv_url", env_field_name="csv_url_env")
@@ -1304,22 +1391,17 @@ def _run_finviz_screener_feed(
     recipe: str,
     recipe_args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    source_symbol_limit = _as_positive_int_or_none(recipe_args.get("source_symbol_limit"))
-    min_price = max(_as_float(recipe_args.get("min_price"), 0.0), 0.0)
-    min_market_cap = max(_as_float(recipe_args.get("min_market_cap"), 0.0), 0.0)
-    min_volume = max(
-        _as_int(
-            recipe_args.get("min_volume", recipe_args.get("min_daily_volume")),
-            0,
-        ),
-        0,
-    )
-    exclude_industries = _finviz_text_list_arg(recipe_args.get("exclude_industries"))
-    exclude_company_keywords = _finviz_text_list_arg(recipe_args.get("exclude_company_keywords"))
-    target_option_filter = _target_dte_option_filter_config(recipe_args)
-    timeout_seconds = max(_as_int(recipe_args.get("timeout_seconds"), 20), 1)
-    cookie_env = _as_optional_text(recipe_args.get("cookie_env")) or "FINVIZ_COOKIE"
-    source_kind, source_value = _finviz_source_config(recipe_args)
+    args = FinvizScreenerRecipeArgs.model_validate(recipe_args)
+    source_symbol_limit = args.source_symbol_limit
+    min_price = args.min_price
+    min_market_cap = args.min_market_cap
+    min_volume = args.min_volume
+    exclude_industries = args.exclude_industries
+    exclude_company_keywords = args.exclude_company_keywords
+    target_option_filter = args.target_option_filter
+    timeout_seconds = args.timeout_seconds
+    cookie_env = args.cookie_env or "FINVIZ_COOKIE"
+    source_kind, source_value = _finviz_source_config(args)
     generated_at = _iso_now()
     if source_kind is None or source_value is None:
         return {
@@ -1361,7 +1443,7 @@ def _run_finviz_screener_feed(
     target_option_filter_reason_counts: dict[str, int] = {}
     target_option_filter_client: Any | None = None
     for index, row in enumerate(rows):
-        symbol = _normalize_symbol(pick(row, "ticker", "symbol"))
+        symbol = normalize_symbol(pick(row, "ticker", "symbol"))
         if symbol is None:
             missing_symbol_count += 1
             continue
@@ -1608,7 +1690,7 @@ def build_ticker_source_symbols(
     config_root: str | None = None,
 ) -> tuple[str, ...]:
     normalized_recipe = str(recipe or "").strip().lower()
-    normalized_args = _recipe_args(recipe_args)
+    normalized_args = _normalized_recipe_args(recipe_args)
     if normalized_recipe == "strategy_union":
         return tuple(
             _build_strategy_union_result(
@@ -1656,7 +1738,7 @@ def run_ticker_source(
     recipe_args: Mapping[str, Any] | None = None,
     config_root: str | None = None,
 ) -> dict[str, Any]:
-    normalized_args = _recipe_args(recipe_args)
+    normalized_args = _normalized_recipe_args(recipe_args)
     normalized_recipe = str(recipe or "").strip().lower()
     if normalized_recipe == "strategy_union":
         return _build_strategy_union_result(
@@ -1707,7 +1789,7 @@ def persist_ticker_source_result(
             "status": "skipped",
             "reason": "engine_fact_schema_unavailable",
         }
-    generated_at = _as_optional_text(result.get("generated_at")) or _iso_now()
+    generated_at = as_text(result.get("generated_at")) or _iso_now()
     ticker_source_run_id = _ticker_source_run_id(
         source_id=str(source_id),
         job_run_id=job_run_id,

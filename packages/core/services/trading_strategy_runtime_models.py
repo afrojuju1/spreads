@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+
 from core.services.trading_strategy_build_models import (
     EntrySelectionPolicy,
     RoutineSchedule,
@@ -23,13 +25,38 @@ if TYPE_CHECKING:
     from core.services.trade_structure_specs import TradeStructureSpec
 
 
-@dataclass(frozen=True)
-class StrategySource:
-    kind: str
+class StrategyRuntimeConfigModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True, arbitrary_types_allowed=True)
+
+
+class StrategySource(StrategyRuntimeConfigModel):
+    kind: str = Field(validation_alias=AliasChoices("kind", "type"), serialization_alias="type")
     ref: str
     max_age_seconds: int | None = None
     max_symbols: int | None = None
     fallback_universe_ref: str | None = None
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_kind(cls, value: Any) -> str:
+        rendered = str(value or "").strip().lower()
+        if rendered not in {"static", "dynamic"}:
+            raise ValueError("source type must be static or dynamic")
+        return rendered
+
+    @field_validator("ref", "fallback_universe_ref", mode="before")
+    @classmethod
+    def _normalize_text(cls, value: Any) -> str | None:
+        rendered = str(value or "").strip()
+        return rendered or None
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> StrategySource:
+        if self.max_age_seconds is not None and self.max_age_seconds <= 0:
+            raise ValueError("source.max_age_seconds must be positive")
+        if self.max_symbols is not None and self.max_symbols <= 0:
+            raise ValueError("source.max_symbols must be positive")
+        return self
 
     @property
     def is_static(self) -> bool:
@@ -39,32 +66,8 @@ class StrategySource:
     def is_dynamic(self) -> bool:
         return self.kind == "dynamic"
 
-    @classmethod
-    def from_payload(cls, payload: Any) -> StrategySource:
-        return cls(
-            kind=payload.kind,
-            ref=payload.ref,
-            max_age_seconds=payload.max_age_seconds,
-            max_symbols=payload.max_symbols,
-            fallback_universe_ref=payload.fallback_universe_ref,
-        )
 
-    def as_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "type": self.kind,
-            "ref": self.ref,
-        }
-        if self.max_age_seconds is not None:
-            payload["max_age_seconds"] = self.max_age_seconds
-        if self.max_symbols is not None:
-            payload["max_symbols"] = self.max_symbols
-        if self.fallback_universe_ref is not None:
-            payload["fallback_universe_ref"] = self.fallback_universe_ref
-        return payload
-
-
-@dataclass(frozen=True)
-class StrategyRoutine:
+class StrategyRoutine(StrategyRuntimeConfigModel):
     routine: str
     schedule: RoutineSchedule
     enabled: bool
@@ -73,33 +76,29 @@ class StrategyRoutine:
     recipes: tuple[str, ...]
     policy: dict[str, Any]
 
+    @model_validator(mode="before")
     @classmethod
-    def from_payload(cls, routine: str, payload: Any | None) -> StrategyRoutine | None:
-        if payload is None:
-            return None
-        return cls(
-            routine=routine,
-            schedule=RoutineSchedule.from_payload(payload.schedule),
-            enabled=payload.enabled,
-            selection=EntrySelectionPolicy.from_payload(payload.selection),
-            quality=StrategyEntryQualityPolicy.from_payload(
-                quality_profile=payload.quality_profile,
-                quality_overrides=payload.quality_overrides,
-            ),
-            recipes=payload.recipes,
-            policy=payload.policy,
-        )
+    def _normalize_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if "quality" not in payload:
+            payload["quality"] = {
+                "quality_profile": payload.pop("quality_profile", None),
+                "quality_overrides": payload.pop("quality_overrides", {}),
+            }
+        return payload
 
     @property
     def trigger_policy(self) -> dict[str, Any]:
-        return self.selection.as_dict()
+        return self.selection.model_dump(exclude_none=True)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
             "schedule": self.schedule.as_dict(),
-            "selection": self.selection.as_dict(),
-            **self.quality.as_dict(),
+            "selection": self.selection.model_dump(exclude_none=True),
+            **self.quality.model_dump(exclude_none=True, exclude_defaults=True, by_alias=True),
             "recipes": list(self.recipes),
             "policy": dict(self.policy),
         }
@@ -155,11 +154,11 @@ class TradingStrategyConfig:
 
     @property
     def liquidity_rules(self) -> dict[str, Any]:
-        return self.liquidity.as_dict()
+        return self.liquidity.model_dump(exclude_none=True)
 
     @property
     def risk_defaults(self) -> dict[str, Any]:
-        return self.position_sizing.as_dict()
+        return self.position_sizing.model_dump(exclude_none=True)
 
     @property
     def entry_recipe_refs(self) -> tuple[str, ...]:

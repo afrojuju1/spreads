@@ -844,7 +844,7 @@ def _selected_execution_admission(
         trading_strategy_id=runtime.trading_strategy_id,
         strategy_family=runtime.trade_structure,
         session_date=market_date,
-        policy=runtime.strategy.protection.as_dict(),
+        policy=runtime.strategy.protection.model_dump(exclude_none=True, by_alias=True),
         quantity=quantity,
         limit_price=None,
         allocation_plan=allocation_plan,

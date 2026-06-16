@@ -734,7 +734,7 @@ def recompute_company_valuation(
         quality=quality,
         valuation=valuation,
         ownership={
-            "signal": feature_result.ownership_signal.to_payload(),
+            "signal": feature_result.ownership_signal.model_dump(mode="json"),
             "features": feature_result.ownership_features,
         },
         risks={
@@ -752,7 +752,7 @@ def recompute_company_valuation(
             "evaluation_version": evaluation_version,
         },
     )
-    document_payload = render_value(document.to_payload())
+    document_payload = render_value(document.model_dump(mode="json"))
 
     primary_security = repo.get_primary_security(issuer_id=str(issuer_row["issuer_id"]))
     top_reason_codes = list(dict.fromkeys([*quality.reason_codes, *valuation.reason_codes]))[:8]
@@ -804,7 +804,7 @@ def recompute_company_valuation(
         stressed_operator_flag=bool(issuer_row.get("stressed_operator_flag")),
         top_reason_codes=tuple(top_reason_codes),
     )
-    screening_row_payload = screening_row.to_payload()
+    screening_row_payload = screening_row.model_dump(mode="json")
     screening_row_payload["security_id"] = None if primary_security is None else str(primary_security["security_id"])
     screening_row_payload["top_reason_codes_json"] = screening_row_payload.pop("top_reason_codes")
     screening_row_payload["updated_at"] = datetime.now(UTC)

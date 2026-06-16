@@ -44,6 +44,7 @@ from core.services.trading_engine.strategy_runtime import run_trading_strategy_e
 from core.services.tradingagents_scan import run_tradingagents_scan
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime, render_value
+from core.value_coercion import coerce_int
 
 from .managed import _execute_managed_job
 
@@ -53,13 +54,6 @@ def _normalized_tickers(payload: Mapping[str, Any]) -> tuple[str, ...]:
     if not isinstance(values, list):
         return ()
     return tuple(dict.fromkeys(str(value or "").upper().strip() for value in values if str(value or "").strip()))
-
-
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return int(value)
-
 
 def _compact_company_valuation_bootstrap_result(
     result: Mapping[str, Any],
@@ -459,7 +453,7 @@ async def run_company_valuation_bootstrap_job(
                 tickers=_normalized_tickers(payload),
                 as_of=parse_datetime(payload.get("as_of")),
                 bootstrap_universe=bool(payload.get("bootstrap_universe", False)),
-                universe_limit=_optional_int(payload.get("universe_limit")),
+                universe_limit=coerce_int(payload.get("universe_limit")),
                 refresh_treasury=bool(payload.get("refresh_treasury", True)),
                 treasury_curve_date=(None if payload.get("treasury_curve_date") in (None, "") else parse_date(str(payload["treasury_curve_date"]))),
                 refresh_filings=bool(payload.get("refresh_filings", True)),
@@ -508,7 +502,7 @@ async def run_company_valuation_screen_materialize_job(
             as_of=parse_datetime(payload.get("as_of")),
             template_id=(None if payload.get("template_id") in (None, "") else str(payload["template_id"])),
             tickers=_normalized_tickers(payload) or None,
-            issuer_limit=_optional_int(payload.get("issuer_limit")),
+            issuer_limit=coerce_int(payload.get("issuer_limit")),
             supported_only=bool(payload.get("supported_only", True)),
             stressed_operator_only=bool(payload.get("stressed_operator_only", False)),
             repository=CompanyValuationRepository(database_url),
