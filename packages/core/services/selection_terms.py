@@ -9,7 +9,7 @@ SELECTION_STATES = (
     PROMOTABLE_SELECTION_STATE,
     MONITOR_SELECTION_STATE,
 )
-LEGACY_SELECTION_STATE_ALIASES = {
+SELECTION_STATE_ALIASES = {
     "board": PROMOTABLE_SELECTION_STATE,
     "watchlist": MONITOR_SELECTION_STATE,
     "recovered": MONITOR_SELECTION_STATE,
@@ -27,7 +27,7 @@ def normalize_selection_state(value: Any) -> str | None:
         return None
     if rendered in SELECTION_STATE_ORDER:
         return rendered
-    return LEGACY_SELECTION_STATE_ALIASES.get(rendered)
+    return SELECTION_STATE_ALIASES.get(rendered)
 
 
 def selection_state_rank(value: Any) -> int:
@@ -65,9 +65,9 @@ def promotable_monitor_pnl_spread(values: Mapping[str, Any] | None) -> float | N
 
 
 __all__ = [
-    "LEGACY_SELECTION_STATE_ALIASES",
     "MONITOR_SELECTION_STATE",
     "PROMOTABLE_SELECTION_STATE",
+    "SELECTION_STATE_ALIASES",
     "SELECTION_STATES",
     "selection_state_counts",
     "selection_state_rank",

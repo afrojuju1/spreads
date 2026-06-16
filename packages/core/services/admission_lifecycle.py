@@ -16,7 +16,7 @@ def normalize_admission_state(status: Any) -> str:
     return AdmissionState.UNKNOWN.value
 
 
-def legacy_admission_status(admission_state: Any) -> str:
+def admission_status(admission_state: Any) -> str:
     state = normalize_admission_state(admission_state)
     if state == AdmissionState.APPROVED.value:
         return "admissible"
@@ -64,7 +64,7 @@ def normalize_lifecycle_admission(
         "admission_kind": admission_kind,
         "admission_state": state,
         "lifecycle_state": state,
-        "status": legacy_admission_status(state),
+        "status": admission_status(state),
         "source_object_type": source_object_type or _as_text(raw.get("source_object_type")),
         "source_object_id": source_id,
         "account_id": account_id or _as_text(raw.get("account_id")),
@@ -89,7 +89,7 @@ def admission_allows_attempt(admission: Mapping[str, Any]) -> bool:
 
 __all__ = [
     "admission_allows_attempt",
-    "legacy_admission_status",
+    "admission_status",
     "normalize_admission_state",
     "normalize_lifecycle_admission",
 ]

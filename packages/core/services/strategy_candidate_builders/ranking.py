@@ -14,7 +14,7 @@ from core.services.option_structures import net_premium_kind
 
 from .shared import log_scaled_score
 
-LEGACY_RANKING_WEIGHT = 0.72
+STRUCTURE_RANKING_WEIGHT = 0.72
 ANALYTICS_RANKING_WEIGHT = 0.28
 
 
@@ -215,7 +215,7 @@ def score_candidate(candidate: SpreadCandidate, args: Any) -> float:
         short_expected_move_score = clamp(candidate.short_otm_pct / 0.03)
         breakeven_expected_move_score = breakeven_cushion_score
 
-    legacy_score = (
+    structure_score = (
         0.24 * delta_score
         + 0.18 * short_expected_move_score
         + 0.16 * breakeven_expected_move_score
@@ -226,10 +226,10 @@ def score_candidate(candidate: SpreadCandidate, args: Any) -> float:
         + 0.03 * return_on_risk_score
     )
     analytics_score = _analytics_score(candidate, args)
-    base_score = legacy_score
+    base_score = structure_score
     if analytics_score is not None:
-        base_score = ((LEGACY_RANKING_WEIGHT * legacy_score) + (ANALYTICS_RANKING_WEIGHT * analytics_score)) / (
-            LEGACY_RANKING_WEIGHT + ANALYTICS_RANKING_WEIGHT
+        base_score = ((STRUCTURE_RANKING_WEIGHT * structure_score) + (ANALYTICS_RANKING_WEIGHT * analytics_score)) / (
+            STRUCTURE_RANKING_WEIGHT + ANALYTICS_RANKING_WEIGHT
         )
 
     calendar_multiplier = {

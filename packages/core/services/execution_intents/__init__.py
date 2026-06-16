@@ -256,8 +256,8 @@ def _trade_decision_option_payload(
     leg = dict(legs[0])
     symbol = as_text(order_payload.get("symbol")) or as_text(leg.get("symbol"))
     side = as_text(order_payload.get("side")) or as_text(leg.get("side"))
-    legacy_single_leg = len(legs) == 1 and strategy_family in {"long_call", "long_put"}
-    if legacy_single_leg and (symbol is None or side is None):
+    single_leg_option = len(legs) == 1 and strategy_family in {"long_call", "long_put"}
+    if single_leg_option and (symbol is None or side is None):
         raise ValueError("Trade-decision option shape is missing symbol or side.")
     candidate_payload = dict(signal.get("candidate")) if isinstance(signal.get("candidate"), dict) else {}
     candidate_payload.update(
@@ -297,7 +297,7 @@ def _trade_decision_option_payload(
     }
     return {
         "asset_class": "option",
-        "execution_kind": "legacy_single_leg" if legacy_single_leg else "option_structure",
+        "execution_kind": "single_leg_option" if single_leg_option else "option_structure",
         "symbol": symbol,
         "side": side,
         "quantity": quantity,
@@ -550,7 +550,7 @@ def submit_execution_intent(
                 **_repricing_metadata(payload),
                 **engine_ref_metadata,
             }
-            if option_payload.get("execution_kind") == "legacy_single_leg":
+            if option_payload.get("execution_kind") == "single_leg_option":
                 result = submit_option_order(
                     db_target=db_target,
                     symbol=str(option_payload["symbol"]),

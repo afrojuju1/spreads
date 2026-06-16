@@ -27,7 +27,7 @@ CAPTURE_PRIORITY_WATCH_CANDIDATE = 40
 OPEN_POSITION_CAPTURE_STATUSES = ("pending_open", "partial_open", "open", "partial_close")
 WORKING_INTENT_STATES = ("pending", "claimed", "submitted", "partially_filled")
 WATCH_SIGNAL_STATES = ("ready", "observed")
-LEGACY_CAPTURE_OWNER_KINDS = (
+RETIRED_CAPTURE_OWNER_KINDS = (
     "live_session",
     "recovery_session",
     "trading_strategy",
@@ -258,7 +258,7 @@ def refresh_engine_capture_targets(
         CAPTURE_REASON_SELECTED_CANDIDATE: 0,
         CAPTURE_REASON_WATCH_CANDIDATE: 0,
     }
-    legacy_targets_deleted = sum(capture_store.delete_capture_targets(owner_kind=owner_kind) for owner_kind in LEGACY_CAPTURE_OWNER_KINDS)
+    retired_targets_deleted = sum(capture_store.delete_capture_targets(owner_kind=owner_kind) for owner_kind in RETIRED_CAPTURE_OWNER_KINDS)
 
     position_owner_keys: list[str] = []
     if execution_store.portfolio_schema_ready():
@@ -405,7 +405,7 @@ def refresh_engine_capture_targets(
     return {
         "status": "ok",
         "target_counts": target_counts,
-        "legacy_targets_deleted": legacy_targets_deleted,
+        "retired_targets_deleted": retired_targets_deleted,
         "active_target_count": len(active_targets),
         "active_target_counts": _count_by_reason(active_targets),
         "priority_order": [

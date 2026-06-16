@@ -1,7 +1,4 @@
-"""Nautilus-shaped trading engine boundaries for Spreads.
-
-This package names the engine roles first; runtime wiring moves here bead by bead.
-"""
+"""Spreads trading engine boundaries."""
 
 from .capture_targets import refresh_engine_capture_targets
 from .data_runtime import DataEngine

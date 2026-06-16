@@ -308,11 +308,11 @@ def _normalize_score(value: Any, *, default: float = 0.0) -> float:
 
 
 def resolve_style_profile(
-    legacy_profile: str | None,
+    profile: str | None,
     *,
     days_to_expiration: int | None,
 ) -> str:
-    normalized = str(legacy_profile or "").strip().lower()
+    normalized = str(profile or "").strip().lower()
     if normalized in PROFILE_TO_STYLE:
         return PROFILE_TO_STYLE[normalized]
     if days_to_expiration == 0:
