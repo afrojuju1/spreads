@@ -132,22 +132,27 @@ def submit_position_close_by_id(
             fallback_type="position",
             fallback_id=position_id,
         )
-        execution_admission = _approved_execution_admission(
-            admission_kind="position_close",
-            source_object_type=close_source_type,
-            source_object_id=close_source_id,
-            session_date=market_date,
-            requested_quantity=resolved_quantity,
-            requested_notional=option_contract_notional(resolved_limit_price, resolved_quantity),
-            reason="close_validation_passed",
-            message="Close order passed position and order validation.",
-            policy_snapshot=(metadata.get("risk_policy") if isinstance(metadata.get("risk_policy"), Mapping) else {}),
-            evidence={
-                "position_id": position_id,
-                "trade_intent": trade_intent,
-                "order_validation": "passed",
-            },
-            decided_at=requested_at,
+        close_admission = metadata.get("close_admission") if isinstance(metadata.get("close_admission"), Mapping) else None
+        execution_admission = (
+            dict(close_admission)
+            if close_admission is not None and str(close_admission.get("admission_state") or close_admission.get("status")) in {"approved", "admissible"}
+            else _approved_execution_admission(
+                admission_kind="position_close",
+                source_object_type=close_source_type,
+                source_object_id=close_source_id,
+                session_date=market_date,
+                requested_quantity=resolved_quantity,
+                requested_notional=option_contract_notional(resolved_limit_price, resolved_quantity),
+                reason="close_validation_passed",
+                message="Close order passed position and order validation.",
+                policy_snapshot=(metadata.get("risk_policy") if isinstance(metadata.get("risk_policy"), Mapping) else {}),
+                evidence={
+                    "position_id": position_id,
+                    "trade_intent": trade_intent,
+                    "order_validation": "passed",
+                },
+                decided_at=requested_at,
+            )
         )
         attempt_refs = _attempt_ref_kwargs(
             metadata,

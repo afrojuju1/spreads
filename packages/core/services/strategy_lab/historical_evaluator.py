@@ -244,6 +244,8 @@ def _aggregate_strategy_days(
     intent_state_counts: Counter[str] = Counter()
     attempt_status_counts: Counter[str] = Counter()
     position_status_counts: Counter[str] = Counter()
+    close_decision_state_counts: Counter[str] = Counter()
+    close_decision_reason_counts: Counter[str] = Counter()
     blocker_counts: Counter[str] = Counter()
 
     for row in daily_rows:
@@ -269,6 +271,8 @@ def _aggregate_strategy_days(
         _merge_counts(intent_state_counts, as_mapping(row.get("intents")).get("intent_state_counts"))
         _merge_counts(attempt_status_counts, as_mapping(row.get("attempts")).get("attempt_status_counts"))
         _merge_counts(position_status_counts, as_mapping(row.get("positions")).get("position_status_counts"))
+        _merge_counts(close_decision_state_counts, as_mapping(row.get("closes")).get("close_decision_state_counts"))
+        _merge_counts(close_decision_reason_counts, as_mapping(row.get("closes")).get("close_decision_reason_counts"))
         _merge_counts(blocker_counts, row.get("top_blocker_reasons"))
 
     candidate_run_count = _sum_int(daily_rows, "candidates", "candidate_run_count")
@@ -284,6 +288,7 @@ def _aggregate_strategy_days(
     fill_count = _sum_int(daily_rows, "attempts", "fill_count")
     position_count = _sum_int(daily_rows, "positions", "position_count")
     open_position_count = _sum_int(daily_rows, "positions", "open_position_count")
+    close_decision_count = _sum_int(daily_rows, "closes", "close_decision_count")
     close_count = _sum_int(daily_rows, "closes", "close_count")
     realized_pnl = _sum_money(daily_rows, "pnl", "realized_pnl")
     unrealized_pnl = _sum_money(daily_rows, "pnl", "unrealized_pnl")
@@ -354,12 +359,23 @@ def _aggregate_strategy_days(
             "position_count": position_count,
             "open_position_count": open_position_count,
             "closed_position_count": _sum_int(daily_rows, "positions", "closed_position_count"),
-            "close_count": close_count,
             "position_status_counts": dict(sorted(position_status_counts.items())),
             "mark_count": _sum_int(daily_rows, "positions", "mark_count"),
             "missing_mark_count": _sum_int(daily_rows, "positions", "missing_mark_count"),
             "stale_mark_count": _sum_int(daily_rows, "positions", "stale_mark_count"),
             "latest_position_id": _latest_text(daily_rows, "positions", "latest_position_id"),
+        },
+        "exits": {
+            "close_decision_count": close_decision_count,
+            "close_decision_state_counts": dict(sorted(close_decision_state_counts.items())),
+            "top_close_decision_reasons": _top_counts(close_decision_reason_counts),
+            "close_selected_count": int(close_decision_state_counts.get("close_selected", 0)),
+            "close_blocked_count": int(close_decision_state_counts.get("blocked", 0)),
+            "close_unknown_count": int(close_decision_state_counts.get("unknown", 0)),
+            "close_count": close_count,
+            "close_decision_to_close_rate": _rate(close_count, close_decision_count),
+            "latest_close_decision_id": _latest_text(daily_rows, "closes", "latest_close_decision_id"),
+            "latest_position_close_id": _latest_text(daily_rows, "closes", "latest_position_close_id"),
         },
         "pnl": {
             "realized_pnl": realized_pnl,
@@ -376,6 +392,7 @@ def _aggregate_strategy_days(
         "signal_decision": "stored_signal_decision_facts",
         "admission": "stored_admission_facts" if admission_count > 0 else "no_admission_facts",
         "execution": _execution_fidelity(aggregate),
+        "exit": "stored_close_decision_facts" if close_decision_count > 0 else "no_close_decision_facts",
         "pnl": _pnl_fidelity(aggregate),
         "market_data": as_text(as_mapping(market_data_fidelity).get("coverage_label")) or "not_checked",
     }
@@ -828,6 +845,8 @@ def build_historical_strategy_evaluation(
         "attempt_count": sum(coerce_int(as_mapping(row.get("execution")).get("attempt_count")) or 0 for row in strategy_results),
         "fill_count": sum(coerce_int(as_mapping(row.get("execution")).get("fill_count")) or 0 for row in strategy_results),
         "position_count": sum(coerce_int(as_mapping(row.get("positions")).get("position_count")) or 0 for row in strategy_results),
+        "close_decision_count": sum(coerce_int(as_mapping(row.get("exits")).get("close_decision_count")) or 0 for row in strategy_results),
+        "close_count": sum(coerce_int(as_mapping(row.get("exits")).get("close_count")) or 0 for row in strategy_results),
         "net_pnl": money_sum_float(coerce_float(as_mapping(row.get("pnl")).get("net_pnl")) for row in strategy_results),
     }
     status = "ready" if strategy_results else "empty"
@@ -849,8 +868,11 @@ def build_historical_strategy_evaluation(
             "source": "stored_ticker_source_facts",
             "candidate": "stored_candidate_facts",
             "signal_decision": "stored_signal_decision_facts",
-            "admission": "stored_admission_facts",
-            "execution": "stored_intent_attempt_order_fill_position_facts",
+            "admission": "stored_admission_facts" if summary["admission_count"] > 0 else "no_admission_facts",
+            "execution": "stored_intent_attempt_order_fill_position_facts"
+            if summary["attempt_count"] > 0 or summary["fill_count"] > 0 or summary["position_count"] > 0
+            else "no_execution_evidence",
+            "exit": "stored_close_decision_facts" if summary["close_decision_count"] > 0 else "no_close_decision_facts",
             "market_data": as_text(market_data_summary.get("coverage_label")) or "not_checked",
             "comparison": "stored_facts_current_model_no_profile_rerun",
         },

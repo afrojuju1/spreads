@@ -27,7 +27,7 @@ from core.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
 )
 from core.services.option_structures import position_legs, unique_leg_symbols
-from core.services.trading_engine.portfolio_runtime import describe_position_exit_state
+from core.services.trading_engine.exit_runtime import describe_position_exit_state
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, load_trading_strategies, routine_should_run_now
 from core.storage.engine_models import (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -7,16 +8,14 @@ import pandas_market_calendars as mcal
 
 from core.money import option_limit_price, premium_float
 from core.services.option_structures import net_premium_kind
+from core.services.trading_strategy_exit_models import (
+    DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE,
+    ExitControllerPolicy,
+)
 from core.value_coercion import as_text, coerce_bool, coerce_float, coerce_int, utc_iso
 from core.storage.serializers import parse_datetime
 
-DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE = 10
-DEFAULT_EXIT_POLICY = {
-    "enabled": True,
-    "profit_target_pct": 0.5,
-    "stop_multiple": 2.0,
-    "force_close_at": None,
-}
+DEFAULT_EXIT_POLICY = ExitControllerPolicy().to_exit_policy_payload()
 
 
 def _calendar_close(session_date: str, market_calendar: str = "NYSE") -> datetime | None:
@@ -29,19 +28,7 @@ def _calendar_close(session_date: str, market_calendar: str = "NYSE") -> datetim
 
 
 def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
-    source = payload if isinstance(payload, dict) else {}
-    raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
-    policy = dict(DEFAULT_EXIT_POLICY)
-    if "enabled" in raw_policy:
-        policy["enabled"] = coerce_bool(raw_policy["enabled"], default=False)
-    for key in ("profit_target_pct", "stop_multiple"):
-        if key not in raw_policy:
-            continue
-        parsed = coerce_float(raw_policy[key])
-        if parsed is not None:
-            policy[key] = parsed
-    policy["force_close_at"] = as_text(raw_policy.get("force_close_at"))
-    return policy
+    return ExitControllerPolicy.model_validate(payload or {}).to_exit_policy_payload()
 
 
 def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -88,6 +75,13 @@ def _stop_mark(
 ) -> float | None:
     if entry_value is None or premium_kind is None:
         return None
+    stop_loss_pct = coerce_float(policy.get("stop_loss_pct"))
+    if stop_loss_pct is not None:
+        if stop_loss_pct < 0:
+            return None
+        if premium_kind == "debit":
+            return premium_float(entry_value * max(1.0 - min(stop_loss_pct, 1.0), 0.0))
+        return premium_float(entry_value * (1.0 + stop_loss_pct))
     stop_multiple = coerce_float(policy.get("stop_multiple"))
     if stop_multiple is None:
         return None
@@ -96,9 +90,116 @@ def _stop_mark(
     return premium_float(entry_value * stop_multiple)
 
 
+def _stop_reason(policy: dict[str, Any]) -> str:
+    return "stop_loss" if coerce_float(policy.get("stop_loss_pct")) is not None else "stop_multiple"
+
+
+def _quote_spread_details(
+    *,
+    position: dict[str, Any],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    max_spread_pct = coerce_float(policy.get("max_spread_pct"))
+    if max_spread_pct is None:
+        return {
+            "quote_spread_pct": None,
+            "quote_spread_state": "not_configured",
+            "max_spread_pct": None,
+        }
+    spread_pct = None
+    for key in ("close_quote_spread_pct", "quote_spread_pct", "spread_pct"):
+        spread_pct = coerce_float(position.get(key))
+        if spread_pct is not None:
+            break
+    if spread_pct is None:
+        return {
+            "quote_spread_pct": None,
+            "quote_spread_state": "unavailable",
+            "max_spread_pct": max_spread_pct,
+        }
+    return {
+        "quote_spread_pct": spread_pct,
+        "quote_spread_state": "too_wide" if spread_pct > max_spread_pct else "ok",
+        "max_spread_pct": max_spread_pct,
+    }
+
+
+def _underlying_setup(position: dict[str, Any]) -> dict[str, Any]:
+    for key in ("underlying_setup", "setup", "opening_signal_setup"):
+        value = position.get(key)
+        if isinstance(value, Mapping):
+            return dict(value)
+    evidence = position.get("opening_signal_evidence")
+    if isinstance(evidence, Mapping):
+        setup = evidence.get("setup") or evidence.get("setup_context")
+        if isinstance(setup, Mapping):
+            return dict(setup)
+    return {}
+
+
+def _underlying_invalidation_details(
+    *,
+    position: dict[str, Any],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    raw_config = policy.get("underlying_invalidation")
+    if not isinstance(raw_config, Mapping):
+        return {
+            "underlying_invalidation_state": "not_configured",
+            "underlying_invalidation_reason": None,
+        }
+    config = dict(raw_config)
+    if not coerce_bool(config.get("enabled"), default=True):
+        return {
+            "underlying_invalidation_state": "disabled",
+            "underlying_invalidation_reason": None,
+        }
+    setup = _underlying_setup(position)
+    status = (as_text(setup.get("setup_status")) or as_text(position.get("setup_status")) or "").lower()
+    explicit_state = (
+        as_text(position.get("underlying_invalidation_state"))
+        or as_text(setup.get("underlying_invalidation_state"))
+        or as_text(setup.get("invalidation_state"))
+    )
+    if explicit_state is not None and explicit_state.lower() in {"invalidated", "breakdown_confirmed", "failed_reclaim"}:
+        return {
+            "underlying_invalidation_state": "invalidated",
+            "underlying_invalidation_reason": explicit_state.lower(),
+        }
+    latest_close = coerce_float(setup.get("latest_close") or setup.get("setup_latest_close") or position.get("setup_latest_close"))
+    opening_range_low = coerce_float(
+        setup.get("opening_range_low") or setup.get("setup_opening_range_low") or position.get("setup_opening_range_low")
+    )
+    tolerance_bps = coerce_float(config.get("breakdown_tolerance_bps")) or 0.0
+    if latest_close is not None and opening_range_low is not None:
+        tolerance_multiplier = 1.0 - max(tolerance_bps, 0.0) / 10_000.0
+        if latest_close < opening_range_low * tolerance_multiplier:
+            return {
+                "underlying_invalidation_state": "invalidated",
+                "underlying_invalidation_reason": "opening_range_breakdown",
+                "setup_latest_close": latest_close,
+                "setup_opening_range_low": opening_range_low,
+            }
+    if status == "unfavorable":
+        return {
+            "underlying_invalidation_state": "invalidated",
+            "underlying_invalidation_reason": "setup_unfavorable",
+        }
+    if not setup:
+        return {
+            "underlying_invalidation_state": "unavailable",
+            "underlying_invalidation_reason": "underlying_setup_missing",
+        }
+    return {
+        "underlying_invalidation_state": "valid",
+        "underlying_invalidation_reason": None,
+    }
+
+
 def _exit_policy_details(
     *,
     policy: dict[str, Any],
+    position: dict[str, Any],
     mark: float | None,
     effective_mark: float | None,
     mark_state: str,
@@ -123,12 +224,16 @@ def _exit_policy_details(
             policy=policy,
         ),
         "force_close_at": as_text(policy.get("force_close_at")),
+        "max_quote_age_seconds": coerce_int(policy.get("max_quote_age_seconds")),
+        **_quote_spread_details(position=position, policy=policy),
+        **_underlying_invalidation_details(position=position, policy=policy),
     }
 
 
 def _resolve_effective_exit_mark(
     *,
     position: dict[str, Any],
+    policy: dict[str, Any],
     mark: float | None,
     now: datetime,
 ) -> tuple[float | None, str]:
@@ -136,8 +241,15 @@ def _resolve_effective_exit_mark(
         return None, "awaiting_mark"
 
     risk_policy = position.get("risk_policy") if isinstance(position.get("risk_policy"), dict) else {}
-    stale_quote_after_seconds = coerce_float(risk_policy.get("stale_quote_after_seconds"))
-    if stale_quote_after_seconds is None:
+    stale_thresholds = [
+        value
+        for value in (
+            coerce_float(risk_policy.get("stale_quote_after_seconds")),
+            coerce_float(policy.get("max_quote_age_seconds")),
+        )
+        if value is not None
+    ]
+    if not stale_thresholds:
         return mark, "mark"
 
     marked_at = parse_datetime(as_text(position.get("close_marked_at")))
@@ -145,7 +257,7 @@ def _resolve_effective_exit_mark(
         return None, "awaiting_fresh_mark"
 
     age_seconds = (now - marked_at).total_seconds()
-    if age_seconds > stale_quote_after_seconds:
+    if age_seconds > min(stale_thresholds):
         return None, "awaiting_fresh_mark"
     return mark, "mark"
 
@@ -182,17 +294,20 @@ def evaluate_exit_policy(
     premium_kind = as_text(position.get("entry_value_kind")) or net_premium_kind(position.get("strategy") or position.get("strategy_family"))
     effective_mark, mark_state = _resolve_effective_exit_mark(
         position=position,
+        policy=policy,
         mark=mark,
         now=current_time,
     )
     details = _exit_policy_details(
         policy=policy,
+        position=position,
         mark=mark,
         effective_mark=effective_mark,
         mark_state=mark_state,
         entry_value=entry_value,
         premium_kind=premium_kind,
     )
+    stop_mark = premium_float(details.get("stop_mark"))
     if remaining_quantity <= 0:
         return {
             "should_close": False,
@@ -205,6 +320,27 @@ def evaluate_exit_policy(
             "should_close": False,
             "reason": "policy_disabled",
             "recipe_ref": None,
+            **details,
+        }
+    if details.get("underlying_invalidation_state") == "invalidated":
+        limit_price, limit_price_source = _resolve_force_close_limit_price(
+            position=position,
+            mark=effective_mark,
+            fallback_mark=mark,
+        )
+        if limit_price is None:
+            return {
+                "should_close": False,
+                "reason": "awaiting_underlying_invalidation_price",
+                "recipe_ref": None,
+                **details,
+            }
+        return {
+            "should_close": True,
+            "reason": "underlying_invalidation",
+            "recipe_ref": None,
+            "limit_price": limit_price,
+            "limit_price_source": limit_price_source,
             **details,
         }
     if (
@@ -225,17 +361,13 @@ def evaluate_exit_policy(
             **details,
         }
     if (
-        entry_value is not None
-        and effective_mark is not None
-        and (
-            effective_mark <= max(entry_value / max(float(policy["stop_multiple"]), 1.0), 0.0)
-            if premium_kind == "debit"
-            else effective_mark >= entry_value * float(policy["stop_multiple"])
-        )
+        effective_mark is not None
+        and stop_mark is not None
+        and (effective_mark <= stop_mark if premium_kind == "debit" else effective_mark >= stop_mark)
     ):
         return {
             "should_close": True,
-            "reason": "stop_multiple",
+            "reason": _stop_reason(policy),
             "recipe_ref": None,
             "limit_price": option_limit_price(effective_mark),
             "limit_price_source": "mark",

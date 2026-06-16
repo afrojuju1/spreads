@@ -610,6 +610,8 @@ def submit_execution_intent(
                 close_request_metadata["source"] = dict(payload["source"])
             if isinstance(payload.get("close_decision"), dict):
                 close_request_metadata["close_decision"] = dict(payload["close_decision"])
+            if isinstance(payload.get("close_admission"), dict):
+                close_request_metadata["close_admission"] = dict(payload["close_admission"])
             if isinstance(payload.get("risk_policy"), dict):
                 close_request_metadata["risk_policy"] = dict(payload["risk_policy"])
             result = submit_position_close_by_id(

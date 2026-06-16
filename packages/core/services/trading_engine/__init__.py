@@ -44,6 +44,7 @@ from .feature_snapshots import (
     resolve_feature_snapshot_builder,
 )
 from .execution import ExecutionEngine
+from .exit_runtime import PostgresExitEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
 from .portfolio import PortfolioEngine
 from .portfolio_runtime import PostgresPortfolioEngine
@@ -82,6 +83,7 @@ __all__ = [
     "PRE_SELECTION_ENTRY_QUALITY_STAGES",
     "PortfolioEngine",
     "PostgresDataEngine",
+    "PostgresExitEngine",
     "PostgresPortfolioEngine",
     "RiskEngine",
     "StrategyEngine",

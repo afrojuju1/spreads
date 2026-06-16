@@ -166,6 +166,10 @@ class TradingStrategyConfig:
         return () if self.management is None else self.management.recipes
 
     @property
+    def management_policy(self) -> dict[str, Any]:
+        return {} if self.management is None else dict(self.management.policy)
+
+    @property
     def paused(self) -> bool:
         return self.runtime.paused
 
@@ -288,6 +292,10 @@ class ManagementRuntime:
     @property
     def management_recipe_refs(self) -> tuple[str, ...]:
         return self.strategy.management_recipe_refs
+
+    @property
+    def management_policy(self) -> dict[str, Any]:
+        return dict(self.strategy.management_policy)
 
     @property
     def trigger_policy(self) -> dict[str, Any]:

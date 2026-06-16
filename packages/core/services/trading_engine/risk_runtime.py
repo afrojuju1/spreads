@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from core.money import option_contract_notional
+from core.services.admission_lifecycle import normalize_lifecycle_admission
 from core.services.execution_lifecycle import OPEN_ATTEMPT_STATUS_LIST
 from core.services.risk_manager import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
@@ -91,32 +93,77 @@ def position_close_block_reason(position: Mapping[str, Any], *, now: datetime) -
     return None
 
 
-def close_execution_block_reason(
+def evaluate_close_admission(
     execution_store: Any,
     *,
     position: Mapping[str, Any],
     now: datetime,
-) -> str | None:
+    extra_blocker: str | None = None,
+) -> dict[str, Any]:
     position_id = as_text(position.get("position_id"))
-    if position_id is not None and has_open_close_attempt(execution_store, position_id=position_id):
-        return "close_already_open"
-    return position_close_block_reason(position, now=now)
+    reason: str | None = None
+    if extra_blocker is not None:
+        reason = extra_blocker
+    elif position_id is not None and has_open_close_attempt(execution_store, position_id=position_id):
+        reason = "close_already_open"
+    elif position_id is not None and not execution_store.intent_schema_ready():
+        reason = "execution_intent_schema_unavailable"
+    elif position_id is not None and has_active_close_intent(execution_store, position_id=position_id):
+        reason = "close_intent_already_open"
+    else:
+        reason = position_close_block_reason(position, now=now)
 
-
-def close_intent_block_reason(execution_store: Any, *, position_id: str) -> str | None:
-    if not execution_store.intent_schema_ready():
-        return "execution_intent_schema_unavailable"
-    if has_active_close_intent(execution_store, position_id=position_id):
-        return "close_intent_already_open"
-    return None
+    close_decision = position.get("close_decision") if isinstance(position.get("close_decision"), Mapping) else {}
+    close_decision_id = as_text(close_decision.get("close_decision_id"))
+    remaining_quantity = coerce_float(position.get("remaining_quantity")) or 0.0
+    requested_quantity = None if remaining_quantity <= 0 else max(int(remaining_quantity), 1)
+    limit_price = coerce_float(close_decision.get("limit_price"))
+    status = "approved" if reason is None else "blocked"
+    return normalize_lifecycle_admission(
+        {
+            "status": status,
+            "reason": "approved" if reason is None else reason,
+            "message": "Close request passed position, reconciliation, and active-close validation."
+            if reason is None
+            else "Close request is blocked before intent creation.",
+            "evaluated_at": now.isoformat().replace("+00:00", "Z") if now.tzinfo is not None else now.isoformat(),
+            "admissible_quantity": requested_quantity if reason is None else 0,
+        },
+        admission_kind="position_close",
+        source_object_type="close_decision" if close_decision_id is not None else "position",
+        source_object_id=close_decision_id or position_id,
+        session_date=as_text(position.get("session_date") or position.get("market_date") or position.get("market_date_opened")),
+        requested_quantity=requested_quantity,
+        requested_notional=option_contract_notional(limit_price, requested_quantity),
+        max_loss=None,
+        policy_snapshot=position.get("risk_policy") if isinstance(position.get("risk_policy"), Mapping) else {},
+        capability_snapshot={
+            "position_status": position_status(position),
+            "reconciliation_status": as_text(position.get("reconciliation_status")),
+            "active_close_attempt": bool(position_id is not None and has_open_close_attempt(execution_store, position_id=position_id)),
+            "active_close_intent": bool(position_id is not None and has_active_close_intent(execution_store, position_id=position_id)),
+            "intent_schema_ready": bool(execution_store.intent_schema_ready()),
+        },
+        metrics={
+            "remaining_quantity": remaining_quantity,
+            "requested_limit_price": limit_price,
+        },
+        reason_codes=["approved" if reason is None else reason],
+        blockers=[] if reason is None else [reason],
+        evidence={
+            "position_id": position_id,
+            "close_decision_id": close_decision_id,
+            "admission_boundary": "close_admission",
+        },
+        decided_at=now.isoformat().replace("+00:00", "Z") if now.tzinfo is not None else now.isoformat(),
+    )
 
 
 __all__ = [
     "OPEN_POSITION_STATUSES",
-    "close_execution_block_reason",
-    "close_intent_block_reason",
     "close_intent_id",
     "close_slot_key",
+    "evaluate_close_admission",
     "has_active_close_intent",
     "has_open_close_attempt",
     "position_close_block_reason",

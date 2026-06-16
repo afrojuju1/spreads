@@ -17,6 +17,7 @@ class EngineComponentRole(StrEnum):
     DATA = "data"
     STRATEGY = "strategy"
     RISK = "risk"
+    EXIT = "exit"
     EXECUTION = "execution"
     PORTFOLIO = "portfolio"
     OPS = "ops"

@@ -23,6 +23,7 @@ from core.services.payload_validation import (
 from core.services.trade_structure_specs import resolve_trade_structure_spec
 from core.services.trading_strategy_build_models import RoutineSchedule, StrategyLiquidityRules
 from core.services.trading_strategy_execution_models import StrategyExecutionPolicy
+from core.services.trading_strategy_exit_models import ExitControllerPolicy, ExitControllerProfile
 from core.services.trading_strategy_risk_models import (
     StrategyProtectionPolicy,
     StrategyRiskDefaults,
@@ -393,19 +394,21 @@ def _compose_management_routine(
     )
     if exit_controller_ref is None:
         raise ValueError("management exit controller is required")
-    exit_controller = _resolve_profile(profiles, "exit_controllers", exit_controller_ref)
-    routine_profile_ref = routine.routine_profile or normalize_optional_text(exit_controller.get("routine_profile"))
+    exit_controller = ExitControllerProfile.model_validate(_resolve_profile(profiles, "exit_controllers", exit_controller_ref))
+    routine_profile_ref = routine.routine_profile or exit_controller.routine_profile
     if routine_profile_ref is None:
         raise ValueError(f"exit_controller {exit_controller_ref} must declare routine_profile")
-    default_recipes = normalize_text_tuple(exit_controller.get("recipes"))
+    recipe_refs = tuple(routine.recipes or exit_controller.recipes)
+    policy_payload = _deep_merge(exit_controller.policy.to_exit_policy_payload(), dict(routine.policy))
+    policy = ExitControllerPolicy.from_recipe_refs(recipe_refs, existing_policy=policy_payload)
     payload: dict[str, Any] = {
         "routine": "management",
         "enabled": routine.enabled,
         "schedule": _resolve_profile(profiles, "routine_profiles", routine_profile_ref),
         "selection": dict(routine.selection),
         "quality_overrides": dict(routine.quality_overrides),
-        "recipes": list(routine.recipes or default_recipes),
-        "policy": _deep_merge(normalize_mapping(exit_controller.get("policy")), dict(routine.policy)),
+        "recipes": list(recipe_refs),
+        "policy": policy.to_exit_policy_payload(),
     }
     return payload
 

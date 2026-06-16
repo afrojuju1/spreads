@@ -5,27 +5,31 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
-from core.money import premium_float
+from core.services.admission_lifecycle import admission_allows_attempt
+from core.services.execution_intents.position_close import issue_close_execution_intent
 from core.services.trading_strategy_runtime import resolve_management_runtimes
-from core.services.trading_engine.portfolio_runtime import (
-    PostgresPortfolioEngine,
+from core.services.trading_engine.exit_runtime import (
+    PostgresExitEngine,
+    attach_close_decision_intent,
     blocked_close_decision_projection,
-    build_portfolio_run_ref,
-    build_position_snapshot,
+    build_exit_run_ref,
+    build_position_exit_snapshot,
     close_decision_lifecycle,
     close_decision_projection,
+    persist_close_decision,
+    persist_close_intent_admission,
+)
+from core.services.trading_engine.portfolio_runtime import (
+    PostgresPortfolioEngine,
+    build_position_snapshot,
 )
 from core.services.trading_engine.risk_runtime import (
-    close_execution_block_reason,
-    close_intent_block_reason,
-    close_intent_id,
-    close_slot_key,
-    position_is_open,
+    evaluate_close_admission,
 )
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
-from core.value_coercion import as_text, utc_expiry_iso, utc_iso, utc_now_iso
+from core.value_coercion import as_text, utc_iso, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 BROKER_SYNC_KEY = "broker_sync:alpaca"
@@ -111,113 +115,6 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     return snapshot
 
 
-def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, Any]:
-    details = dict(decision.get("decision_details") or {}) if isinstance(decision.get("decision_details"), dict) else {}
-    exit_context: dict[str, Any] = {}
-    for key in (
-        "mark",
-        "effective_mark",
-        "entry_value",
-        "profit_target_mark",
-        "stop_mark",
-    ):
-        rounded = premium_float(details.get(key))
-        if rounded is not None:
-            exit_context[key] = rounded
-    for key in ("mark_state", "force_close_at"):
-        text = as_text(details.get(key))
-        if text is not None:
-            exit_context[key] = text
-
-    payload: dict[str, Any] = {
-        "kind": kind,
-        "reason": as_text(decision.get("reason")),
-        "decision_source": as_text(decision.get("decision_source")),
-        "recipe_ref": as_text(decision.get("recipe_ref")),
-        "limit_price_source": as_text(decision.get("limit_price_source")),
-    }
-    if exit_context:
-        payload["exit_context"] = exit_context
-    close_decision = decision.get("close_decision")
-    if isinstance(close_decision, Mapping):
-        payload["close_decision"] = dict(close_decision)
-    return payload
-
-
-def _create_close_intent(
-    execution_store: Any,
-    *,
-    position: dict[str, Any],
-    runtime: Any,
-    decision: dict[str, Any],
-) -> dict[str, Any]:
-    from core.services.execution_intents.shared import issue_pending_execution_intent
-
-    position_id = str(position["position_id"])
-    close_decision = close_decision_lifecycle(
-        position=position,
-        decision=decision,
-        decision_source=as_text(decision.get("decision_source")),
-    )
-    decision = {**decision, "close_decision": close_decision}
-    close_execution_policy = runtime.strategy.execution.execution_policy_for_action("close")
-    close_repricing_policy = dict(close_execution_policy.get("repricing_policy") or {})
-    close_executor_profile = runtime.strategy.execution.executor_profile_snapshot("close")
-    return issue_pending_execution_intent(
-        execution_store,
-        execution_intent_id=close_intent_id(position_id=position_id, trading_strategy_id=runtime.trading_strategy_id),
-        trading_strategy_id=runtime.trading_strategy_id,
-        strategy_position_id=position_id,
-        execution_attempt_id=None,
-        action_type="close",
-        slot_key=close_slot_key(position_id),
-        claim_token=None,
-        policy_ref={
-            "trading_strategy_id": runtime.trading_strategy_id,
-            "trade_structure": runtime.trade_structure,
-            "routine": "manage",
-        },
-        config_hash=runtime.config_hash,
-        state="pending",
-        expires_at=utc_expiry_iso(
-            minutes=int(close_execution_policy["submit_ttl_minutes"]),
-            minimum_seconds=60,
-        ),
-        superseded_by_id=None,
-        payload={
-            "position_id": position_id,
-            "limit_price": decision.get("limit_price"),
-            "limit_price_source": decision.get("limit_price_source"),
-            "reason": decision.get("reason"),
-            "recipe_ref": decision.get("recipe_ref"),
-            "close_decision": close_decision,
-            "decision_source": decision.get("decision_source"),
-            "decision_details": dict(decision.get("decision_details") or {}),
-            "source": _close_source_payload(
-                kind="management_runtime_exit",
-                decision=decision,
-            ),
-            "execution_mode": runtime.strategy.execution.mode,
-            "approval_mode": runtime.strategy.execution.approval,
-            "execution_runtime": runtime.strategy.execution.runtime,
-            "executor_profile": close_executor_profile,
-            "execution_policy": close_execution_policy,
-            "repricing_policy": close_repricing_policy,
-        },
-        created_event_payload={
-            "position_id": position_id,
-            "reason": decision.get("reason"),
-            "recipe_ref": decision.get("recipe_ref"),
-            "close_decision_id": close_decision.get("close_decision_id"),
-            "close_decision_state": close_decision.get("decision_state"),
-            "limit_price": decision.get("limit_price"),
-            "execution_runtime": runtime.strategy.execution.runtime,
-            "executor_profile_id": close_executor_profile.get("executor_profile_id"),
-            "submit_ttl_minutes": close_execution_policy.get("submit_ttl_minutes"),
-        },
-    )
-
-
 def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], storage: Any | None = None) -> None:
     refresh_session_position_marks(
         db_target=db_target,
@@ -241,8 +138,9 @@ def _replace_with_blocked_projection(
     position: Mapping[str, Any],
     reason: str,
     decision_source: str,
-    portfolio_run_id: str,
+    exit_run_id: str,
     decided_at: str,
+    close_admission: Mapping[str, Any] | None = None,
 ) -> None:
     row.clear()
     row.update(
@@ -250,8 +148,9 @@ def _replace_with_blocked_projection(
             position=position,
             reason=reason,
             decision_source=decision_source,
-            portfolio_run_id=portfolio_run_id,
+            exit_run_id=exit_run_id,
             decided_at=decided_at,
+            close_admission=close_admission,
         )
     )
 
@@ -278,12 +177,18 @@ def run_trading_strategy_manage(
     now = datetime.now(UTC)
     broker_sync = _broker_sync_snapshot(storage, now=now)
     management_runtimes = tuple(resolve_management_runtimes())
+    engine_facts = getattr(storage, "engine_facts", None)
     portfolio_engine = PostgresPortfolioEngine(
         execution_store=execution_store,
+    )
+    exit_engine = PostgresExitEngine(
+        execution_store=execution_store,
+        engine_facts=engine_facts,
         now=now,
         management_runtimes=management_runtimes,
+        broker_sync=broker_sync,
     )
-    portfolio_run_ref = build_portfolio_run_ref(
+    exit_run_ref = build_exit_run_ref(
         trading_strategy_id=trading_strategy_id,
         now=now,
     )
@@ -295,8 +200,8 @@ def run_trading_strategy_manage(
     if not open_positions:
         return {
             "status": "degraded" if open_attempt_guard.get("status") == "degraded" else "ok",
-            "portfolio_engine": {
-                "run_id": portfolio_run_ref.run_id,
+            "exit_engine": {
+                "run_id": exit_run_ref.run_id,
             },
             "position_count": 0,
             "evaluated": 0,
@@ -309,21 +214,30 @@ def run_trading_strategy_manage(
     if broker_sync.get("status") != "current":
         broker_reason = str(broker_sync.get("reason") or "broker_sync_not_current")
         decided_at = utc_iso(now)
-        broker_decisions = [
-            blocked_close_decision_projection(
+        broker_decisions = []
+        for position in open_positions[:25]:
+            exit_snapshot = build_position_exit_snapshot(
+                position=position,
+                now=now,
+                execution_store=execution_store,
+                engine_facts=engine_facts,
+                broker_sync=broker_sync,
+            )
+            projection = blocked_close_decision_projection(
                 position=position,
                 reason=broker_reason,
                 decision_source="broker_sync",
-                portfolio_run_id=portfolio_run_ref.run_id,
+                exit_run_id=exit_run_ref.run_id,
                 decided_at=decided_at,
+                exit_snapshot=exit_snapshot,
             )
-            for position in open_positions[:25]
-        ]
+            persist_close_decision(engine_facts, position=position, close_decision=projection["close_decision"])
+            broker_decisions.append(projection)
         return {
             "status": "skipped",
             "reason": broker_reason,
-            "portfolio_engine": {
-                "run_id": portfolio_run_ref.run_id,
+            "exit_engine": {
+                "run_id": exit_run_ref.run_id,
             },
             "position_count": len(open_positions),
             "evaluated": 0,
@@ -375,33 +289,12 @@ def run_trading_strategy_manage(
             position = enrich_position_row(dict(latest_position))
             position_snapshot = build_position_snapshot(position)
 
-        close_block_reason = close_execution_block_reason(
-            execution_store,
-            position=position,
-            now=now,
-        )
-        if close_block_reason is not None:
-            evaluated += 1
-            skipped += 1
-            if position_is_open(position):
-                _mark_exit_evaluated(execution_store, position_id=position_id, reason=close_block_reason)
-            decisions.append(
-                blocked_close_decision_projection(
-                    position=position,
-                    reason=close_block_reason,
-                    decision_source="close_guard",
-                    portfolio_run_id=portfolio_run_ref.run_id,
-                    decided_at=now_iso,
-                )
-            )
-            continue
-
-        close_result = portfolio_engine.evaluate_close(
-            run_ref=portfolio_run_ref,
+        close_result = exit_engine.evaluate_close(
+            run_ref=exit_run_ref,
             position=position_snapshot,
         )
         decision = dict(close_result.payload.get("decision") or {})
-        decision_source = as_text(close_result.payload.get("decision_source")) or "portfolio_engine"
+        decision_source = as_text(close_result.payload.get("decision_source")) or "exit_engine"
         management_runtime = close_result.payload.get("management_runtime")
         close_decision = dict(close_result.payload.get("close_decision") or decision.get("close_decision") or {})
         evaluated += 1
@@ -412,11 +305,12 @@ def run_trading_strategy_manage(
                 reason=str(decision["reason"]),
                 decision_source=decision_source,
                 should_close=bool(decision["should_close"]),
-                portfolio_run_id=portfolio_run_ref.run_id,
+                exit_run_id=exit_run_ref.run_id,
                 close_decision=close_decision,
             )
         )
         if not decision["should_close"]:
+            persist_close_decision(engine_facts, position=position, close_decision=close_decision)
             skipped += 1
             continue
 
@@ -425,34 +319,70 @@ def run_trading_strategy_manage(
             position = enrich_position_row(dict(latest_position))
             position_snapshot = build_position_snapshot(position)
 
-        close_block_reason = close_execution_block_reason(
+        close_admission = evaluate_close_admission(
             execution_store,
-            position=position,
+            position={**position, "close_decision": close_decision},
             now=now,
+            extra_blocker=None if management_runtime is not None else "management_runtime_required_for_close_intent",
         )
-        if close_block_reason is None and management_runtime is None:
-            close_block_reason = "management_runtime_required_for_close_intent"
-        if close_block_reason is None:
-            close_block_reason = close_intent_block_reason(execution_store, position_id=position_id)
-        if close_block_reason is not None:
+        if not admission_allows_attempt(close_admission):
+            close_block_reason = str((close_admission.get("blockers") or close_admission.get("reason_codes") or ["close_admission_blocked"])[0])
+            evidence = dict(close_admission.get("evidence") or {})
+            evidence["selected_close_decision"] = dict(close_decision)
+            close_admission["evidence"] = evidence
             skipped += 1
             _mark_exit_evaluated(execution_store, position_id=position_id, reason=close_block_reason)
             _replace_with_blocked_projection(
                 decisions[-1],
                 position=position,
                 reason=close_block_reason,
-                decision_source="close_guard",
-                portfolio_run_id=portfolio_run_ref.run_id,
+                decision_source="close_admission",
+                exit_run_id=exit_run_ref.run_id,
                 decided_at=now_iso,
+                close_admission=close_admission,
             )
+            persist_close_decision(engine_facts, position=position, close_decision=decisions[-1]["close_decision"])
             continue
 
         try:
-            _create_close_intent(
+            close_decision = close_decision_lifecycle(
+                position=position,
+                decision={**decision, "close_decision": close_decision},
+                decision_source=decision_source,
+                decided_at=now_iso,
+                close_admission=close_admission,
+            )
+            decisions[-1].update(close_decision_projection(
+                position_id=position_id,
+                reason=str(decision["reason"]),
+                decision_source=decision_source,
+                should_close=True,
+                exit_run_id=exit_run_ref.run_id,
+                close_decision=close_decision,
+            ))
+            persist_close_decision(engine_facts, position=position, close_decision=close_decision)
+            intent = issue_close_execution_intent(
                 execution_store,
                 position=position,
                 runtime=management_runtime,
                 decision=decision,
+                close_decision=close_decision,
+                close_admission=close_admission,
+            )
+            close_decision["execution_intent_id"] = intent.get("execution_intent_id")
+            decisions[-1]["close_decision"] = close_decision
+            attach_close_decision_intent(
+                engine_facts,
+                close_decision_id=str(close_decision["close_decision_id"]),
+                execution_intent_id=str(intent["execution_intent_id"]),
+            )
+            persist_close_intent_admission(
+                engine_facts,
+                intent=intent,
+                close_decision=close_decision,
+                close_admission=close_admission,
+                runtime=management_runtime,
+                position=position,
             )
             created_intents += 1
         except Exception as exc:
@@ -465,8 +395,8 @@ def run_trading_strategy_manage(
 
     return {
         "status": "degraded" if failures or open_attempt_guard.get("status") == "degraded" else "ok",
-        "portfolio_engine": {
-            "run_id": portfolio_run_ref.run_id,
+        "exit_engine": {
+            "run_id": exit_run_ref.run_id,
         },
         "position_count": len(refreshed_positions),
         "evaluated": evaluated,

@@ -26,7 +26,7 @@ from core.storage.execution_models import (
     PortfolioPositionModel,
     PositionCloseModel,
 )
-from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionModel, TradeSignalModel
+from core.storage.lifecycle_models import TradeAdmissionModel, TradeCloseDecisionModel, TradeDecisionModel, TradePositionModel, TradeSignalModel
 from core.storage.serializers import parse_date
 from core.value_coercion import as_list, as_mapping, as_text, coerce_float, coerce_int, utc_iso, utc_now_iso
 
@@ -630,6 +630,11 @@ def _empty_execution_strategy_ledger() -> dict[str, Any]:
             "latest_updated_at": None,
         },
         "closes": {
+            "close_decision_count": 0,
+            "close_decision_state_counts": {},
+            "close_decision_reason_counts": {},
+            "latest_close_decision_id": None,
+            "latest_close_decided_at": None,
             "close_count": 0,
             "latest_position_close_id": None,
             "latest_closed_at": None,
@@ -668,6 +673,7 @@ def _build_execution_strategy_ledgers(
     execution_schema_ready: bool,
     intent_schema_ready: bool,
     portfolio_schema_ready: bool,
+    close_lifecycle_schema_ready: bool,
 ) -> dict[str, dict[str, Any]]:
     strategy_list = list(strategies)
     strategy_ids = [strategy.trading_strategy_id for strategy in strategy_list]
@@ -842,6 +848,42 @@ def _build_execution_strategy_ledgers(
                 close_payload["latest_closed_at"] = utc_iso(closed_at)
             _set_latest_activity(latest_activity, strategy_key, closed_at)
 
+    if close_lifecycle_schema_ready:
+        latest_close_decision_at: dict[str, datetime] = {}
+        close_decision_rows = session.execute(
+            select(
+                TradePositionModel.trading_strategy_id,
+                TradeCloseDecisionModel.close_decision_id,
+                TradeCloseDecisionModel.decision_state,
+                TradeCloseDecisionModel.reason,
+                TradeCloseDecisionModel.decided_at,
+            )
+            .join(TradePositionModel, TradeCloseDecisionModel.position_id == TradePositionModel.position_id)
+            .where(TradePositionModel.trading_strategy_id.in_(strategy_ids))
+            .where(TradePositionModel.session_date == market_day)
+            .order_by(
+                TradePositionModel.trading_strategy_id.asc(),
+                TradeCloseDecisionModel.decided_at.desc(),
+                TradeCloseDecisionModel.close_decision_id.asc(),
+            )
+        )
+        for strategy_id, close_decision_id, decision_state, reason, decided_at in close_decision_rows:
+            strategy_key = str(strategy_id)
+            close_payload = payloads[strategy_key]["closes"]
+            close_payload["close_decision_count"] += 1
+            _bump_count(close_payload["close_decision_state_counts"], decision_state)
+            _bump_count(close_payload["close_decision_reason_counts"], reason)
+            if _newer_desc_asc(
+                decided_at,
+                close_decision_id,
+                latest_close_decision_at.get(strategy_key),
+                close_payload.get("latest_close_decision_id"),
+            ):
+                latest_close_decision_at[strategy_key] = decided_at
+                close_payload["latest_close_decision_id"] = str(close_decision_id)
+                close_payload["latest_close_decided_at"] = utc_iso(decided_at)
+            _set_latest_activity(latest_activity, strategy_key, decided_at)
+
     for strategy_id, payload in payloads.items():
         intent_state_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["intents"]["intent_state_counts"]).items()))
         payload["intents"]["intent_state_counts"] = intent_state_counts
@@ -858,6 +900,12 @@ def _build_execution_strategy_ledgers(
         payload["positions"]["position_count"] = int(sum(position_status_counts.values()))
         payload["positions"]["open_position_count"] = int(sum(count for state, count in position_status_counts.items() if state in OPEN_POSITION_STATUSES))
         payload["positions"]["closed_position_count"] = int(position_status_counts.get("closed", 0))
+        payload["closes"]["close_decision_state_counts"] = dict(
+            sorted((str(state), int(count)) for state, count in as_mapping(payload["closes"]["close_decision_state_counts"]).items())
+        )
+        payload["closes"]["close_decision_reason_counts"] = dict(
+            sorted((str(reason), int(count)) for reason, count in as_mapping(payload["closes"]["close_decision_reason_counts"]).items())
+        )
 
         realized_pnl = money_float(coerce_float(payload["pnl"]["realized_pnl"]) or 0.0) or 0.0
         unrealized_pnl = money_float(coerce_float(payload["pnl"]["unrealized_pnl"]) or 0.0) or 0.0
@@ -918,6 +966,7 @@ def _strategy_row(
             "execution_intent_id": intents.get("latest_execution_intent_id"),
             "execution_attempt_id": attempts.get("latest_execution_attempt_id"),
             "position_id": positions.get("latest_position_id"),
+            "close_decision_id": closes.get("latest_close_decision_id"),
             "position_close_id": closes.get("latest_position_close_id"),
         },
         "latest_activity_at": latest_activity,
@@ -939,6 +988,7 @@ def build_strategy_evidence_ledger(
     execution_schema_ready = storage.execution.schema_ready()
     intent_schema_ready = storage.execution.intent_schema_ready()
     portfolio_schema_ready = storage.execution.portfolio_schema_ready()
+    close_lifecycle_schema_ready = storage.engine_facts.close_lifecycle_schema_ready()
 
     rows: list[dict[str, Any]] = []
     with storage.engine_facts.session_factory() as engine_session, storage.execution.session_factory() as execution_session:
@@ -964,6 +1014,7 @@ def build_strategy_evidence_ledger(
             execution_schema_ready=execution_schema_ready,
             intent_schema_ready=intent_schema_ready,
             portfolio_schema_ready=portfolio_schema_ready,
+            close_lifecycle_schema_ready=close_lifecycle_schema_ready,
         )
         for strategy in strategy_list:
             rows.append(
@@ -981,6 +1032,7 @@ def build_strategy_evidence_ledger(
         "execution": "ready" if execution_schema_ready else "blocked",
         "execution_intents": "ready" if intent_schema_ready else "blocked",
         "portfolio": "ready" if portfolio_schema_ready else "blocked",
+        "close_lifecycle": "ready" if close_lifecycle_schema_ready else "blocked",
     }
     status = "healthy" if all(value == "ready" for value in schema.values()) else "blocked"
     return {
@@ -1003,6 +1055,7 @@ def build_strategy_evidence_ledger(
             "fill_count": sum(coerce_int(as_mapping(row.get("attempts")).get("fill_count")) or 0 for row in rows),
             "position_count": sum(coerce_int(as_mapping(row.get("positions")).get("position_count")) or 0 for row in rows),
             "open_position_count": sum(coerce_int(as_mapping(row.get("positions")).get("open_position_count")) or 0 for row in rows),
+            "close_decision_count": sum(coerce_int(as_mapping(row.get("closes")).get("close_decision_count")) or 0 for row in rows),
             "close_count": sum(coerce_int(as_mapping(row.get("closes")).get("close_count")) or 0 for row in rows),
             "realized_pnl": total_realized,
             "unrealized_pnl": total_unrealized,

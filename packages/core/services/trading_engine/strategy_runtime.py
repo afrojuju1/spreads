@@ -13,7 +13,6 @@ from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
     issue_pending_execution_intent,
 )
-from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import candidate_legs
 from core.services.candidate_fields import (
     candidate_economics,
@@ -45,6 +44,7 @@ from core.services.trading_engine.candidate_identity import resolve_candidate_id
 from core.services.trading_engine.entry_selection import EntrySelectionEngine, candidate_result_summary
 from core.services.trading_engine.facts import entry_trade_signal_id, persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
+from core.services.trading_engine.close_policy import resolve_exit_policy_snapshot
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.services.trading_strategy_runtime_models import EntryRuntime
@@ -1197,7 +1197,10 @@ def _run_trading_strategy_entry(
                 "repricing_policy": open_repricing_policy,
                 "validation_provenance": NATURAL_ENTRY_PROVENANCE,
                 "execution_admission": selected_admission,
-                "exit_policy": build_exit_policy_from_recipe_refs(tuple(runtime.strategy.management_recipe_refs)),
+                "exit_policy": resolve_exit_policy_snapshot(
+                    session_date=resolved_market_date,
+                    payload=runtime.strategy.management_policy,
+                ),
             },
             created_event_payload={
                 "trade_signal_id": trade_signal_id,
