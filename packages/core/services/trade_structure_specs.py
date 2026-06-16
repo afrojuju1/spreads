@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from core.domain.models import SpreadCandidate, SymbolMarketSlice
 from core.services.option_structures import normalize_strategy_family
-from core.services.trading_strategy_models import (
+from core.services.trading_strategy_build_models import (
     IronCondorBuildConfig,
     LongVolBuildConfig,
     StrategyBuildConfig,

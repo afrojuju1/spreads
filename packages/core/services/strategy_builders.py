@@ -19,7 +19,7 @@ from core.services.strategy_candidate_builders.settings import (
 )
 from core.services.strategy_candidate_builders.setup import build_relative_strength_market_context
 from core.services.strategy_candidate_builders.single_legs import diagnose_single_leg_rejections
-from core.services.trading_strategy_runtime import EntryRuntime
+from core.services.trading_strategy_runtime_models import EntryRuntime
 
 DEFAULT_MARKET_BENCHMARK_SYMBOLS = ("SPY", "QQQ")
 

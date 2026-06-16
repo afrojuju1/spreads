@@ -11,7 +11,7 @@ from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality_evidence import EntryQualityAnalysis, quality_key
-from core.services.trading_strategy_runtime import EntryRuntime
+from core.services.trading_strategy_runtime_models import EntryRuntime
 from core.value_coercion import coerce_float, coerce_int, unique_text_list, utc_now_iso as _utc_now
 
 

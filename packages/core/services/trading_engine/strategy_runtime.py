@@ -47,7 +47,8 @@ from core.services.trading_engine.facts import entry_trade_signal_id, persist_en
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
-from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_observation_runtime, resolve_entry_runtime
+from core.services.trading_strategy_runtime_models import EntryRuntime
+from core.services.trading_strategy_runtime import resolve_entry_observation_runtime, resolve_entry_runtime
 from core.value_coercion import unique_text_list, utc_expiry_iso, utc_now, utc_now_iso as _utc_now
 
 ENTRY_MONITOR_LIMIT = 12

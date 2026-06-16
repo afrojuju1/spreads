@@ -8,7 +8,7 @@ from core.services.live_selection import select_live_signals
 from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality_evidence import EntryQualityAnalysis, build_entry_quality_analysis
-from core.services.trading_strategy_runtime import EntryRuntime
+from core.services.trading_strategy_runtime_models import EntryRuntime
 
 
 def candidate_result_summary(candidate_result: CandidateBuildResult | None) -> dict[str, Any]:

@@ -38,6 +38,7 @@ from core.services.positions import enrich_position_row
 from core.services.payload_validation import format_validation_error
 from core.services.runtime_identity import parse_live_run_scope_id
 from core.services.trading_strategies import default_config_root
+from core.services.trading_strategy_risk_models import PROTECTION_RULE_KEYS
 from core.value_coercion import (
     as_mapping,
     as_text,
@@ -85,16 +86,6 @@ DEFERRED_EXECUTION_READINESS_REASON = "deferred_to_execution_submit"
 ALLOCATION_DECISION_LIMIT = 200
 BROAD_INDEX_CORRELATION_SYMBOLS = {"SPY", "QQQ", "DIA", "IWM"}
 PROTECTION_ADMISSIBLE_STATUSES = {"admissible", "approved", "ok", "pass", "passed"}
-PROTECTION_RULE_KEYS = {
-    "account_emergency_stop",
-    "daily_drawdown_halt",
-    "rolling_drawdown_halt",
-    "loss_streak_cooldown",
-    "strategy_family_cooldown",
-    "event_calendar_block",
-    "duplicate_underlying_theme_cap",
-    "options_exposure_scenario_cap",
-}
 TERMINAL_ENTRY_ATTEMPT_STATUSES = {
     "blocked",
     "canceled",

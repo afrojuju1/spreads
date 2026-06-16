@@ -9,7 +9,7 @@ from .kernel import EngineEvidence, EnginePayload, EngineSummary, EngineRunRef
 
 if TYPE_CHECKING:
     from core.services.trading_engine.entry_quality import FeatureSnapshot
-    from core.services.trading_strategy_runtime import EntryRuntime
+    from core.services.trading_strategy_runtime_models import EntryRuntime
 
 
 @dataclass(frozen=True)

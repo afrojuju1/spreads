@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from core.services.trading_strategy_runtime import ManagementRuntime
 from core.services.management_recipes import evaluate_management_recipes
+from core.services.trading_strategy_runtime_models import ManagementRuntime
 from core.value_coercion import coerce_float as _coerce_float
 
 

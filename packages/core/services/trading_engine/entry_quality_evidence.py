@@ -12,7 +12,7 @@ from core.services.trading_engine.entry_quality_pipeline import PRE_SELECTION_EN
 from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 
 if TYPE_CHECKING:
-    from core.services.trading_strategy_runtime import EntryRuntime
+    from core.services.trading_strategy_runtime_models import EntryRuntime
 
 
 def _candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
