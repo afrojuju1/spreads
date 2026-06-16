@@ -21,7 +21,7 @@ Build a **stock-first intelligence engine**:
 1. scan the full US stock universe on SIP data
 2. enrich top names with Benzinga news and reaction scoring
 3. pull options chains only for shortlisted names
-4. send ranked alerts, watchlist updates, and paper/live trade suggestions
+4. send ranked alerts, watchlist updates, and broker-environment-aware trade suggestions
 
 Why this is the best fit:
 
@@ -56,4 +56,3 @@ What that means for the design:
 - run **one ingest service per feed**
 - fan out internally to your own workers
 - treat options as a **second-stage enrichment layer**, not the primary universe
-

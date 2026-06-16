@@ -698,7 +698,6 @@ class StrategyRiskLimits:
 
 @dataclass(frozen=True)
 class StrategyRuntimeControls:
-    live_enabled: bool = False
     cancel_pending_entries_after_et: str | None = None
     flatten_positions_at_et: str | None = None
     paused: bool = False
@@ -710,7 +709,6 @@ class StrategyRuntimeControls:
     ) -> StrategyRuntimeControls:
         mapping = _require_mapping(payload, field_name="runtime")
         return cls(
-            live_enabled=bool(mapping.get("live_enabled", False)),
             cancel_pending_entries_after_et=_validate_hhmm(
                 mapping.get("cancel_pending_entries_after_et"),
                 field_name="runtime.cancel_pending_entries_after_et",
@@ -724,7 +722,6 @@ class StrategyRuntimeControls:
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "live_enabled": self.live_enabled,
             "paused": self.paused,
         }
         if self.cancel_pending_entries_after_et is not None:

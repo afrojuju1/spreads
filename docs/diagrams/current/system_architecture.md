@@ -150,7 +150,7 @@ Authored strategy config
             v                               v
 +-----------------------+       +-----------------------+
 | Attempts / Orders /   | <---- | Alpaca broker         |
-| Fills                 |       | paper/live API        |
+| Fills                 |       | environment API       |
 +-----------+-----------+       +-----------+-----------+
             |                               |
             v                               v

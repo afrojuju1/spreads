@@ -291,9 +291,9 @@ Mismatch behavior:
 - `paper` posture with `alpaca_live` must block automatic broker submission and raise operator attention.
 - `live` posture with `alpaca_live` must still pass the existing live-trading deployment guard before broker submission.
 - `live` posture with `alpaca_paper` may be useful rehearsal, but operator state must not present it as real-money proof.
-- Missing or unknown broker environment should block automatic paper/live submission until the environment is resolved.
+- Missing or unknown broker environment should block automatic broker submission until the environment is resolved.
 
-`runtime.live_enabled` is legacy/non-authoritative. It may remain in config payloads while older config shape is cleaned up, but new execution decisions must use `execution.mode`, observed `broker_environment`, approval mode, risk/admission gates, and the existing live-trading guard. Do not introduce replacement control flags such as `real_money_enabled` or `broker_submission_enabled`.
+Legacy posture flags are not active config. Execution decisions must use `execution.mode`, observed `broker_environment`, approval mode, risk/admission gates, and the existing live-trading guard. Do not introduce replacement control flags such as `real_money_enabled` or `broker_submission_enabled`.
 
 ## Engine Entry State
 

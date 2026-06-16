@@ -463,10 +463,6 @@ class TradingStrategyConfig:
         return self.runtime.paused
 
     @property
-    def live_enabled(self) -> bool:
-        return self.runtime.live_enabled
-
-    @property
     def max_open_positions(self) -> int:
         return self.risk_limits.max_open_positions
 

@@ -16,9 +16,9 @@ As of: Sunday, April 19, 2026
 
 ## Paper-To-Live Promotion Checklist
 
-- `call_credit_spread`: keep `live_enabled: false` until explicit manual approval. Require passing replay validation, passing deterministic lifecycle e2e coverage, no replay sample showing systematic near-floor scoring misses, and unchanged safety limits of `max_risk_per_trade: 500`, `max_open_positions: 3`, `max_daily_actions: 6`, and `daily_loss_limit: 250`.
-- `put_credit_spread`: keep `live_enabled: false` until explicit manual approval. Require passing replay validation, persisted paper open/close evidence, stable management exits, and the same bot and trade risk limits already configured.
-- `iron_condor`: keep `live_enabled: false` until explicit manual approval. Require passing replay validation, persisted paper open/close evidence, the tactical promotion floor of `71.5`, and the same bot and trade risk limits already configured.
+- `call_credit_spread`: keep live-money promotion blocked until explicit manual approval. Require passing replay validation, passing deterministic lifecycle e2e coverage, no replay sample showing systematic near-floor scoring misses, and unchanged safety limits of `max_risk_per_trade: 500`, `max_open_positions: 3`, `max_daily_actions: 6`, and `daily_loss_limit: 250`.
+- `put_credit_spread`: keep live-money promotion blocked until explicit manual approval. Require passing replay validation, persisted paper open/close evidence, stable management exits, and the same bot and trade risk limits already configured.
+- `iron_condor`: keep live-money promotion blocked until explicit manual approval. Require passing replay validation, persisted paper open/close evidence, the tactical promotion floor of `71.5`, and the same bot and trade risk limits already configured.
 - Promotion is per bot and manual. There is no automatic paper-to-live flip based on a paper metric threshold alone.
 
 Current paper-runtime evidence as of Sunday, April 19, 2026 evening:

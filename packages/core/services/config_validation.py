@@ -40,7 +40,6 @@ def _strategy_payload(strategy: TradingStrategyConfig) -> dict[str, Any]:
         "management": _routine_payload(strategy.management),
         "enabled": strategy.enabled,
         "paused": strategy.paused,
-        "live_enabled": strategy.live_enabled,
         "execution_mode": strategy.execution.mode,
         "execution_runtime": strategy.execution.runtime,
         "config_hash": strategy.config_hash,
