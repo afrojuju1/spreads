@@ -7,6 +7,7 @@ from core.db.decorators import with_storage
 from core.services.backtest.experiments import resolve_backtest_artifact_root, write_json_artifact
 from core.services.backtest.execution_simulation import build_execution_simulation_backtest
 from core.services.backtest.models import BacktestArtifactKind, BacktestMode, BacktestRequest, BacktestRunState
+from core.services.backtest.parameter_sweep import build_parameter_sweep_backtest
 from core.services.backtest.portfolio_simulation import build_portfolio_simulation_backtest
 from core.services.backtest.strategy_rerun import build_strategy_rerun_backtest
 from core.services.backtest.stored_facts import build_stored_facts_backtest
@@ -19,9 +20,11 @@ def _result_fidelity(result: dict[str, Any]) -> dict[str, Any]:
     return dict(as_mapping(result.get("fidelity_labels")))
 
 
-def _variant_rank_by_net_pnl(result: dict[str, Any]) -> dict[str, int]:
-    rankings = as_mapping(as_mapping(result.get("comparison")).get("rankings"))
-    rows = rankings.get("net_pnl") or []
+def _variant_rank_by_primary_metric(result: dict[str, Any]) -> dict[str, int]:
+    comparison = as_mapping(result.get("comparison"))
+    rankings = as_mapping(comparison.get("rankings"))
+    rank_metric = str(comparison.get("primary_rank_metric") or "net_pnl")
+    rows = rankings.get(rank_metric) or rankings.get("net_pnl") or []
     if not isinstance(rows, list):
         return {}
     ranks: dict[str, int] = {}
@@ -157,9 +160,26 @@ class BacktestEngine:
                     db_target=resolved_db_target,
                 )
                 comparison_mode = "portfolio_simulation_current_config"
+            elif request.mode == BacktestMode.PARAMETER_SWEEP:
+                result = build_parameter_sweep_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_ids=strategy_ids,
+                    symbols=request.symbols,
+                    max_days=request.max_days,
+                    market_data_symbol_limit=request.market_data_symbol_limit,
+                    candidate_limit=request.candidate_limit,
+                    per_symbol_top=request.per_symbol_top,
+                    storage=storage,
+                    db_target=resolved_db_target,
+                    sweep=request.sweep,
+                )
+                comparison_mode = f"parameter_sweep_{request.sweep.base_mode.value}"
             else:
                 raise ValueError(f"Unsupported backtest mode: {request.mode}")
             result = dict(result)
+            variant_artifact_payloads = [dict(row) for row in result.pop("variant_artifacts", []) if isinstance(row, dict)]
+            result["variant_artifact_count"] = len(variant_artifact_payloads)
             result["backtest_run_id"] = backtest_run_id
             result["request"] = request.to_payload()
             result["config_snapshot"] = config_snapshot
@@ -193,7 +213,30 @@ class BacktestEngine:
                         created_at=completed_at,
                     )
                 )
-                variant_rank = _variant_rank_by_net_pnl(result)
+                for variant_artifact_payload in variant_artifact_payloads:
+                    variant_artifact = write_json_artifact(
+                        artifact_root=request.artifact_root,
+                        backtest_run_id=backtest_run_id,
+                        artifact_kind=variant_artifact_payload.get("artifact_kind") or BacktestArtifactKind.VARIANT_RESULT,
+                        payload=dict(as_mapping(variant_artifact_payload.get("payload"))),
+                        metadata=dict(as_mapping(variant_artifact_payload.get("metadata"))),
+                    )
+                    artifact_records.append(
+                        backtests.record_artifact(
+                            backtest_artifact_id=variant_artifact.backtest_artifact_id,
+                            backtest_run_id=backtest_run_id,
+                            artifact_kind=variant_artifact.artifact_kind,
+                            storage_kind=variant_artifact.storage_kind,
+                            uri=variant_artifact.uri,
+                            content_type=variant_artifact.content_type,
+                            row_count=coerce_int(variant_artifact_payload.get("row_count")),
+                            byte_count=variant_artifact.byte_count,
+                            schema=variant_artifact.payload_schema,
+                            metadata=variant_artifact.metadata,
+                            created_at=completed_at,
+                        )
+                    )
+                variant_rank = _variant_rank_by_primary_metric(result)
                 for strategy_result in result.get("strategies") or []:
                     if not isinstance(strategy_result, dict):
                         continue
@@ -212,6 +255,17 @@ class BacktestEngine:
                             parameters={
                                 "variant_id": variant_id,
                                 "comparison_mode": comparison_mode,
+                                **(
+                                    {}
+                                    if not strategy_result.get("sweep_variant_id")
+                                    else {"sweep_variant_id": strategy_result.get("sweep_variant_id")}
+                                ),
+                                **(
+                                    {}
+                                    if not isinstance(strategy_result.get("variant_parameters"), dict)
+                                    else {"variant_parameters": dict(strategy_result["variant_parameters"])}
+                                ),
+                                **({} if not strategy_result.get("base_mode") else {"base_mode": strategy_result.get("base_mode")}),
                             },
                             summary={
                                 "outcome_label": strategy_result.get("outcome_label"),

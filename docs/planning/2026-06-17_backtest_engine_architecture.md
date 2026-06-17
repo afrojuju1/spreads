@@ -202,6 +202,8 @@ Output:
 
 This mode can use vectorized libraries for speed, but the canonical lifecycle artifact still belongs to Backtest.
 
+Implemented in `spr-u44.7`: `parameter_sweep` accepts a bounded `BacktestSweepConfig` with `dimensions`, `base_mode`, `max_variants`, and `rank_metric`. Each dimension is a strategy-parameter path such as `quality_profile`, `source.ref`, `ranking.min_expected_value_dollars`, `entry.selection.min_signal_score`, `build.short_delta.target`, or `exit.profit_target_pct`. The sweep expands the grid up to `max_variants`, applies each overlay to the current strategy config, validates the result through the same strategy DomainModels, injects the variant strategy scope into `strategy_rerun`, `execution_simulation`, or `portfolio_simulation`, writes one artifact per variant plus the overall result artifact, and records per-strategy variant results ranked by the requested metric. Polars/vectorbt are optional acceleration layers only; the current environment has neither, so sweep fidelity labels `vectorized_acceleration=not_installed_polars_vectorbt`.
+
 ## Runtime Boundary
 
 Backtest is allowed to reuse pure policy services:
@@ -463,7 +465,7 @@ flowchart TD
 5. Done: add `strategy_rerun` mode.
 6. Done: add `execution_simulation` mode.
 7. Done: add `portfolio_simulation` and metrics adapters.
-8. Add `parameter_sweep`.
+8. Done: add `parameter_sweep`.
 9. Add a narrow CLI/API adapter only after the backend mode contracts are stable.
 10. Update `docs/current_system_state.md` only after the implemented owner is live.
 

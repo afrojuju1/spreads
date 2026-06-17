@@ -42,7 +42,8 @@ def write_json_artifact(
     run_dir.mkdir(parents=True, exist_ok=True)
     artifact_id = f"bta_{uuid4().hex}"
     artifact_kind_value = artifact_kind.value if isinstance(artifact_kind, BacktestArtifactKind) else str(artifact_kind)
-    path = run_dir / f"{artifact_kind_value}.json"
+    filename = f"{artifact_kind_value}.json" if artifact_kind_value == BacktestArtifactKind.RESULT.value else f"{artifact_kind_value}_{artifact_id}.json"
+    path = run_dir / filename
     rendered_payload = render_value(payload)
     path.write_text(json.dumps(rendered_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return BacktestArtifactWrite(

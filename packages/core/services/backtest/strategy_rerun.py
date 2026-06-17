@@ -792,9 +792,10 @@ def build_strategy_rerun_backtest(
     storage: Any,
     db_target: str,
     config_root: str | None = None,
+    strategy_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     window = normalize_backtest_window(start_date, end_date, max_days=max_days)
-    strategies = load_backtest_strategy_scope(strategy_ids)
+    strategies = load_backtest_strategy_scope(strategy_ids) if strategy_scope is None else dict(strategy_scope)
     entry_strategies = {
         strategy_id: strategy
         for strategy_id, strategy in strategies.items()

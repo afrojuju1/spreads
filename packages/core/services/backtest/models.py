@@ -13,6 +13,7 @@ class BacktestMode(StrEnum):
     STRATEGY_RERUN = "strategy_rerun"
     EXECUTION_SIMULATION = "execution_simulation"
     PORTFOLIO_SIMULATION = "portfolio_simulation"
+    PARAMETER_SWEEP = "parameter_sweep"
 
 
 class BacktestRunState(StrEnum):
@@ -23,10 +24,50 @@ class BacktestRunState(StrEnum):
 
 class BacktestArtifactKind(StrEnum):
     RESULT = "result"
+    VARIANT_RESULT = "variant_result"
 
 
 class BacktestStorageKind(StrEnum):
     FILE = "file"
+
+
+class BacktestSweepConfig(DomainModel):
+    base_mode: BacktestMode = BacktestMode.PORTFOLIO_SIMULATION
+    max_variants: int = Field(default=12, ge=1, le=100)
+    rank_metric: str = "net_pnl"
+    dimensions: dict[str, tuple[Any, ...]] = Field(default_factory=dict)
+
+    @field_validator("base_mode", mode="before")
+    @classmethod
+    def _normalize_base_mode(cls, value: Any) -> BacktestMode:
+        mode = BacktestMode(value or BacktestMode.PORTFOLIO_SIMULATION)
+        if mode in {BacktestMode.STORED_FACTS, BacktestMode.PARAMETER_SWEEP}:
+            raise ValueError("sweep.base_mode must be strategy_rerun, execution_simulation, or portfolio_simulation")
+        return mode
+
+    @field_validator("rank_metric", mode="before")
+    @classmethod
+    def _normalize_rank_metric(cls, value: Any) -> str:
+        rendered = str(value or "net_pnl").strip()
+        return rendered or "net_pnl"
+
+    @field_validator("dimensions", mode="before")
+    @classmethod
+    def _normalize_dimensions(cls, value: Any) -> dict[str, tuple[Any, ...]]:
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("sweep.dimensions must be a mapping")
+        normalized: dict[str, tuple[Any, ...]] = {}
+        for key, raw_values in value.items():
+            path = str(key or "").strip()
+            if not path:
+                raise ValueError("sweep dimension paths must not be empty")
+            values = raw_values if isinstance(raw_values, list | tuple) else (raw_values,)
+            normalized[path] = tuple(values)
+            if not normalized[path]:
+                raise ValueError(f"sweep dimension {path} must include at least one value")
+        return normalized
 
 
 class BacktestRequest(DomainModel):
@@ -41,6 +82,7 @@ class BacktestRequest(DomainModel):
     per_symbol_top: int = Field(default=1, ge=1)
     requested_by: str | None = None
     artifact_root: str | None = None
+    sweep: BacktestSweepConfig = Field(default_factory=BacktestSweepConfig)
 
     @field_validator("strategy_ids", "symbols", mode="before")
     @classmethod
@@ -70,4 +112,5 @@ __all__ = [
     "BacktestRequest",
     "BacktestRunState",
     "BacktestStorageKind",
+    "BacktestSweepConfig",
 ]

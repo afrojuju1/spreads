@@ -450,6 +450,7 @@ def build_portfolio_simulation_backtest(
     storage: Any,
     db_target: str,
     config_root: str | None = None,
+    strategy_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result = build_execution_simulation_backtest(
         start_date=start_date,
@@ -463,8 +464,9 @@ def build_portfolio_simulation_backtest(
         storage=storage,
         db_target=db_target,
         config_root=config_root,
+        strategy_scope=strategy_scope,
     )
-    strategies = load_backtest_strategy_scope(strategy_ids)
+    strategies = load_backtest_strategy_scope(strategy_ids) if strategy_scope is None else dict(strategy_scope)
     for strategy_result in result.get("strategies") or []:
         if not isinstance(strategy_result, dict):
             continue
