@@ -6,6 +6,7 @@ from uuid import uuid4
 from core.db.decorators import with_storage
 from core.services.backtest.experiments import resolve_backtest_artifact_root, write_json_artifact
 from core.services.backtest.models import BacktestArtifactKind, BacktestMode, BacktestRequest, BacktestRunState
+from core.services.backtest.strategy_rerun import build_strategy_rerun_backtest
 from core.services.backtest.stored_facts import build_stored_facts_backtest
 from core.services.backtest.strategy_scope import load_backtest_strategy_scope, strategy_scope_snapshot
 from core.storage.serializers import parse_date
@@ -61,14 +62,11 @@ class BacktestEngine:
         db_target: str | None = None,
         storage: Any | None = None,
     ) -> dict[str, Any]:
-        del db_target
-        if request.mode != BacktestMode.STORED_FACTS:
-            raise ValueError(f"Unsupported backtest mode: {request.mode}")
-
         backtest_run_id = f"bt_{uuid4().hex}"
         started_at = utc_now_iso()
         start_date = parse_date(request.start_date).isoformat()
         end_date = parse_date(request.end_date or request.start_date).isoformat()
+        resolved_db_target = str(db_target or getattr(storage, "database_url", "") or "")
         strategies = load_backtest_strategy_scope(request.strategy_ids)
         strategy_ids = tuple(strategies)
         config_snapshot = strategy_scope_snapshot(strategies)
@@ -93,14 +91,32 @@ class BacktestEngine:
             )
 
         try:
-            result = build_stored_facts_backtest(
-                start_date=start_date,
-                end_date=end_date,
-                strategy_ids=strategy_ids,
-                max_days=request.max_days,
-                market_data_symbol_limit=request.market_data_symbol_limit,
-                storage=storage,
-            )
+            if request.mode == BacktestMode.STORED_FACTS:
+                result = build_stored_facts_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_ids=strategy_ids,
+                    max_days=request.max_days,
+                    market_data_symbol_limit=request.market_data_symbol_limit,
+                    storage=storage,
+                )
+                comparison_mode = "stored_facts_current_catalog"
+            elif request.mode == BacktestMode.STRATEGY_RERUN:
+                result = build_strategy_rerun_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_ids=strategy_ids,
+                    symbols=request.symbols,
+                    max_days=request.max_days,
+                    market_data_symbol_limit=request.market_data_symbol_limit,
+                    candidate_limit=request.candidate_limit,
+                    per_symbol_top=request.per_symbol_top,
+                    storage=storage,
+                    db_target=resolved_db_target,
+                )
+                comparison_mode = "strategy_rerun_current_config"
+            else:
+                raise ValueError(f"Unsupported backtest mode: {request.mode}")
             result = dict(result)
             result["backtest_run_id"] = backtest_run_id
             result["request"] = request.to_payload()
@@ -153,7 +169,7 @@ class BacktestEngine:
                             variant_hash=variant_id,
                             parameters={
                                 "variant_id": variant_id,
-                                "comparison_mode": "stored_facts_current_catalog",
+                                "comparison_mode": comparison_mode,
                             },
                             summary={
                                 "outcome_label": strategy_result.get("outcome_label"),

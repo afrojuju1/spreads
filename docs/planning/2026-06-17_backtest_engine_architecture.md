@@ -2,7 +2,7 @@
 
 Date: 2026-06-17
 
-Status: target architecture and workstream plan. This is not the current runtime source of truth until the implementation beads land and `docs/current_system_state.md` is updated.
+Status: active architecture and workstream plan. `docs/current_system_state.md` remains the runtime source of truth; this file tracks the BacktestEngine implementation sequence and remaining target modes.
 
 Related:
 
@@ -68,7 +68,8 @@ packages/core/services/backtest/
   models.py
   engine.py
   stored_facts.py
-  historical_data.py
+  market_slices.py
+  windows.py
   feature_store.py
   strategy_rerun.py
   execution_simulation.py
@@ -84,7 +85,8 @@ Ownership:
 | `models.py` | `BacktestRequest`, `BacktestRun`, `BacktestMode`, `BacktestResult`, `BacktestArtifact`, `BacktestVariant`, and fidelity labels. Use `DomainModel`. |
 | `engine.py` | Orchestrates modes, validates bounded windows, resolves strategy variants, coordinates artifact writes, returns compact summaries. |
 | `stored_facts.py` | Moves the current stored-facts evaluator out of `strategy_lab` with equivalent behavior and better model boundaries. |
-| `historical_data.py` | Point-in-time data provider interfaces and concrete ClickHouse/Postgres providers. |
+| `market_slices.py` | Point-in-time `HistoricalMarketSliceProvider` interfaces and concrete ClickHouse/Postgres providers. |
+| `windows.py` | Shared bounded date-window normalization. |
 | `feature_store.py` | Builds and reads compact historical feature frames for reruns and sweeps. |
 | `strategy_rerun.py` | Reruns source/candidate/signal/decision flow against historical data. |
 | `execution_simulation.py` | Simulates order acceptance, fills, expiry, quote freshness, repricing, cancel, and broker-denial outcomes. |
@@ -132,6 +134,8 @@ Output:
 - comparison to stored facts when available
 
 This mode should reuse live candidate builders, quality profiles, entry selection, and admission policy where they are pure enough. If a live component is not pure enough, split the pure policy from runtime persistence rather than forking behavior.
+
+Implemented in `spr-u44.4`: `strategy_rerun` runs active entry strategies through current config, point-in-time static or stored dynamic source scope, `HistoricalMarketSliceProvider`, current candidate builders, `EntrySelectionEngine`, current decision planning, and protection/portfolio admission artifacts. It writes only backtest run/artifact/variant rows and local result artifacts. It does not write live ticker-source, candidate, signal, decision, admission, intent, attempt, or position facts. Broker buying-power and allocation capacity are labeled as deferred to execution simulation so strategy reruns do not read the current broker account. When ClickHouse captured-chain coverage is insufficient for a full current candidate rebuild, the mode may fall back to stored trade-candidate payloads and labels candidate fidelity as `stored_trade_candidate_fallback`.
 
 ### `execution_simulation`
 
@@ -345,6 +349,7 @@ candidate_fidelity:
   stored_candidate_facts
   rerun_candidate_builder
   rerun_candidate_builder_with_missing_chain_data
+  stored_trade_candidate_fallback
 
 market_data_fidelity:
   full_quote_trade_coverage
@@ -451,7 +456,7 @@ flowchart TD
 2. Done: add strict backtest DomainModels and `BacktestEngine`.
 3. Done: add run, variant, and artifact persistence for stored-facts mode.
 4. Done: add `HistoricalMarketSliceProvider`.
-5. Add `strategy_rerun` mode.
+5. Done: add `strategy_rerun` mode.
 6. Add `execution_simulation` mode.
 7. Add `portfolio_simulation` and metrics adapters.
 8. Add `parameter_sweep`.
@@ -468,6 +473,7 @@ Default validation should stay runtime-oriented and narrow:
 - ClickHouse coverage smoke for referenced option symbols
 - artifact write/read smoke against the configured local artifact root
 - strategy rerun smoke over one strategy and one date
+- strategy rerun smoke should assert zero live fact-table deltas and no broker buying-power/allocation evidence when capacity is deferred
 - execution simulation smoke against a tiny selected-decision fixture or a real stored selected decision
 - no live facts written by backtest runs
 
@@ -480,7 +486,7 @@ The Beads workstream should be an epic with children in this order:
 1. Create `BacktestEngine` package and move stored-facts mode.
 2. Add backtest run and artifact persistence.
 3. Build `HistoricalMarketSliceProvider`.
-4. Add strategy rerun mode.
+4. Done: add strategy rerun mode.
 5. Add execution simulation mode.
 6. Add portfolio, exit, PnL simulation, and metrics.
 7. Add parameter sweep and variant ranking.

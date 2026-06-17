@@ -73,32 +73,38 @@ class HistoricalMarketSliceProvider:
             as_of=captured_to,
             parameters=parameters,
         )
-        quote_rows = self.storage.market_data.list_latest_option_quotes_by_underlying(
-            underlying_symbols=[normalized_symbol],
-            captured_from=session_start,
-            captured_to=captured_to,
-            label=label,
-            profile=self.request.profile,
-            limit=self.request.max_contracts,
-        )
-        quote_scope = "strategy_label"
-        if not quote_rows and label is not None:
+        quote_rows: list[dict[str, Any]] = []
+        quote_scope = "missing"
+        quote_attempts = []
+        if label is not None:
+            quote_attempts.append(("strategy_label_profile", label, self.request.profile))
+            if self.request.profile is not None:
+                quote_attempts.append(("strategy_label", label, None))
+        if self.request.profile is not None:
+            quote_attempts.append(("underlying_profile", None, self.request.profile))
+        quote_attempts.append(("underlying_fallback", None, None))
+        for attempt_scope, attempt_label, attempt_profile in quote_attempts:
             quote_rows = self.storage.market_data.list_latest_option_quotes_by_underlying(
                 underlying_symbols=[normalized_symbol],
                 captured_from=session_start,
                 captured_to=captured_to,
-                profile=self.request.profile,
+                label=attempt_label,
+                profile=attempt_profile,
                 limit=self.request.max_contracts,
             )
-            quote_scope = "underlying_fallback"
+            if quote_rows:
+                quote_scope = attempt_scope
+                break
 
         option_symbols = [str(row.get("option_symbol") or "").strip().upper() for row in quote_rows if row.get("option_symbol")]
+        trade_label = label if quote_scope.startswith("strategy_label") else None
+        trade_profile = self.request.profile if quote_scope.endswith("profile") else None
         trade_rows = self.storage.market_data.list_option_trade_ticks_window(
             option_symbols=option_symbols,
             captured_from=session_start,
             captured_to=captured_to,
-            label=label if quote_scope == "strategy_label" else None,
-            profile=self.request.profile,
+            label=trade_label,
+            profile=trade_profile,
         )
         latest_trade_price_by_symbol = _latest_trade_price_by_symbol(trade_rows)
         spot_price = _spot_price(diagnostic=diagnostic, source=metadata.source)
@@ -294,6 +300,7 @@ def _candidate_payloads(
     routine: str,
     session_start: datetime,
     as_of: datetime,
+    limit: int = 250,
 ) -> list[dict[str, Any]]:
     statement = (
         select(TradeCandidateModel)
@@ -302,7 +309,7 @@ def _candidate_payloads(
         .where(TradeCandidateModel.observed_at >= session_start)
         .where(TradeCandidateModel.observed_at <= as_of)
         .order_by(TradeCandidateModel.observed_at.desc())
-        .limit(250)
+        .limit(max(int(limit), 1))
     )
     if strategy_id is not None:
         statement = statement.where(TradeCandidateModel.trading_strategy_id == strategy_id)
@@ -317,6 +324,29 @@ def _candidate_payloads(
         payload.setdefault("underlying_symbol", row.underlying_symbol)
         payloads.append(payload)
     return payloads
+
+
+def load_historical_trade_candidate_payloads(
+    *,
+    storage: Any,
+    symbol: str,
+    strategy_id: str | None,
+    routine: str,
+    market_date: date,
+    as_of: datetime,
+    limit: int = 250,
+) -> list[dict[str, Any]]:
+    session_start, _ = _session_bounds(market_date)
+    with storage.session_factory() as session:
+        return _candidate_payloads(
+            session=session,
+            symbol=symbol,
+            strategy_id=strategy_id,
+            routine=routine,
+            session_start=session_start,
+            as_of=as_of,
+            limit=limit,
+        )
 
 
 def _diagnostic_example_payloads(row: CandidateSymbolDiagnosticModel | None) -> list[dict[str, Any]]:
@@ -561,11 +591,15 @@ def _quote_fidelity(
         return "missing_clickhouse_quotes"
     age_seconds = _latest_quote_age_seconds(quote_rows, as_of=as_of)
     if max_quote_age_seconds is not None and age_seconds is not None and age_seconds > max_quote_age_seconds:
-        if quote_scope == "strategy_label":
+        if quote_scope.startswith("strategy_label"):
             return "stale_clickhouse_quotes_strategy_scoped"
         return "stale_clickhouse_quotes_underlying_fallback"
-    if quote_scope == "strategy_label":
+    if quote_scope == "strategy_label_profile":
         return "latest_clickhouse_quotes_strategy_scoped"
+    if quote_scope == "strategy_label":
+        return "latest_clickhouse_quotes_strategy_scoped_profile_missing"
+    if quote_scope == "underlying_profile":
+        return "latest_clickhouse_quotes_underlying_scoped"
     return "latest_clickhouse_quotes_underlying_fallback"
 
 
@@ -601,4 +635,5 @@ __all__ = [
     "HistoricalMarketSliceDiagnostics",
     "HistoricalMarketSliceProvider",
     "HistoricalMarketSliceRequest",
+    "load_historical_trade_candidate_payloads",
 ]

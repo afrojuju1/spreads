@@ -61,6 +61,39 @@ def entry_engine_strategy_run_id(run_id: str, trading_strategy_id: str) -> str:
     return f"strategy_run:{run_id}:{trading_strategy_id}:entry"
 
 
+def entry_candidate_limit(request: CandidateBuildRequest) -> int:
+    if request.candidate_limit not in (None, ""):
+        return max(int(request.candidate_limit), 1)
+    return DEFAULT_ENTRY_CANDIDATE_LIMIT
+
+
+def entry_candidate_build_parameters(
+    *,
+    runtime: EntryRuntime,
+    symbols: tuple[str, ...],
+    request: CandidateBuildRequest,
+    db_target: str,
+    config_root: str | None,
+) -> CandidateBuildParameters:
+    greeks_source = str(request.greeks_source or DEFAULT_GREEKS_SOURCE)
+    return CandidateBuildParameters(
+        symbols=symbols,
+        candidate_builder_key=runtime.build_settings.candidate_builder_key,
+        build_profile=runtime.build_settings.build_profile,
+        greeks_source=greeks_source,
+        top=entry_candidate_limit(request),
+        per_symbol_top=max(int(request.per_symbol_top or 1), 1),
+        history_db=db_target,
+        config_root=None if config_root in (None, "") else str(config_root),
+        session_label=engine_snapshot_label(
+            universe_label=entry_engine_label(runtime),
+            candidate_builder=runtime.build_settings.candidate_builder_key,
+            build_profile=runtime.build_settings.build_profile,
+            greeks_source=greeks_source,
+        ),
+    )
+
+
 class DataEngine:
     def __init__(self, context: EngineContext) -> None:
         self.context = context
@@ -160,10 +193,12 @@ class DataEngine:
             )
 
         runtime = entry_runtime_with_symbols(runtime, symbols)
-        base_parameters = self._entry_candidate_build_parameters(
+        base_parameters = entry_candidate_build_parameters(
             runtime=runtime,
             symbols=symbols,
             request=request,
+            db_target=self.context.db_target,
+            config_root=self.context.config_root,
         )
 
         from core.common import env_or_die
@@ -193,7 +228,7 @@ class DataEngine:
                 client=client,
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
-                per_runtime_limit=self._candidate_limit(request),
+                per_runtime_limit=entry_candidate_limit(request),
             )
         finally:
             calendar_resolver.store.close()
@@ -301,43 +336,14 @@ class DataEngine:
         return str(fallback_ref)
 
     @staticmethod
-    def _candidate_limit(request: CandidateBuildRequest) -> int:
-        if request.candidate_limit not in (None, ""):
-            return max(int(request.candidate_limit), 1)
-        return DEFAULT_ENTRY_CANDIDATE_LIMIT
-
-    @staticmethod
     def _candidate_run_id(request: CandidateBuildRequest) -> str:
         return f"candidate_run:{request.run_ref.run_id}"
-
-    def _entry_candidate_build_parameters(
-        self,
-        *,
-        runtime: EntryRuntime,
-        symbols: tuple[str, ...],
-        request: CandidateBuildRequest,
-    ) -> CandidateBuildParameters:
-        greeks_source = str(request.greeks_source or DEFAULT_GREEKS_SOURCE)
-        return CandidateBuildParameters(
-            symbols=symbols,
-            candidate_builder_key=runtime.build_settings.candidate_builder_key,
-            build_profile=runtime.build_settings.build_profile,
-            greeks_source=greeks_source,
-            top=self._candidate_limit(request),
-            per_symbol_top=max(int(request.per_symbol_top or 1), 1),
-            history_db=self.context.db_target,
-            config_root=str(self.context.config_root),
-            session_label=engine_snapshot_label(
-                universe_label=entry_engine_label(runtime),
-                candidate_builder=runtime.build_settings.candidate_builder_key,
-                build_profile=runtime.build_settings.build_profile,
-                greeks_source=greeks_source,
-            ),
-        )
 
 
 __all__ = [
     "DataEngine",
+    "entry_candidate_build_parameters",
+    "entry_candidate_limit",
     "entry_engine_label",
     "entry_engine_strategy_run_id",
     "entry_runtime_with_symbols",

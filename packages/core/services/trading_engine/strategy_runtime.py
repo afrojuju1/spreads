@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,23 +12,6 @@ from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
     issue_pending_execution_intent,
 )
-from core.services.option_structures import candidate_legs
-from core.services.candidate_fields import (
-    candidate_economics,
-    candidate_evidence_metrics,
-    candidate_policy_context,
-    candidate_strategy_metrics,
-    risk_hints,
-)
-from core.services.runtime_policy import resolve_runtime_policy_fields
-from core.services.risk_manager import (
-    build_allocation_plan_snapshot,
-    build_entry_capacity_admission_payload,
-    build_execution_admission_snapshot,
-    build_portfolio_admission_snapshot,
-    build_protection_admission_snapshot,
-    resolve_position_size_policy,
-)
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
 from core.services.trading_engine.data import CandidateBuildRequest, ResolvedTickerSet
@@ -40,29 +22,30 @@ from core.services.trading_engine.data_runtime import (
     entry_runtime_with_symbols,
     ticker_source_spec_from_strategy_source,
 )
+from core.services.trading_engine.entry_admission import build_selected_entry_admission_snapshot
 from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.entry_selection import EntrySelectionEngine, candidate_result_summary
-from core.services.trading_engine.facts import entry_trade_signal_id, persist_entry_engine_facts
+from core.services.trading_engine.entry_signals import (
+    ENTRY_MONITOR_LIMIT,
+    NATURAL_ENTRY_PROVENANCE,
+    OBSERVATION_ENTRY_PROVENANCE,
+    build_entry_signal_row_from_selection,
+    candidate_payload,
+    entry_selection_summary,
+    quality_evidence_summary,
+)
+from core.services.trading_engine.facts import entry_trade_decision_id, entry_trade_signal_id, persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_engine.close_policy import resolve_exit_policy_snapshot
 from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
-from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
+from core.services.trading_strategies import routine_should_run_now
 from core.services.trading_strategy_runtime_models import EntryRuntime
 from core.services.trading_strategy_runtime import resolve_entry_observation_runtime, resolve_entry_runtime
-from core.value_coercion import unique_text_list, utc_expiry_iso, utc_now, utc_now_iso as _utc_now
-
-ENTRY_MONITOR_LIMIT = 12
-NATURAL_ENTRY_PROVENANCE = "natural_strategy"
-OBSERVATION_ENTRY_PROVENANCE = "strategy_observation"
+from core.value_coercion import coerce_int, utc_expiry_iso, utc_now, utc_now_iso as _utc_now
 
 
 def _market_date_today() -> str:
     return utc_now().date().isoformat()
-
-
-def _trade_decision_id(run_key: str, trade_signal_id: str) -> str:
-    material = f"{run_key}|{trade_signal_id}".encode("utf-8")
-    return f"trade_decision:{hashlib.sha1(material).hexdigest()[:24]}"
 
 
 def _intent_id(trade_decision_id: str) -> str:
@@ -71,65 +54,6 @@ def _intent_id(trade_decision_id: str) -> str:
 
 def _slot_key(trading_strategy_id: str, underlying_symbol: str) -> str:
     return f"entry:{trading_strategy_id}:{underlying_symbol}"
-
-
-def _positive_int(value: Any, *, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _portfolio_admission_policy_for_strategy(
-    *,
-    strategy: Any,
-    trading_strategy_id: str,
-    trade_structure: str,
-    position_size_policy: dict[str, Any],
-) -> dict[str, Any]:
-    portfolio_limits = getattr(getattr(strategy, "risk_limits", None), "portfolio_admission", None)
-    if portfolio_limits is not None and bool(getattr(portfolio_limits, "configured", False)):
-        return portfolio_limits.as_policy(
-            trading_strategy_id=trading_strategy_id,
-            strategy_family=trade_structure,
-        )
-
-    is_long_call = trade_structure == "long_call"
-    default_strategy_cap = 10 if is_long_call else 2
-    default_family_cap = 10 if is_long_call else 2
-    strategy_cap = _positive_int(strategy.max_open_positions, default=default_strategy_cap)
-    daily_cap = _positive_int(
-        strategy.max_new_entries_per_day or strategy.max_daily_actions,
-        default=strategy_cap,
-    )
-    max_risk_per_trade = position_size_policy.get("max_risk_per_trade")
-    max_total_strategy_risk = None
-    if max_risk_per_trade is not None:
-        max_total_strategy_risk = round(float(max_risk_per_trade) * strategy_cap, 2)
-    return {
-        "trading_strategy_id": trading_strategy_id,
-        "strategy_family": trade_structure,
-        "policy_source": "runtime_fallback",
-        "max_strategy_open_positions": strategy_cap,
-        "max_family_open_positions": max(default_family_cap, min(strategy_cap, default_family_cap)),
-        "max_symbol_family_open_positions": 1,
-        "max_daily_new_entries": daily_cap,
-        "max_total_strategy_risk": max_total_strategy_risk,
-        "max_correlated_group_open_positions": 6 if is_long_call else 3,
-    }
-
-
-def _allocation_portfolio_policies() -> dict[str, dict[str, Any]]:
-    policies: dict[str, dict[str, Any]] = {}
-    for strategy in load_active_trading_strategies().values():
-        policies[strategy.trading_strategy_id] = _portfolio_admission_policy_for_strategy(
-            strategy=strategy,
-            trading_strategy_id=strategy.trading_strategy_id,
-            trade_structure=strategy.trade_structure,
-            position_size_policy=resolve_position_size_policy(strategy.risk_defaults),
-        )
-    return policies
 
 
 def _entry_candidate_limit(runtime: EntryRuntime) -> int:
@@ -157,31 +81,6 @@ def _ticker_set_summary(ticker_set: ResolvedTickerSet) -> dict[str, Any]:
     }
 
 
-def _candidate_payload(row: dict[str, Any]) -> dict[str, Any]:
-    candidate = row.get("candidate")
-    if isinstance(candidate, dict):
-        return dict(candidate)
-    return dict(row)
-
-
-def _quality_evidence_summary(row: dict[str, Any]) -> dict[str, Any]:
-    evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
-    waterfall = evidence.get("quality_waterfall") if isinstance(evidence, dict) else None
-    if not isinstance(waterfall, dict):
-        if not isinstance(evidence, dict) or evidence.get("quality_profile_id") in (None, ""):
-            return {}
-        return {
-            "quality_profile_id": evidence.get("quality_profile_id") if isinstance(evidence, dict) else None,
-            "quality_waterfall_blocked": evidence.get("quality_waterfall_blocked") if isinstance(evidence, dict) else None,
-            "quality_waterfall_stage_counts": dict(evidence.get("quality_waterfall_stage_counts") or {}) if isinstance(evidence, dict) else {},
-        }
-    return {
-        "quality_profile_id": evidence.get("quality_profile_id") or waterfall.get("profile_id"),
-        "quality_waterfall_blocked": waterfall.get("blocked"),
-        "quality_waterfall_stage_counts": dict(waterfall.get("stage_counts") or {}),
-    }
-
-
 def _trade_signal_refs(candidate_generation: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     engine_facts = candidate_generation.get("engine_facts") if isinstance(candidate_generation.get("engine_facts"), dict) else {}
     refs = engine_facts.get("trade_signals") if isinstance(engine_facts, dict) else None
@@ -198,7 +97,7 @@ def _trade_signal_id_for_signal(
     signal: dict[str, Any],
 ) -> str | None:
     symbol = str(signal.get("underlying_symbol") or "").upper()
-    candidate = _candidate_payload(signal)
+    candidate = candidate_payload(signal)
     candidate_identity = str(
         signal.get("candidate_identity")
         or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
@@ -244,7 +143,7 @@ def _persist_trade_admission(
     signal: dict[str, Any],
     expires_at: str,
 ) -> dict[str, Any]:
-    candidate = _candidate_payload(signal)
+    candidate = candidate_payload(signal)
     candidate_identity = str(
         signal.get("candidate_identity")
         or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
@@ -286,7 +185,7 @@ def _persist_trade_admission(
             "protection_admission": dict(admission_snapshot.get("protection_admission") or {}),
             "portfolio_admission": dict(admission_snapshot.get("portfolio_admission") or {}),
             "execution_readiness": dict(admission_snapshot.get("execution_readiness") or {}),
-            **_quality_evidence_summary(signal),
+            **quality_evidence_summary(signal),
         },
     )
     target_intent_state = "pending" if admission_allows_attempt(normalized) else "revoked"
@@ -388,45 +287,6 @@ def _record_skipped_strategy_run(
     )
 
 
-def _runtime_signal_eligibility(runtime: EntryRuntime, row: dict[str, Any], *, observation_only: bool = False) -> str:
-    eligibility = str(row.get("eligibility") or "live").strip().lower() or "live"
-    if (observation_only or runtime.strategy.execution.mode == "shadow") and eligibility == "live":
-        return "analysis_only"
-    return eligibility
-
-
-def _signal_blockers(candidate: dict[str, Any], *, eligibility: str | None = None) -> list[str]:
-    blockers: list[str] = []
-    if str(eligibility or "live").strip().lower() != "live":
-        blockers.append("analysis_only")
-    for field in ("scoring_blockers", "execution_blockers", "ranking_policy_blockers"):
-        for blocker in unique_text_list(candidate.get(field)):
-            if blocker not in blockers:
-                blockers.append(blocker)
-    return blockers
-
-
-def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
-    order_payload = dict(candidate.get("order_payload") or {})
-    legs = candidate_legs(candidate)
-    return {
-        "underlying_symbol": candidate.get("underlying_symbol"),
-        "trade_structure": candidate.get("trade_structure") or candidate.get("strategy_family") or candidate.get("strategy"),
-        "strategy_family": candidate.get("strategy_family") or candidate.get("strategy") or candidate.get("trade_structure"),
-        "profile": candidate.get("profile"),
-        "expiration_date": candidate.get("expiration_date"),
-        "structure_identity": resolve_candidate_identity(candidate, strategy=candidate.get("strategy")),
-        "legs": legs,
-        "order_payload": order_payload,
-        "order_class": order_payload.get("order_class") or ("mleg" if len(legs) > 1 else "single"),
-        "quantity": candidate.get("quantity") or order_payload.get("qty"),
-        "limit_price": order_payload.get("limit_price")
-        or candidate.get("limit_price")
-        or candidate.get("midpoint_credit")
-        or candidate.get("midpoint_value"),
-    }
-
-
 def _read_previous_entry_selection(
     *,
     signal_store: Any,
@@ -457,117 +317,11 @@ def _read_previous_entry_selection(
     for row in list(result_payload.get("selected_signal_rows") or []):
         if not isinstance(row, dict) or str(row.get("selection_state") or "") != "promotable":
             continue
-        candidate = _candidate_payload(row)
+        candidate = candidate_payload(row)
         symbol = str(row.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
         if symbol:
             previous_promotable[symbol] = candidate
     return previous_promotable, selection_memory
-
-
-def _signal_row_from_selection(
-    *,
-    runtime: EntryRuntime,
-    market_date: str,
-    generated_at: str,
-    strategy_run_id: str,
-    row: dict[str, Any],
-    observation_only: bool = False,
-) -> dict[str, Any]:
-    candidate = _candidate_payload(row)
-    symbol = str(candidate.get("underlying_symbol") or row.get("underlying_symbol") or "").upper()
-    eligibility = _runtime_signal_eligibility(runtime, row, observation_only=observation_only)
-    provenance = OBSERVATION_ENTRY_PROVENANCE if observation_only else NATURAL_ENTRY_PROVENANCE
-    policy_fields = resolve_runtime_policy_fields(
-        profile=runtime.build_settings.build_profile,
-        root_symbol=symbol,
-    )
-    return {
-        **dict(row),
-        "label": entry_engine_label(runtime),
-        "market_date": market_date,
-        "session_date": market_date,
-        "root_symbol": symbol,
-        "trading_strategy_id": runtime.trading_strategy_id,
-        "strategy_run_id": strategy_run_id,
-        "config_hash": runtime.config_hash,
-        "strategy_family": runtime.trade_structure,
-        "trade_structure": runtime.trade_structure,
-        "profile": runtime.build_settings.build_profile,
-        "style_profile": str(policy_fields["style_profile"]),
-        "horizon_intent": str(policy_fields["horizon_intent"]),
-        "product_class": str(policy_fields["product_class"]),
-        "expiration_date": candidate.get("expiration_date"),
-        "underlying_symbol": symbol,
-        "selection_state": str(row.get("selection_state") or "monitor"),
-        "selection_rank": (None if row.get("selection_rank") in (None, "") else int(row["selection_rank"])),
-        "state_reason": str(row.get("state_reason") or "selected_runtime_signal"),
-        "origin": "engine_selection",
-        "eligibility": eligibility,
-        "eligibility_state": eligibility,
-        "promotion_score": candidate.get("promotion_score"),
-        "execution_score": candidate.get("execution_score"),
-        "confidence": candidate.get("confidence"),
-        "created_at": generated_at,
-        "updated_at": generated_at,
-        "expires_at": None,
-        "reason_codes": [str(row.get("state_reason") or "selected_runtime_signal")],
-        "blockers": _signal_blockers(candidate, eligibility=eligibility),
-        "legs": candidate_legs(candidate),
-        "economics": candidate_economics(candidate),
-        "strategy_metrics": candidate_strategy_metrics(candidate),
-        "order_payload": dict(candidate.get("order_payload") or {}),
-        "evidence": {
-            "runtime_kind": "entry",
-            "trading_strategy_id": runtime.trading_strategy_id,
-            "trade_structure": runtime.trade_structure,
-            "entry_recipe_refs": list(runtime.entry_recipe_refs),
-            "trigger_policy": dict(runtime.trigger_policy),
-            "execution_mode": runtime.strategy.execution.mode,
-            "approval_mode": runtime.strategy.execution.approval,
-            "entry_run_mode": "observation" if observation_only else "natural",
-            "validation_provenance": provenance,
-            "observation_only": observation_only,
-            "selection_state": row.get("selection_state"),
-            "selection_rank": row.get("selection_rank"),
-            "generated_at": generated_at,
-            "last_present_at": generated_at,
-            **candidate_evidence_metrics(candidate),
-            **candidate_policy_context(candidate),
-        },
-        "execution_shape": _execution_shape(candidate),
-        "risk_hints": risk_hints(candidate),
-        "source_cycle_id": strategy_run_id,
-        "source_selection_state": row.get("selection_state"),
-        "candidate_identity": resolve_candidate_identity(candidate, strategy=candidate.get("strategy")),
-        "candidate": candidate,
-    }
-
-
-def _selection_summary(
-    *,
-    candidate_rows_by_symbol: dict[str, list[dict[str, Any]]],
-    selected_rows: list[dict[str, Any]],
-    selection_memory: dict[str, Any],
-) -> dict[str, Any]:
-    candidate_count = sum(len(rows) for rows in candidate_rows_by_symbol.values())
-    signal_count = len(selected_rows)
-    if signal_count:
-        status = "signals_selected"
-        message = f"{signal_count} signal{' was' if signal_count == 1 else 's were'} selected from {candidate_count} candidates."
-    elif candidate_count:
-        status = "no_entry_signals"
-        message = "Candidates existed, but none cleared live selection for this strategy run."
-    else:
-        status = "no_candidates"
-        message = "No candidates matched this strategy in the current run."
-    return {
-        "status": status,
-        "message": message,
-        "candidate_symbol_count": len(candidate_rows_by_symbol),
-        "candidate_count": candidate_count,
-        "signal_count": signal_count,
-        "selection_memory": dict(selection_memory),
-    }
 
 
 def _refresh_entry_runtime_signals(
@@ -680,7 +434,7 @@ def _refresh_entry_runtime_signals(
     symbol_candidates = selection_result.symbol_candidates
     selection = dict(selection_result.selection)
     selected_rows = [
-        _signal_row_from_selection(
+        build_entry_signal_row_from_selection(
             runtime=runtime_with_symbols,
             market_date=market_date,
             generated_at=generated_at,
@@ -692,7 +446,7 @@ def _refresh_entry_runtime_signals(
         if isinstance(row, dict)
     ]
     selection_memory = dict(selection.get("selection_memory") or {})
-    selection_summary = _selection_summary(
+    selection_summary = entry_selection_summary(
         candidate_rows_by_symbol=symbol_candidates,
         selected_rows=selected_rows,
         selection_memory=selection_memory,
@@ -743,7 +497,7 @@ def _refresh_entry_runtime_signals(
     }
     signals = []
     for row in selected_rows:
-        candidate = _candidate_payload(row)
+        candidate = candidate_payload(row)
         candidate_identity = str(
             row.get("candidate_identity")
             or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
@@ -800,119 +554,6 @@ def _refresh_entry_runtime_signals(
         "engine_facts": engine_fact_summary,
         "signals": signals,
     }
-
-
-def _selected_execution_admission(
-    *,
-    engine_facts: Any,
-    execution_store: Any,
-    runtime: Any,
-    decision: dict[str, Any],
-    signal: dict[str, Any],
-    market_date: str,
-) -> dict[str, Any]:
-    position_size_policy = resolve_position_size_policy(getattr(runtime.build_settings, "risk_defaults", {}))
-    signal_execution_shape = dict(signal.get("execution_shape") or {})
-    signal_order_payload = dict(signal.get("order_payload") or signal_execution_shape.get("order_payload") or {})
-    quantity = _positive_int(
-        signal_order_payload.get("qty") or signal_order_payload.get("quantity") or signal_execution_shape.get("quantity"),
-        default=1,
-    )
-    portfolio_policies = _allocation_portfolio_policies()
-    current_policy = portfolio_policies.get(runtime.trading_strategy_id) or _portfolio_admission_policy_for_strategy(
-        strategy=runtime.strategy,
-        trading_strategy_id=runtime.trading_strategy_id,
-        trade_structure=runtime.trade_structure,
-        position_size_policy=position_size_policy,
-    )
-    allocation_plan = build_allocation_plan_snapshot(
-        engine_facts=engine_facts,
-        execution_store=execution_store,
-        selected_decision=decision,
-        selected_signal=signal,
-        trading_strategy_id=runtime.trading_strategy_id,
-        strategy_family=runtime.trade_structure,
-        session_date=market_date,
-        active_strategy_ids=tuple(sorted({*portfolio_policies, runtime.trading_strategy_id})),
-        portfolio_policies=portfolio_policies,
-        quantity=quantity,
-        limit_price=None,
-    )
-    protection_admission = build_protection_admission_snapshot(
-        execution_store=execution_store,
-        candidate=signal,
-        trading_strategy_id=runtime.trading_strategy_id,
-        strategy_family=runtime.trade_structure,
-        session_date=market_date,
-        policy=runtime.strategy.protection.model_dump(exclude_none=True, by_alias=True),
-        quantity=quantity,
-        limit_price=None,
-        allocation_plan=allocation_plan,
-    )
-    protection_status = str(protection_admission.get("status") or "").lower()
-    if protection_status not in {"admissible", "approved", "ok", "pass", "passed"}:
-        return build_entry_capacity_admission_payload(
-            status="not_evaluated",
-            reason=None,
-            message=None,
-            evaluated_at=_utc_now(),
-            admissible_quantity=None,
-            required_buying_power=None,
-            available_buying_power=None,
-            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
-            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
-            protection_admission=protection_admission,
-        )
-    portfolio_admission = build_portfolio_admission_snapshot(
-        execution_store=execution_store,
-        candidate=signal,
-        trading_strategy_id=runtime.trading_strategy_id,
-        strategy_family=runtime.trade_structure,
-        session_date=market_date,
-        policy=current_policy,
-        quantity=quantity,
-        limit_price=None,
-        allocation_plan=allocation_plan,
-    )
-    portfolio_status = str(portfolio_admission.get("status") or "").lower()
-    if portfolio_status not in {"admissible", "approved", "ok", "pass", "passed"}:
-        return build_entry_capacity_admission_payload(
-            status="not_evaluated",
-            reason=None,
-            message=None,
-            evaluated_at=_utc_now(),
-            admissible_quantity=None,
-            required_buying_power=None,
-            available_buying_power=None,
-            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
-            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
-            protection_admission=protection_admission,
-            portfolio_admission=portfolio_admission,
-        )
-    try:
-        return build_execution_admission_snapshot(
-            execution_store=execution_store,
-            candidate=signal,
-            limit_price=None,
-            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
-            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
-            protection_admission=protection_admission,
-            portfolio_admission=portfolio_admission,
-        )
-    except Exception as exc:
-        return build_entry_capacity_admission_payload(
-            status="unknown",
-            reason="execution_admission_unavailable",
-            message=str(exc),
-            evaluated_at=_utc_now(),
-            admissible_quantity=None,
-            required_buying_power=None,
-            available_buying_power=None,
-            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
-            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
-            protection_admission=protection_admission,
-            portfolio_admission=portfolio_admission,
-        )
 
 
 def _run_trading_strategy_entry(
@@ -1019,7 +660,7 @@ def _run_trading_strategy_entry(
     selected_execution_admission: dict[str, Any] | None = None
     dispatch_job_run_id: str | None = None
     for decision_plan, signal in zip(plan["decisions"], signals, strict=False):
-        candidate = _candidate_payload(signal)
+        candidate = candidate_payload(signal)
         candidate_identity = str(
             signal.get("candidate_identity")
             or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
@@ -1043,7 +684,7 @@ def _run_trading_strategy_entry(
             "decision_plan": dict(decision_plan["payload"]),
             "candidate_identity": candidate_identity,
             "underlying_symbol": signal.get("underlying_symbol"),
-            **_quality_evidence_summary(signal),
+            **quality_evidence_summary(signal),
             "candidate_generation": {
                 "candidate_run_id": (
                     (candidate_generation.get("engine_facts") or {}).get("candidate_run_id")
@@ -1071,7 +712,7 @@ def _run_trading_strategy_entry(
             trade_decision_state = "no_entry"
             reason_codes = ["observation_only_signal_not_entry_eligible"]
             evidence["observation_only"] = True
-        trade_decision_id = _trade_decision_id(run_key, trade_signal_id)
+        trade_decision_id = entry_trade_decision_id(run_key=run_key, trade_signal_id=trade_signal_id)
         decision = engine_facts.upsert_trade_decision(
             trade_decision_id=trade_decision_id,
             trade_signal_id=trade_signal_id,
@@ -1101,7 +742,7 @@ def _run_trading_strategy_entry(
             continue
         if trade_decision_state != "selected":
             continue
-        selected_execution_admission = _selected_execution_admission(
+        selected_execution_admission = build_selected_entry_admission_snapshot(
             engine_facts=engine_facts,
             execution_store=execution_store,
             runtime=runtime,
@@ -1143,16 +784,19 @@ def _run_trading_strategy_entry(
             or signal_economics.get("midpoint_value")
             or signal.get("limit_price")
         )
-        requested_quantity = _positive_int(
+        requested_quantity = coerce_int(
             (
                 selected_admission.get("requested_quantity")
                 or signal_execution_shape.get("quantity")
                 or signal_order_payload.get("qty")
                 or signal_order_payload.get("quantity")
-            ),
-            default=1,
+            )
         )
-        admissible_quantity = _positive_int(selected_admission.get("admissible_quantity"), default=requested_quantity)
+        if requested_quantity is None or requested_quantity <= 0:
+            requested_quantity = 1
+        admissible_quantity = coerce_int(selected_admission.get("admissible_quantity"))
+        if admissible_quantity is None or admissible_quantity <= 0:
+            admissible_quantity = requested_quantity
         intent_quantity = min(requested_quantity, admissible_quantity)
         open_execution_policy = runtime.strategy.execution.execution_policy_for_action(
             "open",

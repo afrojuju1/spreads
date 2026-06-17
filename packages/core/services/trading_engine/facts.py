@@ -48,6 +48,11 @@ def entry_trade_signal_id(
     )
 
 
+def entry_trade_decision_id(*, run_key: str, trade_signal_id: str) -> str:
+    material = f"{run_key}|{trade_signal_id}".encode("utf-8")
+    return f"trade_decision:{hashlib.sha1(material).hexdigest()[:24]}"
+
+
 def _score(row: Mapping[str, Any]) -> float | None:
     for key in ("execution_score", "promotion_score", "quality_score", "score"):
         value = coerce_float(row.get(key))
@@ -433,6 +438,7 @@ def persist_entry_engine_facts(
 
 
 __all__ = [
+    "entry_trade_decision_id",
     "entry_trade_signal_id",
     "entry_trade_signal_idempotency_key",
     "persist_entry_engine_facts",
