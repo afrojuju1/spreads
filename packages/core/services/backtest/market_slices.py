@@ -73,28 +73,17 @@ class HistoricalMarketSliceProvider:
             as_of=captured_to,
             parameters=parameters,
         )
-        quote_rows: list[dict[str, Any]] = []
-        quote_scope = "missing"
-        quote_attempts = []
-        if label is not None:
-            quote_attempts.append(("strategy_label_profile", label, self.request.profile))
-            if self.request.profile is not None:
-                quote_attempts.append(("strategy_label", label, None))
-        if self.request.profile is not None:
-            quote_attempts.append(("underlying_profile", None, self.request.profile))
-        quote_attempts.append(("underlying_fallback", None, None))
-        for attempt_scope, attempt_label, attempt_profile in quote_attempts:
-            quote_rows = self.storage.market_data.list_latest_option_quotes_by_underlying(
-                underlying_symbols=[normalized_symbol],
-                captured_from=session_start,
-                captured_to=captured_to,
-                label=attempt_label,
-                profile=attempt_profile,
-                limit=self.request.max_contracts,
-            )
-            if quote_rows:
-                quote_scope = attempt_scope
-                break
+        quotes = load_latest_historical_option_quotes(
+            storage=self.storage,
+            underlying_symbol=normalized_symbol,
+            captured_from=session_start,
+            captured_to=captured_to,
+            label=label,
+            profile=self.request.profile,
+            limit=self.request.max_contracts,
+        )
+        quote_rows = quotes.rows
+        quote_scope = quotes.scope
 
         option_symbols = [str(row.get("option_symbol") or "").strip().upper() for row in quote_rows if row.get("option_symbol")]
         trade_label = label if quote_scope.startswith("strategy_label") else None
@@ -162,6 +151,44 @@ class _ContractsAndSnapshots:
     put_contracts: dict[str, list[OptionContract]]
     call_snapshots: dict[str, dict[str, OptionSnapshot]]
     put_snapshots: dict[str, dict[str, OptionSnapshot]]
+
+
+@dataclass(frozen=True)
+class HistoricalOptionQuoteRows:
+    rows: list[dict[str, Any]]
+    scope: str
+
+
+def load_latest_historical_option_quotes(
+    *,
+    storage: Any,
+    underlying_symbol: str,
+    captured_from: str | datetime,
+    captured_to: str | datetime,
+    label: str | None = None,
+    profile: str | None = None,
+    limit: int = 1000,
+) -> HistoricalOptionQuoteRows:
+    quote_attempts = []
+    if label is not None:
+        quote_attempts.append(("strategy_label_profile", label, profile))
+        if profile is not None:
+            quote_attempts.append(("strategy_label", label, None))
+    if profile is not None:
+        quote_attempts.append(("underlying_profile", None, profile))
+    quote_attempts.append(("underlying_fallback", None, None))
+    for attempt_scope, attempt_label, attempt_profile in quote_attempts:
+        quote_rows = storage.market_data.list_latest_option_quotes_by_underlying(
+            underlying_symbols=[underlying_symbol.upper()],
+            captured_from=captured_from,
+            captured_to=captured_to,
+            label=attempt_label,
+            profile=attempt_profile,
+            limit=limit,
+        )
+        if quote_rows:
+            return HistoricalOptionQuoteRows(rows=[dict(row) for row in quote_rows], scope=attempt_scope)
+    return HistoricalOptionQuoteRows(rows=[], scope="missing")
 
 
 def _market_date(request: HistoricalMarketSliceRequest, parameters: Any) -> date:
@@ -632,8 +659,10 @@ def _greeks_fidelity(*, delta_count: int, snapshot_count: int) -> str:
 
 
 __all__ = [
+    "HistoricalOptionQuoteRows",
     "HistoricalMarketSliceDiagnostics",
     "HistoricalMarketSliceProvider",
     "HistoricalMarketSliceRequest",
+    "load_latest_historical_option_quotes",
     "load_historical_trade_candidate_payloads",
 ]

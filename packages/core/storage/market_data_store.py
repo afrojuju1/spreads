@@ -379,6 +379,46 @@ class ClickHouseMarketDataStore:
             """
         )
 
+    def list_option_quote_snapshots_window(
+        self,
+        *,
+        option_symbols: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime | None = None,
+        label: str | None = None,
+        profile: str | None = None,
+        resolution: str = "1m",
+    ) -> list[OptionQuoteTickRecord]:
+        symbols = _normalized_texts(option_symbols)
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if not symbols or captured_from_dt is None or (captured_to_dt is not None and captured_from_dt >= captured_to_dt):
+            return []
+        table_name = {
+            "1s": "option_quote_snapshots_1s",
+            "1m": "option_quote_snapshots_1m",
+        }.get(str(resolution or "1m").strip().lower())
+        if table_name is None:
+            raise ValueError("option quote snapshot resolution must be '1s' or '1m'")
+        clauses = [
+            f"option_symbol IN {_string_tuple(symbols)}",
+            f"captured_at >= {_quote_datetime(captured_from_dt)}",
+        ]
+        if captured_to_dt is not None:
+            clauses.append(f"captured_at < {_quote_datetime(captured_to_dt)}")
+        if label is not None:
+            clauses.append(f"label = {_quote_string(label)}")
+        if profile is not None:
+            clauses.append(f"profile = {_quote_string(profile)}")
+        return self._query_dicts(
+            f"""
+            SELECT {", ".join(QUOTE_SNAPSHOT_COLUMNS)}
+            FROM {_identifier(table_name)}
+            WHERE {" AND ".join(clauses)}
+            ORDER BY captured_at ASC
+            """
+        )
+
     def list_option_trade_ticks_window(
         self,
         *,

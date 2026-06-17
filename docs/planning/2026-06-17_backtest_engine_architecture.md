@@ -158,6 +158,8 @@ Output:
 
 Fill assumptions must be explicit. A simulated fill is not a broker fill.
 
+Implemented in `spr-u44.5`: `execution_simulation` composes over `strategy_rerun` and emits isolated simulated intents, attempts, orders, fills, and diagnostics for selected entry decisions. It reuses the live execution structure guard and order request normalization, applies executor profile quote freshness, submit TTL, repricing step/count, and max concession, and uses the explicit `quote_touch_with_executor_repricing` fill model against historical ClickHouse quote snapshots/trade ticks. Simulated rows stay in backtest artifacts and variant metrics only; no live execution intents, attempts, orders, fills, positions, broker submits, or intent dispatches are created.
+
 ### `portfolio_simulation`
 
 Projects positions, exits, and PnL from simulated or stored fills.
@@ -457,7 +459,7 @@ flowchart TD
 3. Done: add run, variant, and artifact persistence for stored-facts mode.
 4. Done: add `HistoricalMarketSliceProvider`.
 5. Done: add `strategy_rerun` mode.
-6. Add `execution_simulation` mode.
+6. Done: add `execution_simulation` mode.
 7. Add `portfolio_simulation` and metrics adapters.
 8. Add `parameter_sweep`.
 9. Add a narrow CLI/API adapter only after the backend mode contracts are stable.
@@ -487,7 +489,7 @@ The Beads workstream should be an epic with children in this order:
 2. Add backtest run and artifact persistence.
 3. Build `HistoricalMarketSliceProvider`.
 4. Done: add strategy rerun mode.
-5. Add execution simulation mode.
+5. Done: add execution simulation mode.
 6. Add portfolio, exit, PnL simulation, and metrics.
 7. Add parameter sweep and variant ranking.
 8. Add narrow adapter and current docs cutover.

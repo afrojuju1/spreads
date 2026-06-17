@@ -42,7 +42,11 @@ from .admission import (
     _execution_admission_payload_from_submission_guard,
     _validate_submit_account_capacity,
 )
-from .order_requests import _normalize_submit_order_request, _validate_live_deployment_quality, _validate_option_structure_submission
+from .order_requests import (
+    _validate_live_deployment_quality,
+    normalize_submit_order_request,
+    validate_option_structure_submission,
+)
 
 
 @with_storage()
@@ -98,11 +102,11 @@ def run_execution_submit(
 
     requested_at = as_text(payload.get("requested_at")) or utc_now_iso()
     client_order_id = as_text(payload.get("client_order_id"))
-    order_request = _normalize_submit_order_request(
+    order_request = normalize_submit_order_request(
         payload=payload,
         order_request=order_request,
     )
-    structure_guard = _validate_option_structure_submission(
+    structure_guard = validate_option_structure_submission(
         payload=payload,
         order_request=order_request,
         now=datetime.now(UTC),

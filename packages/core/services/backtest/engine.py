@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from core.db.decorators import with_storage
 from core.services.backtest.experiments import resolve_backtest_artifact_root, write_json_artifact
+from core.services.backtest.execution_simulation import build_execution_simulation_backtest
 from core.services.backtest.models import BacktestArtifactKind, BacktestMode, BacktestRequest, BacktestRunState
 from core.services.backtest.strategy_rerun import build_strategy_rerun_backtest
 from core.services.backtest.stored_facts import build_stored_facts_backtest
@@ -115,6 +116,20 @@ class BacktestEngine:
                     db_target=resolved_db_target,
                 )
                 comparison_mode = "strategy_rerun_current_config"
+            elif request.mode == BacktestMode.EXECUTION_SIMULATION:
+                result = build_execution_simulation_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_ids=strategy_ids,
+                    symbols=request.symbols,
+                    max_days=request.max_days,
+                    market_data_symbol_limit=request.market_data_symbol_limit,
+                    candidate_limit=request.candidate_limit,
+                    per_symbol_top=request.per_symbol_top,
+                    storage=storage,
+                    db_target=resolved_db_target,
+                )
+                comparison_mode = "execution_simulation_current_config"
             else:
                 raise ValueError(f"Unsupported backtest mode: {request.mode}")
             result = dict(result)

@@ -11,6 +11,7 @@ from core.model_contracts import DomainModel
 class BacktestMode(StrEnum):
     STORED_FACTS = "stored_facts"
     STRATEGY_RERUN = "strategy_rerun"
+    EXECUTION_SIMULATION = "execution_simulation"
 
 
 class BacktestRunState(StrEnum):

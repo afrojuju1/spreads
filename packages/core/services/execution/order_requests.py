@@ -410,7 +410,7 @@ def _validate_leg_contract(
     return None
 
 
-def _validate_option_structure_submission(
+def validate_option_structure_submission(
     *,
     payload: Mapping[str, Any],
     order_request: Mapping[str, Any],
@@ -837,7 +837,7 @@ def _validate_live_deployment_quality(
     }
 
 
-def _resolve_open_limit_price(
+def resolve_open_limit_price(
     *,
     candidate_payload: dict[str, Any],
     explicit_limit_price: float | None,
@@ -934,7 +934,7 @@ def _build_close_order_request(
     return request, int(resolved_quantity), order_limit_price
 
 
-def _normalize_submit_order_request(
+def normalize_submit_order_request(
     *,
     payload: Mapping[str, Any],
     order_request: Mapping[str, Any],
