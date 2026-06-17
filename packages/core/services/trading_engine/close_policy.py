@@ -33,7 +33,7 @@ def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
 
 def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] | None) -> dict[str, Any]:
     policy = normalize_exit_policy(payload)
-    if policy["force_close_at"] is not None:
+    if policy.get("force_close_at") is not None:
         return policy
 
     source = payload if isinstance(payload, dict) else {}

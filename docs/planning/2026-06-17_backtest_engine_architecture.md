@@ -180,6 +180,8 @@ Output:
 - drawdown series
 - exit fidelity labels
 
+Implemented in `spr-u44.6`: `portfolio_simulation` composes over `execution_simulation`, projects simulated or artifact-shaped stored fills into isolated position artifacts, evaluates current close policy against historical quote marks, creates simulated close decisions and position closes, and computes realized/unrealized PnL through `core.money`. Metrics include PnL, return on risk, win rate, profit factor, max drawdown, exposure time, fill rate, selection rate, admission approval rate, and quote coverage. Metrics use quantstats or empyrical when either library is installed; the current environment has neither, so shipped artifacts label metrics fidelity as `pandas_numpy_internal` with `standard_metrics_library=not_installed_quantstats_empyrical`. Simulated positions, close decisions, closes, PnL, and metrics stay inside backtest artifacts and variant metrics only; no live execution, lifecycle, portfolio, broker, or close fact tables are written.
+
 ### `parameter_sweep`
 
 Runs bounded variant grids over profile/source/ranking/exit parameters.
@@ -460,7 +462,7 @@ flowchart TD
 4. Done: add `HistoricalMarketSliceProvider`.
 5. Done: add `strategy_rerun` mode.
 6. Done: add `execution_simulation` mode.
-7. Add `portfolio_simulation` and metrics adapters.
+7. Done: add `portfolio_simulation` and metrics adapters.
 8. Add `parameter_sweep`.
 9. Add a narrow CLI/API adapter only after the backend mode contracts are stable.
 10. Update `docs/current_system_state.md` only after the implemented owner is live.

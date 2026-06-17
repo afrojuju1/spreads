@@ -12,6 +12,7 @@ class BacktestMode(StrEnum):
     STORED_FACTS = "stored_facts"
     STRATEGY_RERUN = "strategy_rerun"
     EXECUTION_SIMULATION = "execution_simulation"
+    PORTFOLIO_SIMULATION = "portfolio_simulation"
 
 
 class BacktestRunState(StrEnum):

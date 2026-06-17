@@ -40,7 +40,7 @@ CLOSE_TRADE_INTENT = "close"
 SUPPORTED_TRADE_INTENTS = {OPEN_TRADE_INTENT, CLOSE_TRADE_INTENT}
 
 
-def _derive_live_exposure(
+def derive_live_exposure(
     *,
     entry_value: float | None,
     width: float | None,
@@ -69,7 +69,7 @@ def _derive_live_exposure(
     return option_spread_exposure(entry_value=entry_value, width=width, quantity=normalized_quantity, premium_kind=premium_kind)
 
 
-def _explicit_candidate_exposure(
+def explicit_candidate_exposure(
     *,
     candidate: Mapping[str, Any],
     quantity: float,
@@ -355,7 +355,7 @@ def _position_economics(position: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _resolved_position_exposure(
+def resolve_position_exposure(
     *,
     candidate: Mapping[str, Any],
     existing: Mapping[str, Any] | None,
@@ -364,13 +364,13 @@ def _resolved_position_exposure(
     quantity: float,
     strategy_family: str | None,
 ) -> dict[str, float | None]:
-    exposure = _derive_live_exposure(
+    exposure = derive_live_exposure(
         entry_value=entry_value,
         width=width,
         quantity=quantity,
         strategy_family=strategy_family,
     )
-    explicit_candidate = _explicit_candidate_exposure(
+    explicit_candidate = explicit_candidate_exposure(
         candidate=candidate,
         quantity=quantity,
     )
@@ -464,7 +464,7 @@ def _position_common_payload(
     )
     width = _resolve_width(attempt) or _position_width(existing or {})
     strategy_family = as_text(attempt.get("strategy_family")) or as_text(existing.get("strategy_family") if isinstance(existing, Mapping) else None)
-    exposure = _resolved_position_exposure(
+    exposure = resolve_position_exposure(
         candidate=candidate,
         existing=existing,
         entry_value=entry_credit,
@@ -583,7 +583,7 @@ def _recalculate_position(
     entry_credit = _position_entry_value(position)
     width = _position_width(position)
     strategy_family = as_text(position.get("strategy_family")) or as_text(position.get("strategy"))
-    exposure = _derive_live_exposure(
+    exposure = derive_live_exposure(
         entry_value=entry_credit,
         width=width,
         quantity=remaining_quantity,

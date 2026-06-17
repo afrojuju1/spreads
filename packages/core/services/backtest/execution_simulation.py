@@ -27,6 +27,7 @@ from core.services.option_structures import (
     unique_leg_symbols,
 )
 from core.services.session_positions import OPEN_TRADE_INTENT
+from core.services.trading_engine.close_policy import resolve_exit_policy_snapshot
 from core.services.trading_engine.entry_signals import candidate_payload
 from core.services.trading_strategy_runtime import build_entry_runtime
 from core.storage.serializers import parse_datetime
@@ -452,6 +453,11 @@ def _simulate_selected_entry(
         signal=signal,
         ttl_minutes=ttl_minutes,
     )
+    exit_policy = resolve_exit_policy_snapshot(
+        session_date=str(day_result["market_date"]),
+        payload=runtime.strategy.management_policy,
+    )
+    risk_policy = dict(runtime.strategy.risk_defaults)
     candidate = _candidate_for_execution(
         signal=signal,
         quote_timestamp=quote_context.quote_timestamp,
@@ -484,6 +490,10 @@ def _simulate_selected_entry(
             "order": order_request,
             "execution_policy": dict(execution_policy),
             "executor_profile": runtime.strategy.execution.executor_profile_snapshot("open"),
+            "exit_policy": exit_policy,
+            "risk_policy": risk_policy,
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "config_hash": runtime.config_hash,
             "trade_intent": OPEN_TRADE_INTENT,
         },
         "candidate_generated_at": None if quote_context.quote_timestamp is None else _utc_iso(quote_context.quote_timestamp),
@@ -595,6 +605,8 @@ def _simulate_selected_entry(
                 "fill_model": DEFAULT_FILL_MODEL,
                 "execution_policy": dict(execution_policy),
                 "executor_profile": runtime.strategy.execution.executor_profile_snapshot("open"),
+                "exit_policy": exit_policy,
+                "risk_policy": risk_policy,
             },
         },
         "attempt": {

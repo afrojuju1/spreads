@@ -7,6 +7,7 @@ from core.db.decorators import with_storage
 from core.services.backtest.experiments import resolve_backtest_artifact_root, write_json_artifact
 from core.services.backtest.execution_simulation import build_execution_simulation_backtest
 from core.services.backtest.models import BacktestArtifactKind, BacktestMode, BacktestRequest, BacktestRunState
+from core.services.backtest.portfolio_simulation import build_portfolio_simulation_backtest
 from core.services.backtest.strategy_rerun import build_strategy_rerun_backtest
 from core.services.backtest.stored_facts import build_stored_facts_backtest
 from core.services.backtest.strategy_scope import load_backtest_strategy_scope, strategy_scope_snapshot
@@ -38,19 +39,31 @@ def _strategy_result_metrics(strategy_result: dict[str, Any]) -> dict[str, Any]:
     execution = as_mapping(strategy_result.get("execution"))
     exits = as_mapping(strategy_result.get("exits"))
     pnl = as_mapping(strategy_result.get("pnl"))
+    performance = as_mapping(strategy_result.get("performance_metrics"))
     return {
         "candidate_run_count": coerce_int(candidate_productivity.get("candidate_run_count")) or 0,
         "trade_candidate_count": coerce_int(candidate_productivity.get("trade_candidate_count")) or 0,
         "signal_count": coerce_int(selection_quality.get("signal_count")) or 0,
         "decision_count": coerce_int(selection_quality.get("decision_count")) or 0,
         "selected_count": coerce_int(selection_quality.get("selected_count")) or 0,
+        "selection_rate": coerce_float(performance.get("selection_rate")) or coerce_float(selection_quality.get("selection_rate")),
         "admission_count": coerce_int(admissions.get("admission_count")) or 0,
         "approved_count": coerce_int(admissions.get("approved_count")) or 0,
+        "admission_approval_rate": coerce_float(performance.get("admission_approval_rate")) or coerce_float(admissions.get("approval_rate")),
         "attempt_count": coerce_int(execution.get("attempt_count")) or 0,
         "fill_count": coerce_int(execution.get("fill_count")) or 0,
+        "fill_rate": coerce_float(performance.get("fill_rate")) or coerce_float(execution.get("fill_rate")),
         "close_decision_count": coerce_int(exits.get("close_decision_count")) or 0,
         "close_count": coerce_int(exits.get("close_count")) or 0,
+        "realized_pnl": coerce_float(pnl.get("realized_pnl")) or 0.0,
+        "unrealized_pnl": coerce_float(pnl.get("unrealized_pnl")) or 0.0,
         "net_pnl": coerce_float(pnl.get("net_pnl")) or 0.0,
+        "return_on_risk": coerce_float(performance.get("return_on_risk")),
+        "win_rate": coerce_float(performance.get("win_rate")),
+        "profit_factor": coerce_float(performance.get("profit_factor")),
+        "max_drawdown": coerce_float(performance.get("max_drawdown")),
+        "exposure_time_minutes": coerce_float(performance.get("exposure_time_minutes")),
+        "quote_coverage": coerce_float(performance.get("quote_coverage")),
     }
 
 
@@ -130,6 +143,20 @@ class BacktestEngine:
                     db_target=resolved_db_target,
                 )
                 comparison_mode = "execution_simulation_current_config"
+            elif request.mode == BacktestMode.PORTFOLIO_SIMULATION:
+                result = build_portfolio_simulation_backtest(
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_ids=strategy_ids,
+                    symbols=request.symbols,
+                    max_days=request.max_days,
+                    market_data_symbol_limit=request.market_data_symbol_limit,
+                    candidate_limit=request.candidate_limit,
+                    per_symbol_top=request.per_symbol_top,
+                    storage=storage,
+                    db_target=resolved_db_target,
+                )
+                comparison_mode = "portfolio_simulation_current_config"
             else:
                 raise ValueError(f"Unsupported backtest mode: {request.mode}")
             result = dict(result)
