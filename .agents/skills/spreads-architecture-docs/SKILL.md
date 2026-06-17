@@ -40,7 +40,7 @@ Use these only for the roles they now own:
   - planning-doc entrypoint and doc-role map
 
 Do not let these supporting docs become rival top-level architecture sources.
-Older planning docs may still mention pre-cutover `replay` or `audit_replay` surfaces; when they do, prefer the current names and boundaries from `docs/current_system_state.md`.
+Older planning docs may still mention pre-cutover `replay`, `audit_replay`, or old singular `backtest` surfaces; when they do, prefer the current names and boundaries from `docs/current_system_state.md`. The current backend historical-evaluation adapter is `spreads backtests run`.
 For target-state proposals, keep the distinction explicit: `docs/current_system_state.md` describes what is live now, while planning docs describe completed and remaining beads for the target.
 
 ## Inspiration Repos

@@ -2,7 +2,7 @@
 
 Date: 2026-06-17
 
-Status: active architecture and workstream plan. `docs/current_system_state.md` remains the runtime source of truth; this file tracks the BacktestEngine implementation sequence and remaining target modes.
+Status: implemented architecture and workstream plan. `docs/current_system_state.md` remains the runtime source of truth; this file tracks the BacktestEngine implementation sequence and current modes.
 
 Related:
 
@@ -16,9 +16,9 @@ Related:
 
 Use the direct domain name: `Backtest`.
 
-The backend owner should be a new `services/backtest/` package centered on `BacktestEngine`. The existing `services/strategy_lab/historical_evaluator.py` should be displaced by the new package rather than preserved behind compatibility wrappers.
+The backend owner is `services/backtest/`, centered on `BacktestEngine`. The existing `services/strategy_lab/historical_evaluator.py` was displaced by the new package rather than preserved behind compatibility wrappers.
 
-This is a clean replacement, not a revival of the removed historical wrappers. The old `spreads backtest`, `replay`, `audit`, and `analyze` command families remain retired unless a later bead deliberately introduces a new adapter over `BacktestEngine`.
+This is a clean replacement, not a revival of the removed historical wrappers. The current CLI adapter is the plural `spreads backtests run` command over `BacktestEngine`; the old singular `spreads backtest`, `replay`, `audit`, and `analyze` command families remain retired.
 
 ## Problem
 
@@ -46,7 +46,7 @@ Backtest must:
 4. Label every result with explicit source, market-data, execution, fill, position, exit, PnL, and comparison fidelity.
 5. Use library-backed analytics and dataframe tooling where they are standard.
 6. Keep strategy selection, admission, execution, portfolio, and exit boundaries separate.
-7. Make later CLI, API, and UI adapters thin surfaces over the backend engine.
+7. Keep CLI, API, and UI adapters thin surfaces over the backend engine.
 
 ## Non-Goals
 
@@ -70,27 +70,31 @@ packages/core/services/backtest/
   stored_facts.py
   market_slices.py
   windows.py
-  feature_store.py
+  strategy_scope.py
   strategy_rerun.py
   execution_simulation.py
   portfolio_simulation.py
+  parameter_sweep.py
   experiments.py
   metrics.py
 ```
+
+The current CLI adapter lives in `packages/core/cli/backtests.py` and exposes the engine as `spreads backtests run`.
 
 Ownership:
 
 | Module | Responsibility |
 | --- | --- |
-| `models.py` | `BacktestRequest`, `BacktestRun`, `BacktestMode`, `BacktestResult`, `BacktestArtifact`, `BacktestVariant`, and fidelity labels. Use `DomainModel`. |
+| `models.py` | `BacktestRequest`, `BacktestMode`, `BacktestSweepConfig`, run state, artifact kind, storage kind, and request serialization. Use `DomainModel`. |
 | `engine.py` | Orchestrates modes, validates bounded windows, resolves strategy variants, coordinates artifact writes, returns compact summaries. |
-| `stored_facts.py` | Moves the current stored-facts evaluator out of `strategy_lab` with equivalent behavior and better model boundaries. |
+| `stored_facts.py` | Replaces the old stored-facts evaluator with equivalent behavior and better model boundaries. |
 | `market_slices.py` | Point-in-time `HistoricalMarketSliceProvider` interfaces and concrete ClickHouse/Postgres providers. |
 | `windows.py` | Shared bounded date-window normalization. |
-| `feature_store.py` | Builds and reads compact historical feature frames for reruns and sweeps. |
+| `strategy_scope.py` | Loads and serializes current strategy config/catalog snapshots for runs and variants. |
 | `strategy_rerun.py` | Reruns source/candidate/signal/decision flow against historical data. |
 | `execution_simulation.py` | Simulates order acceptance, fills, expiry, quote freshness, repricing, cancel, and broker-denial outcomes. |
 | `portfolio_simulation.py` | Projects positions, close decisions, marks, realized/unrealized PnL, and equity curves. |
+| `parameter_sweep.py` | Expands bounded current-config overlays, validates variants, runs base modes, and ranks results. |
 | `experiments.py` | Persists run metadata, config snapshots, variant hashes, artifact pointers, and summary status. |
 | `metrics.py` | Owns standard performance metrics through library adapters. |
 
@@ -466,8 +470,8 @@ flowchart TD
 6. Done: add `execution_simulation` mode.
 7. Done: add `portfolio_simulation` and metrics adapters.
 8. Done: add `parameter_sweep`.
-9. Add a narrow CLI/API adapter only after the backend mode contracts are stable.
-10. Update `docs/current_system_state.md` only after the implemented owner is live.
+9. Done: add a narrow plural `spreads backtests run` CLI adapter after the backend mode contracts are stable.
+10. Done: update `docs/current_system_state.md` after the implemented owner is live.
 
 ## Validation Strategy
 
@@ -489,20 +493,20 @@ Automated tests should be added only when explicitly requested. The default clos
 
 The Beads workstream should be an epic with children in this order:
 
-1. Create `BacktestEngine` package and move stored-facts mode.
-2. Add backtest run and artifact persistence.
-3. Build `HistoricalMarketSliceProvider`.
+1. Done: create `BacktestEngine` package and move stored-facts mode.
+2. Done: add backtest run and artifact persistence.
+3. Done: build `HistoricalMarketSliceProvider`.
 4. Done: add strategy rerun mode.
 5. Done: add execution simulation mode.
-6. Add portfolio, exit, PnL simulation, and metrics.
-7. Add parameter sweep and variant ranking.
-8. Add narrow adapter and current docs cutover.
+6. Done: add portfolio, exit, PnL simulation, and metrics.
+7. Done: add parameter sweep and variant ranking.
+8. Done: add narrow adapter and current docs cutover.
 
 The first bead should preserve behavior while changing ownership. Later beads can rewrite internals aggressively where live code is too side-effect-heavy to reuse cleanly.
 
 ## Cutover Rule
 
-When the new package is implemented:
+Completed cutover rules:
 
 - delete or move the old `services/strategy_lab/historical_evaluator.py`
 - update imports to `core.services.backtest`

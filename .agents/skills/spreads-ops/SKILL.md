@@ -24,7 +24,7 @@ For architecture and ownership, read [docs/current_system_state.md](../../../doc
 - From another host, use deploy-owned commands such as `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops state --json`.
 - Do not use command-level `--env` passthrough on non-deploy commands.
 - Do not add or update tests unless Ade explicitly asks.
-- Do not revive removed `scan`, `audit`, `backtest`, `research`, `replay`, `analyze`, `post-market analyze`, `doctor`, or fragmented old ops commands.
+- Do not revive removed `scan`, `audit`, old singular `backtest`, `research`, `replay`, `analyze`, `post-market analyze`, `doctor`, or fragmented old ops commands. Use `spreads backtests run` only when the task is a backend historical evaluation rather than live ops triage.
 
 `TradingOpsState` and `StorageOpsState` are the canonical operator read models.
 

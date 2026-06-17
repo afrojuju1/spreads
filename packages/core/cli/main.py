@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typer
 
+from core.cli.backtests import backtests_app
 from core.cli.company_valuation import company_valuation_app
 from core.cli.config import config_app
 from core.cli.deploy import deploy_app
@@ -25,6 +26,7 @@ app.add_typer(deploy_app, name="deploy")
 app.add_typer(config_app, name="config")
 app.add_typer(company_valuation_app, name="company-valuation")
 app.add_typer(runtime_app, name="runtime")
+app.add_typer(backtests_app, name="backtests")
 
 
 def main() -> None:

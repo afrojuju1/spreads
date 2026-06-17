@@ -86,8 +86,8 @@
   - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- execution list --date <YYYY-MM-DD>`
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...`, `uv run spreads deploy logs --env ade-nucbox-k8-plus ...`, and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` only from another host or when intentionally exercising deploy-target plumbing.
 - Runtime resource policy lives in [docs/current_system_state.md](docs/current_system_state.md). Market-closed `market_recorder_idle` logs are expected and healthy; do not treat recorder idling outside market hours as a capture outage.
-- Do not tell operators to run removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first and create a bead before reintroducing a historical evaluation CLI.
-- For offline selection research or policy tuning, start by validating current strategy config and stored engine facts. If a historical evaluator is needed, design it explicitly against the current ticker-source/candidate/signal/decision model instead of reviving old audit/backtest wrappers.
+- Do not tell operators to run removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first; for backend historical evaluation, use the current plural `spreads backtests run` adapter over `BacktestEngine`.
+- For offline selection research or policy tuning, start by validating current strategy config and stored engine facts. If a historical evaluator is needed, use or extend `services/backtest` against the current ticker-source/candidate/signal/decision model instead of reviving old audit/backtest wrappers.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
@@ -112,7 +112,7 @@
 
 - For overall architecture, service-boundary, or ownership questions, start with `docs/current_system_state.md`.
 - If a planning document disagrees with `docs/current_system_state.md` about current ownership or runtime topology, `docs/current_system_state.md` wins.
-- Treat older planning-doc references to `replay`, `audit_replay`, `backtest`, `packages/core/cli/replay.py`, `packages/core/cli/backtest.py`, or `services/audit_snapshot.py` as historical context unless the document has been explicitly updated. There is no currently shipped historical-evaluation CLI.
+- Treat older planning-doc references to `replay`, `audit_replay`, old singular `backtest`, `packages/core/cli/replay.py`, `packages/core/cli/backtest.py`, or `services/audit_snapshot.py` as historical context unless the document has been explicitly updated. The shipped historical-evaluation CLI is the plural `spreads backtests run` adapter over `services/backtest`.
 - If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
 - For current candidate, signal, decision, and admission ownership, start with `docs/current_system_state.md`.
 - For historical diagnosis of the older selection path, use `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.
