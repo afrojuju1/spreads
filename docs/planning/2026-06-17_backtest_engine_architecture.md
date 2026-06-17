@@ -318,6 +318,8 @@ HistoricalMarketSliceProvider   -> point-in-time historical market slices
 
 `HistoricalMarketSliceProvider` should return the same normalized `SymbolMarketSlice` shape candidate builders already consume.
 
+Implemented in `spr-u44.3`: `services/backtest/market_slices.py` provides `HistoricalMarketSliceProvider` and `HistoricalMarketSliceRequest`. The provider reads ClickHouse latest option quote snapshots and trade ticks, Postgres ticker-source observations, candidate diagnostics/examples, trade-candidate metadata when present, and earnings consensus rows. Current fidelity is explicit: ClickHouse provides captured-contract coverage, not a full historical options-chain archive; contract metadata may be partially OCC-parsed without open interest, underlying bars may be unavailable, and Greeks depend on stored metadata or the local Greeks provider.
+
 Provider responsibilities:
 
 - resolve point-in-time underlying bars and quotes
@@ -448,7 +450,7 @@ flowchart TD
 1. Done: create `services/backtest/` and move stored-facts evaluation into it.
 2. Done: add strict backtest DomainModels and `BacktestEngine`.
 3. Done: add run, variant, and artifact persistence for stored-facts mode.
-4. Add `HistoricalMarketSliceProvider`.
+4. Done: add `HistoricalMarketSliceProvider`.
 5. Add `strategy_rerun` mode.
 6. Add `execution_simulation` mode.
 7. Add `portfolio_simulation` and metrics adapters.

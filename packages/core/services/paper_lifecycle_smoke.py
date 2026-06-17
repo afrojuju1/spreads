@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import asdict
 from datetime import timedelta
 from typing import Any
@@ -23,6 +22,7 @@ from core.services.execution_intents.shared import (
     issue_pending_execution_intent,
 )
 from core.services.market_dates import NEW_YORK
+from core.services.option_symbols import parse_occ_option_symbol
 from core.services.ops.market_session import market_session_context
 from core.services.session_positions import CLOSE_TRADE_INTENT, OPEN_TRADE_INTENT
 from core.value_coercion import (
@@ -43,7 +43,6 @@ DEFAULT_TTL_MINUTES = 5
 DEFAULT_MAX_DEBIT_DOLLARS = 25.0
 DEFAULT_AUTO_SELECT_MIN_DTE = 7
 DEFAULT_AUTO_SELECT_MAX_DTE = 21
-_OCC_SYMBOL_RE = re.compile(r"^([A-Z]{1,6})(\d{6})([CP])(\d{8})$")
 
 
 def _normalize_symbol(value: Any, *, field_name: str) -> str:
@@ -86,18 +85,14 @@ def _strategy_family(option_type: str) -> str:
 
 
 def _parse_occ_option_symbol(symbol: str) -> dict[str, Any]:
-    match = _OCC_SYMBOL_RE.match(symbol.upper())
-    if match is None:
+    parsed = parse_occ_option_symbol(symbol)
+    if parsed is None:
         return {}
-    root, yymmdd, type_code, raw_strike = match.groups()
-    year = int(yymmdd[:2])
-    month = int(yymmdd[2:4])
-    day = int(yymmdd[4:6])
     return {
-        "underlying_symbol": root,
-        "expiration_date": f"{2000 + year:04d}-{month:02d}-{day:02d}",
-        "option_type": "call" if type_code == "C" else "put",
-        "strike": round(int(raw_strike) / 1000.0, 4),
+        "underlying_symbol": parsed.underlying_symbol,
+        "expiration_date": parsed.expiration_date,
+        "option_type": parsed.option_type,
+        "strike": parsed.strike_price,
     }
 
 

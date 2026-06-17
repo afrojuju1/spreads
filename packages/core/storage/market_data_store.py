@@ -416,6 +416,76 @@ class ClickHouseMarketDataStore:
             """
         )
 
+    def list_latest_option_quotes_by_underlying(
+        self,
+        *,
+        underlying_symbols: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime | None = None,
+        label: str | None = None,
+        profile: str | None = None,
+        limit: int = 1000,
+    ) -> list[OptionQuoteTickRecord]:
+        symbols = _normalized_texts(underlying_symbols)
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if not symbols or captured_from_dt is None or (captured_to_dt is not None and captured_from_dt >= captured_to_dt):
+            return []
+        clauses = [
+            f"underlying_symbol IN {_string_tuple(symbols)}",
+            f"captured_at >= {_quote_datetime(captured_from_dt)}",
+        ]
+        if captured_to_dt is not None:
+            clauses.append(f"captured_at < {_quote_datetime(captured_to_dt)}")
+        if label is not None:
+            clauses.append(f"label = {_quote_string(label)}")
+        if profile is not None:
+            clauses.append(f"profile = {_quote_string(profile)}")
+        return self._query_dicts(
+            f"""
+            SELECT
+              latest_captured_at AS captured_at,
+              latest_source_timestamp AS source_timestamp,
+              latest_cycle_id AS cycle_id,
+              latest_label AS label,
+              latest_profile AS profile,
+              underlying_symbol,
+              latest_strategy AS strategy,
+              option_symbol,
+              latest_leg_role AS leg_role,
+              latest_bid AS bid,
+              latest_ask AS ask,
+              latest_midpoint AS midpoint,
+              latest_bid_size AS bid_size,
+              latest_ask_size AS ask_size,
+              latest_source AS source
+            FROM
+            (
+              SELECT
+                max(captured_at) AS latest_captured_at,
+                argMax(source_timestamp, captured_at) AS latest_source_timestamp,
+                argMax(cycle_id, captured_at) AS latest_cycle_id,
+                argMax(label, captured_at) AS latest_label,
+                argMax(profile, captured_at) AS latest_profile,
+                underlying_symbol,
+                argMax(strategy, captured_at) AS latest_strategy,
+                option_symbol,
+                argMax(leg_role, captured_at) AS latest_leg_role,
+                argMax(bid, captured_at) AS latest_bid,
+                argMax(ask, captured_at) AS latest_ask,
+                argMax(midpoint, captured_at) AS latest_midpoint,
+                argMax(bid_size, captured_at) AS latest_bid_size,
+                argMax(ask_size, captured_at) AS latest_ask_size,
+                argMax(source, captured_at) AS latest_source
+              FROM option_quote_snapshots_1m
+              WHERE {" AND ".join(clauses)}
+              GROUP BY underlying_symbol, option_symbol
+            )
+            ORDER BY latest_captured_at DESC
+            LIMIT {max(int(limit), 1)}
+            """
+        )
+
     def summarize_option_quote_window(
         self,
         *,
