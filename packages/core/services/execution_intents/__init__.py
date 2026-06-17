@@ -30,7 +30,6 @@ from core.storage.serializers import parse_datetime
 
 from .maintenance import (
     _auto_execution_gate,
-    _backfill_missing_approved_admission_intents,
     _backfill_strategy_position_links,
     _cleanup_slot_conflicts,
     _cleanup_inactive_strategy_intents,
@@ -38,6 +37,7 @@ from .maintenance import (
     _intent_execution_policy,
     _intent_exit_policy,
     _position_is_active_for_intent,
+    _repair_missing_approved_admission_intents,
 )
 from .repricing import _manage_submitted_open_intents
 from .shared import (
@@ -840,7 +840,7 @@ def dispatch_pending_execution_intents(
         execution_store,
         limit=batch_limit,
     )
-    admission_intent_backfill = _backfill_missing_approved_admission_intents(
+    admission_intent_repair = _repair_missing_approved_admission_intents(
         execution_store,
         limit=batch_limit,
     )
@@ -972,7 +972,7 @@ def dispatch_pending_execution_intents(
         "intent_owner_cleanup": intent_owner_cleanup,
         "intent_cleanup": intent_cleanup,
         "position_linkage": position_linkage,
-        "admission_intent_backfill": admission_intent_backfill,
+        "admission_intent_repair": admission_intent_repair,
         "slot_cleanup": slot_cleanup,
         "active_management": active_management,
         "reviewed": reviewed,

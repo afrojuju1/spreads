@@ -8,7 +8,7 @@ from core.services.deployment_policy import (
     DEPLOYMENT_MODE_PAPER_AUTO,
 )
 from core.services.trading_strategies import load_active_trading_strategies
-from core.value_coercion import as_text, utc_now_iso
+from core.value_coercion import as_text, utc_iso, utc_now, utc_now_iso
 from core.storage.serializers import parse_datetime
 
 from .shared import (
@@ -190,7 +190,7 @@ def _backfill_strategy_position_links(execution_store: Any, *, limit: int) -> di
     return {"linked": linked, "results": results[:25]}
 
 
-def _backfill_missing_approved_admission_intents(
+def _repair_missing_approved_admission_intents(
     execution_store: Any,
     *,
     limit: int,
@@ -234,7 +234,88 @@ def _backfill_missing_approved_admission_intents(
                 }
             )
             continue
-        if execution_store.get_execution_intent(execution_intent_id) is not None:
+        now_dt = utc_now()
+        now = utc_iso(now_dt)
+        if now is None:
+            raise RuntimeError("Unable to render current UTC timestamp")
+        created_at = as_text(legacy_intent.get("created_at")) or as_text(admission.get("decided_at")) or now
+        original_expires_at = as_text(legacy_intent.get("expires_at"))
+        original_expires_at_dt = parse_datetime(original_expires_at)
+        expires_at = original_expires_at
+        terminal_state = (
+            "expired"
+            if original_expires_at_dt is not None and original_expires_at_dt <= now_dt
+            else "failed"
+        )
+        policy_ref = dict(legacy_intent.get("policy_snapshot") or admission.get("policy_snapshot") or {})
+        if not policy_ref and isinstance(decision.get("evidence"), dict):
+            policy_ref = dict(decision["evidence"].get("policy_ref") or {})
+        if terminal_state == "failed":
+            expires_at = original_expires_at
+        payload = {
+            **legacy_payload,
+            "dispatch_status": terminal_state,
+            "terminal_reason": reason,
+            "repair_reason": reason,
+            "repaired_at": now,
+            "admission_decision_id": admission.get("admission_decision_id"),
+            "trade_signal_id": admission.get("trade_signal_id") or decision.get("trade_signal_id"),
+            "trade_decision_id": admission.get("trade_decision_id") or decision.get("trade_decision_id"),
+            "underlying_symbol": admission_evidence.get("underlying_symbol") or legacy_payload.get("underlying_symbol"),
+            "candidate_identity": admission_evidence.get("candidate_identity") or legacy_payload.get("candidate_identity"),
+            "execution_admission": admission,
+            "original_legacy_intent_state": legacy_intent.get("intent_state"),
+            "original_legacy_expires_at": original_expires_at,
+        }
+        repair = execution_store.create_terminal_repair_execution_intent_if_missing(
+            execution_intent={
+                "execution_intent_id": execution_intent_id,
+                "trading_strategy_id": trading_strategy_id,
+                "trade_signal_id": as_text(admission.get("trade_signal_id") or decision.get("trade_signal_id")),
+                "trade_decision_id": as_text(admission.get("trade_decision_id") or decision.get("trade_decision_id")),
+                "strategy_position_id": None,
+                "execution_attempt_id": None,
+                "action_type": as_text(legacy_intent.get("intent_kind")) or "open",
+                "slot_key": slot_key,
+                "claim_token": None,
+                "policy_ref": policy_ref,
+                "config_hash": as_text(decision.get("config_hash")) or as_text(legacy_intent.get("config_hash")) or "",
+                "state": "pending",
+                "expires_at": expires_at,
+                "superseded_by_id": None,
+                "payload": payload,
+                "created_at": created_at,
+                "updated_at": now,
+            },
+            created_event={
+                "execution_intent_id": execution_intent_id,
+                "event_type": "created",
+                "event_at": now,
+                "payload": {
+                    "reason": reason,
+                    "source": "approved_admission_repair",
+                    "admission_decision_id": admission.get("admission_decision_id"),
+                },
+            },
+            terminal_state=terminal_state,
+            terminal_payload_updates={
+                "dispatch_status": terminal_state,
+                "terminal_reason": reason,
+                "repaired_at": now,
+            },
+            terminal_event={
+                "execution_intent_id": execution_intent_id,
+                "event_type": terminal_state,
+                "event_at": now,
+                "payload": {
+                    "reason": reason,
+                    "source": "approved_admission_repair",
+                    "admission_decision_id": admission.get("admission_decision_id"),
+                },
+            },
+            terminal_updated_at=now,
+        )
+        if not repair.get("created"):
             skipped += 1
             results.append(
                 {
@@ -245,89 +326,15 @@ def _backfill_missing_approved_admission_intents(
                 }
             )
             continue
-
-        now = utc_now_iso()
-        created_at = as_text(legacy_intent.get("created_at")) or as_text(admission.get("decided_at")) or now
-        original_expires_at = as_text(legacy_intent.get("expires_at"))
-        original_expires_at_dt = parse_datetime(original_expires_at)
-        expires_at = original_expires_at
-        if original_expires_at_dt is None or original_expires_at_dt > datetime.now(UTC):
-            expires_at = now
-        policy_ref = dict(legacy_intent.get("policy_snapshot") or admission.get("policy_snapshot") or {})
-        if not policy_ref and isinstance(decision.get("evidence"), dict):
-            policy_ref = dict(decision["evidence"].get("policy_ref") or {})
-        payload = {
-            **legacy_payload,
-            "dispatch_status": "expired",
-            "expire_reason": reason,
-            "backfill_reason": reason,
-            "backfilled_at": now,
-            "admission_decision_id": admission.get("admission_decision_id"),
-            "trade_signal_id": admission.get("trade_signal_id") or decision.get("trade_signal_id"),
-            "trade_decision_id": admission.get("trade_decision_id") or decision.get("trade_decision_id"),
-            "underlying_symbol": admission_evidence.get("underlying_symbol") or legacy_payload.get("underlying_symbol"),
-            "candidate_identity": admission_evidence.get("candidate_identity") or legacy_payload.get("candidate_identity"),
-            "execution_admission": admission,
-            "original_legacy_intent_state": legacy_intent.get("intent_state"),
-            "original_legacy_expires_at": original_expires_at,
-        }
-        pending_intent = execution_store.upsert_execution_intent(
-            execution_intent_id=execution_intent_id,
-            trading_strategy_id=trading_strategy_id,
-            trade_signal_id=as_text(admission.get("trade_signal_id") or decision.get("trade_signal_id")),
-            trade_decision_id=as_text(admission.get("trade_decision_id") or decision.get("trade_decision_id")),
-            strategy_position_id=None,
-            execution_attempt_id=None,
-            action_type=as_text(legacy_intent.get("intent_kind")) or "open",
-            slot_key=slot_key,
-            claim_token=None,
-            policy_ref=policy_ref,
-            config_hash=as_text(decision.get("config_hash")) or as_text(legacy_intent.get("config_hash")) or "",
-            state="pending",
-            expires_at=expires_at,
-            superseded_by_id=None,
-            payload=payload,
-            created_at=created_at,
-            updated_at=now,
-        )
-        _append_event(
-            execution_store,
-            execution_intent_id=execution_intent_id,
-            event_type="created",
-            payload={
-                "reason": reason,
-                "source": "approved_admission_backfill",
-                "admission_decision_id": admission.get("admission_decision_id"),
-            },
-        )
-        expired_intent = _update_intent(
-            execution_store,
-            dict(pending_intent),
-            state="expired",
-            payload_updates={
-                "dispatch_status": "expired",
-                "expire_reason": reason,
-                "backfilled_at": now,
-            },
-            updated_at=now,
-        )
-        _append_event(
-            execution_store,
-            execution_intent_id=execution_intent_id,
-            event_type="expired",
-            payload={
-                "reason": reason,
-                "source": "approved_admission_backfill",
-                "admission_decision_id": admission.get("admission_decision_id"),
-            },
-        )
+        repaired_intent = dict(repair.get("execution_intent") or {})
         repaired += 1
         results.append(
             {
-                "status": expired_intent.get("state"),
+                "status": repaired_intent.get("state"),
                 "execution_intent_id": execution_intent_id,
                 "admission_decision_id": admission.get("admission_decision_id"),
                 "reason": reason,
+                "terminal_state": terminal_state,
             }
         )
     return {"repaired": repaired, "skipped": skipped, "results": results[:25]}
@@ -343,7 +350,7 @@ def _cleanup_terminal_intent_history(
     limit: int,
     older_than_minutes: int = 15,
 ) -> dict[str, Any]:
-    threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
+    threshold = utc_now() - timedelta(minutes=max(older_than_minutes, 1))
     retained = 0
     results: list[dict[str, Any]] = []
     intents = [dict(row) for row in execution_store.list_execution_intents(limit=max(int(limit), 1) * 25)]
@@ -375,7 +382,7 @@ def _cleanup_inactive_strategy_intents(
     older_than_minutes: int = 15,
 ) -> dict[str, Any]:
     active_strategy_ids = _active_trading_strategy_ids()
-    threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
+    threshold = utc_now() - timedelta(minutes=max(older_than_minutes, 1))
     revoked = 0
     results: list[dict[str, Any]] = []
     intents = [

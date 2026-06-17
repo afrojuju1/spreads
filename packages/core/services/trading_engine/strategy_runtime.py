@@ -10,7 +10,6 @@ from core.services.entry_planner import plan_entry_selection
 from core.services.execution_intents import request_execution_intent_dispatch
 from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
-    issue_pending_execution_intent,
 )
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
@@ -129,9 +128,9 @@ def _trade_decision_state(decision_state: Any) -> str:
     return "no_entry"
 
 
-def _persist_trade_admission(
+def _persist_trade_admission_handoff(
     *,
-    engine_facts: Any,
+    execution_store: Any,
     runtime: EntryRuntime,
     market_date: str,
     policy_ref: dict[str, Any],
@@ -142,6 +141,8 @@ def _persist_trade_admission(
     admission_snapshot: dict[str, Any],
     signal: dict[str, Any],
     expires_at: str,
+    execution_intent_payload: dict[str, Any] | None = None,
+    execution_intent_created_event_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidate = candidate_payload(signal)
     candidate_identity = str(
@@ -190,63 +191,109 @@ def _persist_trade_admission(
     )
     target_intent_state = "pending" if admission_allows_attempt(normalized) else "revoked"
     now = _utc_now()
-    engine_facts.upsert_trade_execution_intent(
-        execution_intent_id=execution_intent_id,
-        intent_kind="open",
-        source_object_type="trade_decision",
-        source_object_id=trade_decision_id,
-        trade_signal_id=trade_signal_id,
-        trade_decision_id=trade_decision_id,
-        position_id=None,
-        trading_strategy_id=runtime.trading_strategy_id,
-        trade_structure=runtime.trade_structure,
-        routine="entry",
-        account_id=None,
-        slot_key=slot_key,
-        idempotency_key=execution_intent_id,
-        intent_state=target_intent_state,
-        claim_token=None,
-        claimed_at=None,
-        expires_at=expires_at,
-        supersedes_intent_id=None,
-        superseded_by_intent_id=None,
-        payload={
-            "underlying_symbol": signal.get("underlying_symbol"),
-            "candidate_identity": candidate_identity,
-            "execution_runtime": runtime.strategy.execution.runtime,
+    current_execution_intent: dict[str, Any] | None = None
+    current_created_event: dict[str, Any] | None = None
+    if admission_allows_attempt(normalized):
+        if execution_intent_payload is None or execution_intent_created_event_payload is None:
+            raise RuntimeError("Approved admission is missing a prebuilt execution intent payload.")
+        current_payload = {
+            **execution_intent_payload,
+            "admission_decision_id": normalized["admission_decision_id"],
+            "execution_admission": normalized,
+        }
+        current_execution_intent = {
+            "execution_intent_id": execution_intent_id,
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "trade_signal_id": trade_signal_id,
+            "trade_decision_id": trade_decision_id,
+            "strategy_position_id": None,
+            "execution_attempt_id": None,
+            "action_type": "open",
+            "slot_key": slot_key,
+            "claim_token": None,
+            "policy_ref": policy_ref,
+            "config_hash": runtime.config_hash,
+            "state": "pending",
+            "expires_at": expires_at,
+            "superseded_by_id": None,
+            "payload": current_payload,
+            "created_at": now,
+            "updated_at": now,
+        }
+        current_created_event = {
+            "execution_intent_id": execution_intent_id,
+            "event_type": "created",
+            "event_at": now,
+            "payload": {
+                **execution_intent_created_event_payload,
+                "admission_decision_id": normalized["admission_decision_id"],
+            },
+        }
+    handoff = execution_store.upsert_admission_intent_handoff(
+        legacy_intent={
+            "execution_intent_id": execution_intent_id,
+            "intent_kind": "open",
+            "source_object_type": "trade_decision",
+            "source_object_id": trade_decision_id,
+            "trade_signal_id": trade_signal_id,
+            "trade_decision_id": trade_decision_id,
+            "position_id": None,
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "trade_structure": runtime.trade_structure,
+            "routine": "entry",
+            "account_id": None,
+            "slot_key": slot_key,
+            "idempotency_key": execution_intent_id,
+            "intent_state": target_intent_state,
+            "claim_token": None,
+            "claimed_at": None,
+            "expires_at": expires_at,
+            "supersedes_intent_id": None,
+            "superseded_by_intent_id": None,
+            "payload": {
+                "underlying_symbol": signal.get("underlying_symbol"),
+                "candidate_identity": candidate_identity,
+                "execution_runtime": runtime.strategy.execution.runtime,
+            },
+            "policy_snapshot": policy_ref,
+            "config_hash": runtime.config_hash,
+            "created_at": now,
+            "updated_at": now,
         },
-        policy_snapshot=policy_ref,
-        config_hash=runtime.config_hash,
-        created_at=now,
-        updated_at=now,
+        admission={
+            "admission_decision_id": str(normalized["admission_decision_id"]),
+            "execution_intent_id": execution_intent_id,
+            "trade_signal_id": trade_signal_id,
+            "trade_decision_id": trade_decision_id,
+            "position_id": None,
+            "admission_kind": str(normalized["admission_kind"]),
+            "admission_state": str(normalized["admission_state"]),
+            "account_id": None,
+            "session_date": market_date,
+            "requested_quantity": normalized.get("requested_quantity"),
+            "requested_notional": normalized.get("requested_notional"),
+            "max_loss": normalized.get("max_loss"),
+            "policy_snapshot": dict(normalized.get("policy_snapshot") or {}),
+            "capability_snapshot": dict(normalized.get("capability_snapshot") or {}),
+            "metrics": dict(normalized.get("metrics") or {}),
+            "reason_codes": list(normalized.get("reason_codes") or []),
+            "blockers": list(normalized.get("blockers") or []),
+            "evidence": dict(normalized.get("evidence") or {}),
+            "note": normalized.get("message") or normalized.get("reason"),
+            "execution_attempt_id": None,
+            "decided_at": str(normalized["decided_at"]),
+        },
+        execution_intent=current_execution_intent,
+        created_event=current_created_event,
     )
-    admission = engine_facts.upsert_trade_admission(
-        admission_decision_id=str(normalized["admission_decision_id"]),
-        execution_intent_id=execution_intent_id,
-        trade_signal_id=trade_signal_id,
-        trade_decision_id=trade_decision_id,
-        position_id=None,
-        admission_kind=str(normalized["admission_kind"]),
-        admission_state=str(normalized["admission_state"]),
-        account_id=None,
-        session_date=market_date,
-        requested_quantity=normalized.get("requested_quantity"),
-        requested_notional=normalized.get("requested_notional"),
-        max_loss=normalized.get("max_loss"),
-        policy_snapshot=dict(normalized.get("policy_snapshot") or {}),
-        capability_snapshot=dict(normalized.get("capability_snapshot") or {}),
-        metrics=dict(normalized.get("metrics") or {}),
-        reason_codes=list(normalized.get("reason_codes") or []),
-        blockers=list(normalized.get("blockers") or []),
-        evidence=dict(normalized.get("evidence") or {}),
-        note=normalized.get("message") or normalized.get("reason"),
-        execution_attempt_id=None,
-        decided_at=str(normalized["decided_at"]),
-    )
+    admission = dict(handoff["admission"])
     return {
-        **dict(normalized),
-        "admission_decision_id": admission["admission_decision_id"],
-        "execution_intent_id": execution_intent_id,
+        "admission": {
+            **dict(normalized),
+            "admission_decision_id": admission["admission_decision_id"],
+            "execution_intent_id": execution_intent_id,
+        },
+        "execution_intent": handoff.get("execution_intent"),
     }
 
 
@@ -816,8 +863,8 @@ def _run_trading_strategy_entry(
                 "leg_count": len(signal_legs),
                 "order_class": signal_order_payload.get("order_class") or ("mleg" if len(signal_legs) > 1 else "single"),
             }
-        selected_admission = _persist_trade_admission(
-            engine_facts=engine_facts,
+        handoff = _persist_trade_admission_handoff(
+            execution_store=execution_store,
             runtime=runtime,
             market_date=resolved_market_date,
             policy_ref=policy_ref,
@@ -828,42 +875,18 @@ def _run_trading_strategy_entry(
             admission_snapshot=selected_execution_admission,
             signal=signal,
             expires_at=intent_expires_at,
+            execution_intent_payload=intent_payload,
+            execution_intent_created_event_payload=intent_created_event_payload,
         )
+        selected_admission = dict(handoff["admission"])
         admissions.append(selected_admission)
         if not admission_allows_attempt(selected_admission):
             selected_decision = decision
             selected_signal = signal
             continue
-        if intent_payload is None or intent_created_event_payload is None:
-            raise RuntimeError("Approved admission is missing a prebuilt execution intent payload.")
-        intent_payload = {
-            **intent_payload,
-            "admission_decision_id": selected_admission["admission_decision_id"],
-            "execution_admission": selected_admission,
-        }
-        intent_created_event_payload = {
-            **intent_created_event_payload,
-            "admission_decision_id": selected_admission["admission_decision_id"],
-        }
-        selected_intent = issue_pending_execution_intent(
-            execution_store,
-            execution_intent_id=execution_intent_id,
-            trading_strategy_id=runtime.trading_strategy_id,
-            trade_signal_id=trade_signal_id,
-            trade_decision_id=str(decision["trade_decision_id"]),
-            strategy_position_id=None,
-            execution_attempt_id=None,
-            action_type="open",
-            slot_key=slot_key,
-            claim_token=None,
-            policy_ref=policy_ref,
-            config_hash=runtime.config_hash,
-            state="pending",
-            expires_at=intent_expires_at,
-            superseded_by_id=None,
-            payload=intent_payload,
-            created_event_payload=intent_created_event_payload,
-        )
+        selected_intent = handoff.get("execution_intent")
+        if not isinstance(selected_intent, dict):
+            raise RuntimeError("Approved admission handoff did not materialize a current execution intent.")
         selected_decision = decision
         selected_signal = signal
     if selected_intent is not None:

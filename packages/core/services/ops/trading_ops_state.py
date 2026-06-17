@@ -163,6 +163,8 @@ class _ExecutionProjection:
     summarized_open_execution_attempts: list[dict[str, Any]]
     stale_open_execution_count: int
     submit_unknown_execution_count: int
+    approved_admission_intent_gap_count: int
+    approved_admission_intent_gap_ids: list[str]
     capacity_blocked_underlyings: list[str]
     execution_health_status: str
     statuses: tuple[str, ...]
@@ -2139,6 +2141,7 @@ def _project_engine(
 def _project_execution(
     *,
     storage: Any,
+    market_date: str,
     now: datetime,
 ) -> _ExecutionProjection:
     execution_store = storage.execution
@@ -2189,7 +2192,40 @@ def _project_execution(
             if bool(row.get("blocks_capacity")) and as_text(row.get("underlying_symbol"))
         }
     )
-    execution_health_status = "degraded" if stale_open_execution_count or submit_unknown_execution_count else "healthy"
+    if execution_store.schema_has_tables(
+        "trade_admissions",
+        "trade_decisions",
+        "trade_execution_intents",
+        "execution_intents",
+    ):
+        approved_admission_intent_gaps = execution_store.list_approved_admissions_missing_execution_intents(
+            session_date=market_date,
+            limit=25,
+        )
+    else:
+        approved_admission_intent_gaps = []
+    approved_admission_intent_gap_ids = [
+        str(row["admission"]["execution_intent_id"])
+        for row in approved_admission_intent_gaps
+        if isinstance(row.get("admission"), dict) and as_text(row["admission"].get("execution_intent_id")) is not None
+    ]
+    approved_admission_intent_gap_count = len(approved_admission_intent_gaps)
+    execution_health_status = (
+        "degraded"
+        if stale_open_execution_count or submit_unknown_execution_count or approved_admission_intent_gap_count
+        else "healthy"
+    )
+    if approved_admission_intent_gap_count:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="high",
+                code="approved_admission_intent_missing",
+                message=(
+                    f"{approved_admission_intent_gap_count} approved admission(s) are missing current execution intent rows."
+                ),
+            )
+        )
     if submit_unknown_execution_count:
         statuses.append("degraded")
         attention.append(
@@ -2214,6 +2250,8 @@ def _project_execution(
         summarized_open_execution_attempts=summarized_open_execution_attempts,
         stale_open_execution_count=stale_open_execution_count,
         submit_unknown_execution_count=submit_unknown_execution_count,
+        approved_admission_intent_gap_count=approved_admission_intent_gap_count,
+        approved_admission_intent_gap_ids=approved_admission_intent_gap_ids,
         capacity_blocked_underlyings=capacity_blocked_underlyings,
         execution_health_status=execution_health_status,
         statuses=tuple(statuses),
@@ -2514,7 +2552,11 @@ def build_trading_ops_state(
         market_date=market_control.market_date,
         now=now,
     )
-    execution = _project_execution(storage=storage, now=now)
+    execution = _project_execution(
+        storage=storage,
+        market_date=market_control.market_date,
+        now=now,
+    )
     positions = _project_positions(
         storage=storage,
         now=now,
@@ -2650,6 +2692,7 @@ def build_trading_ops_state(
         "unrealized_pnl": primary_position_state.get("unrealized_pnl"),
         "net_pnl": primary_position_state.get("net_pnl"),
         "execution_health_status": execution.execution_health_status,
+        "approved_admission_intent_gap_count": execution.approved_admission_intent_gap_count,
         "risk_breach_count": positions.risk_breach_count,
         "reconciliation_mismatch_count": positions.reconciliation_mismatch_count,
         "mark_health_status": positions.mark_health_status,
@@ -2725,6 +2768,8 @@ def build_trading_ops_state(
             "status": execution.execution_health_status,
             "stale_open_execution_count": execution.stale_open_execution_count,
             "submit_unknown_execution_count": execution.submit_unknown_execution_count,
+            "approved_admission_intent_gap_count": execution.approved_admission_intent_gap_count,
+            "approved_admission_intent_gap_ids": execution.approved_admission_intent_gap_ids,
             "capacity_blocked_underlying_count": len(execution.capacity_blocked_underlyings),
             "capacity_blocked_underlyings": execution.capacity_blocked_underlyings,
         },
