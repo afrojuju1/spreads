@@ -16,6 +16,7 @@ Use these entrypoints:
 - [Strategy Sourcing, Candidate Scanning, And Capture Architecture](./2026-06-03_strategy_sourcing_scanning_capture_architecture.md) for the target source resolver, candidate-build, strategy-entry, and capture-controller direction that replaces discovery-run ownership
 - [Trading Engine Inspiration Repos](./2026-06-08_trading_engine_inspiration_repos.md) for the small set of external repos/frameworks Spreads should keep borrowing boundaries and patterns from without embedding their runtimes
 - [Trading Engine Feature Matrix](./2026-06-13_trading_engine_feature_matrix.md) for the current feature inventory, inspiration-repo parity, and backend/runtime roadmap sequence behind `spr-9v2`
+- [BacktestEngine Architecture](./2026-06-17_backtest_engine_architecture.md) for the target `services/backtest/` replacement of the current stored-facts historical evaluator, including modes, storage/artifact ownership, fidelity labels, library choices, and the implementation bead sequence
 - [Entry Selection Engine End Goal Architecture](./2026-06-08_entry_selection_engine_end_goal.md) for the clean-sheet target architecture plus the 2026-06-08 implementation checkpoint for the deterministic, account-agnostic option-entry selection engine and its admission/execution boundaries
 - [Entry Quality Pipeline Refactor Plan](./2026-06-08_entry_quality_pipeline_refactor.md) for the centralized `quality_profile` pipeline; `momentum_long_calls` uses the live-validated `momentum_long_call_v1` profile
 - [Strategy Catalog And Profile Contract](./2026-06-11_strategy_archetype_profile_contract.md) for the implemented authored strategy config shape under `packages/config/strategies/catalog.yaml` and `profiles.yaml`
@@ -51,6 +52,7 @@ Use these entrypoints:
 Implementation and evaluation companion:
 
 - No canonical historical-evaluation CLI is currently shipped.
+- The active target backtest architecture is [BacktestEngine Architecture](./2026-06-17_backtest_engine_architecture.md). It names the new backend owner `services/backtest/` while preserving the current ticker-source/candidate/signal/decision/admission/intent/attempt/position/close model.
 - For offline selection research or policy tuning, validate the current strategy config and stored ticker-source/candidate/signal/decision facts first.
 - If a historical evaluator or policy comparison tool is needed, create/update a bead and design it against the current ticker-source/candidate/signal/decision model instead of reviving removed `replay`, `audit`, `backtest`, or `analyze` wrappers.
 
