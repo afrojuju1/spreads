@@ -190,6 +190,149 @@ def _backfill_strategy_position_links(execution_store: Any, *, limit: int) -> di
     return {"linked": linked, "results": results[:25]}
 
 
+def _backfill_missing_approved_admission_intents(
+    execution_store: Any,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    reason = "approved_admission_missing_current_intent"
+    repaired = 0
+    skipped = 0
+    results: list[dict[str, Any]] = []
+    rows = execution_store.list_approved_admissions_missing_execution_intents(limit=max(int(limit), 1))
+    for row in rows:
+        admission = dict(row.get("admission") or {})
+        decision = dict(row.get("decision") or {})
+        legacy_intent = dict(row.get("legacy_intent") or {})
+        admission_evidence = dict(admission.get("evidence") or {})
+        legacy_payload = dict(legacy_intent.get("payload") or {})
+        execution_intent_id = as_text(admission.get("execution_intent_id")) or as_text(
+            admission_evidence.get("execution_intent_id")
+        )
+        trading_strategy_id = (
+            as_text(decision.get("trading_strategy_id"))
+            or as_text(legacy_intent.get("trading_strategy_id"))
+            or as_text(admission_evidence.get("trading_strategy_id"))
+        )
+        slot_key = (
+            as_text(legacy_intent.get("slot_key"))
+            or as_text(admission_evidence.get("slot_key"))
+            or (
+                f"entry:{trading_strategy_id}:{as_text(admission_evidence.get('underlying_symbol'))}"
+                if trading_strategy_id is not None and as_text(admission_evidence.get("underlying_symbol")) is not None
+                else None
+            )
+        )
+        if execution_intent_id is None or trading_strategy_id is None or slot_key is None:
+            skipped += 1
+            results.append(
+                {
+                    "status": "skipped",
+                    "reason": "missing_required_backfill_identity",
+                    "execution_intent_id": execution_intent_id,
+                    "admission_decision_id": admission.get("admission_decision_id"),
+                }
+            )
+            continue
+        if execution_store.get_execution_intent(execution_intent_id) is not None:
+            skipped += 1
+            results.append(
+                {
+                    "status": "skipped",
+                    "reason": "execution_intent_already_materialized",
+                    "execution_intent_id": execution_intent_id,
+                    "admission_decision_id": admission.get("admission_decision_id"),
+                }
+            )
+            continue
+
+        now = utc_now_iso()
+        created_at = as_text(legacy_intent.get("created_at")) or as_text(admission.get("decided_at")) or now
+        original_expires_at = as_text(legacy_intent.get("expires_at"))
+        original_expires_at_dt = parse_datetime(original_expires_at)
+        expires_at = original_expires_at
+        if original_expires_at_dt is None or original_expires_at_dt > datetime.now(UTC):
+            expires_at = now
+        policy_ref = dict(legacy_intent.get("policy_snapshot") or admission.get("policy_snapshot") or {})
+        if not policy_ref and isinstance(decision.get("evidence"), dict):
+            policy_ref = dict(decision["evidence"].get("policy_ref") or {})
+        payload = {
+            **legacy_payload,
+            "dispatch_status": "expired",
+            "expire_reason": reason,
+            "backfill_reason": reason,
+            "backfilled_at": now,
+            "admission_decision_id": admission.get("admission_decision_id"),
+            "trade_signal_id": admission.get("trade_signal_id") or decision.get("trade_signal_id"),
+            "trade_decision_id": admission.get("trade_decision_id") or decision.get("trade_decision_id"),
+            "underlying_symbol": admission_evidence.get("underlying_symbol") or legacy_payload.get("underlying_symbol"),
+            "candidate_identity": admission_evidence.get("candidate_identity") or legacy_payload.get("candidate_identity"),
+            "execution_admission": admission,
+            "original_legacy_intent_state": legacy_intent.get("intent_state"),
+            "original_legacy_expires_at": original_expires_at,
+        }
+        pending_intent = execution_store.upsert_execution_intent(
+            execution_intent_id=execution_intent_id,
+            trading_strategy_id=trading_strategy_id,
+            trade_signal_id=as_text(admission.get("trade_signal_id") or decision.get("trade_signal_id")),
+            trade_decision_id=as_text(admission.get("trade_decision_id") or decision.get("trade_decision_id")),
+            strategy_position_id=None,
+            execution_attempt_id=None,
+            action_type=as_text(legacy_intent.get("intent_kind")) or "open",
+            slot_key=slot_key,
+            claim_token=None,
+            policy_ref=policy_ref,
+            config_hash=as_text(decision.get("config_hash")) or as_text(legacy_intent.get("config_hash")) or "",
+            state="pending",
+            expires_at=expires_at,
+            superseded_by_id=None,
+            payload=payload,
+            created_at=created_at,
+            updated_at=now,
+        )
+        _append_event(
+            execution_store,
+            execution_intent_id=execution_intent_id,
+            event_type="created",
+            payload={
+                "reason": reason,
+                "source": "approved_admission_backfill",
+                "admission_decision_id": admission.get("admission_decision_id"),
+            },
+        )
+        expired_intent = _update_intent(
+            execution_store,
+            dict(pending_intent),
+            state="expired",
+            payload_updates={
+                "dispatch_status": "expired",
+                "expire_reason": reason,
+                "backfilled_at": now,
+            },
+            updated_at=now,
+        )
+        _append_event(
+            execution_store,
+            execution_intent_id=execution_intent_id,
+            event_type="expired",
+            payload={
+                "reason": reason,
+                "source": "approved_admission_backfill",
+                "admission_decision_id": admission.get("admission_decision_id"),
+            },
+        )
+        repaired += 1
+        results.append(
+            {
+                "status": expired_intent.get("state"),
+                "execution_intent_id": execution_intent_id,
+                "admission_decision_id": admission.get("admission_decision_id"),
+                "reason": reason,
+            }
+        )
+    return {"repaired": repaired, "skipped": skipped, "results": results[:25]}
+
+
 def _active_trading_strategy_ids() -> set[str]:
     return set(load_active_trading_strategies().keys())
 

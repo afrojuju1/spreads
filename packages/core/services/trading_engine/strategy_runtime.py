@@ -756,6 +756,66 @@ def _run_trading_strategy_entry(
             minutes=int(open_execution_policy["submit_ttl_minutes"]),
             minimum_seconds=60,
         )
+        intent_payload: dict[str, Any] | None = None
+        intent_created_event_payload: dict[str, Any] | None = None
+        if admission_allows_attempt(selected_execution_admission):
+            signal_execution_shape = dict(signal.get("execution_shape") or {})
+            signal_order_payload = dict(signal.get("order_payload") or signal_execution_shape.get("order_payload") or {})
+            signal_legs = list(signal.get("legs") or signal_execution_shape.get("legs") or [])
+            signal_economics = dict(signal.get("economics") or {})
+            intent_limit_price = (
+                signal_order_payload.get("limit_price")
+                or signal_economics.get("midpoint_credit")
+                or signal_economics.get("midpoint_value")
+                or signal.get("limit_price")
+            )
+            requested_quantity = coerce_int(selected_execution_admission.get("requested_quantity") or 1)
+            if requested_quantity is None or requested_quantity <= 0:
+                requested_quantity = 1
+            admissible_quantity = coerce_int(selected_execution_admission.get("admissible_quantity"))
+            if admissible_quantity is None or admissible_quantity <= 0:
+                admissible_quantity = requested_quantity
+            intent_quantity = min(requested_quantity, admissible_quantity)
+            open_execution_policy = runtime.strategy.execution.execution_policy_for_action(
+                "open",
+                quantity=intent_quantity,
+            )
+            open_repricing_policy = dict(open_execution_policy.get("repricing_policy") or {})
+            open_executor_profile = runtime.strategy.execution.executor_profile_snapshot("open")
+            intent_payload = {
+                "trade_signal_id": trade_signal_id,
+                "trade_decision_id": decision["trade_decision_id"],
+                "underlying_symbol": signal.get("underlying_symbol"),
+                "trade_structure": runtime.trade_structure,
+                "strategy_family": runtime.trade_structure,
+                "candidate_identity": candidate_identity,
+                "legs": signal_legs,
+                "execution_shape": signal_execution_shape,
+                "order_payload": signal_order_payload,
+                "quantity": intent_quantity,
+                "limit_price": intent_limit_price,
+                "execution_mode": runtime.strategy.execution.mode,
+                "approval_mode": runtime.strategy.execution.approval,
+                "execution_runtime": runtime.strategy.execution.runtime,
+                "executor_profile": open_executor_profile,
+                "execution_policy": open_execution_policy,
+                "repricing_policy": open_repricing_policy,
+                "validation_provenance": NATURAL_ENTRY_PROVENANCE,
+                "exit_policy": resolve_exit_policy_snapshot(
+                    session_date=resolved_market_date,
+                    payload=runtime.strategy.management_policy,
+                ),
+            }
+            intent_created_event_payload = {
+                "trade_signal_id": trade_signal_id,
+                "trade_decision_id": decision["trade_decision_id"],
+                "slot_key": slot_key,
+                "execution_runtime": runtime.strategy.execution.runtime,
+                "executor_profile_id": open_executor_profile.get("executor_profile_id"),
+                "submit_ttl_minutes": open_execution_policy.get("submit_ttl_minutes"),
+                "leg_count": len(signal_legs),
+                "order_class": signal_order_payload.get("order_class") or ("mleg" if len(signal_legs) > 1 else "single"),
+            }
         selected_admission = _persist_trade_admission(
             engine_facts=engine_facts,
             runtime=runtime,
@@ -774,36 +834,17 @@ def _run_trading_strategy_entry(
             selected_decision = decision
             selected_signal = signal
             continue
-        signal_execution_shape = dict(signal.get("execution_shape") or {})
-        signal_order_payload = dict(signal.get("order_payload") or signal_execution_shape.get("order_payload") or {})
-        signal_legs = list(signal.get("legs") or signal_execution_shape.get("legs") or [])
-        signal_economics = dict(signal.get("economics") or {})
-        intent_limit_price = (
-            signal_order_payload.get("limit_price")
-            or signal_economics.get("midpoint_credit")
-            or signal_economics.get("midpoint_value")
-            or signal.get("limit_price")
-        )
-        requested_quantity = coerce_int(
-            (
-                selected_admission.get("requested_quantity")
-                or signal_execution_shape.get("quantity")
-                or signal_order_payload.get("qty")
-                or signal_order_payload.get("quantity")
-            )
-        )
-        if requested_quantity is None or requested_quantity <= 0:
-            requested_quantity = 1
-        admissible_quantity = coerce_int(selected_admission.get("admissible_quantity"))
-        if admissible_quantity is None or admissible_quantity <= 0:
-            admissible_quantity = requested_quantity
-        intent_quantity = min(requested_quantity, admissible_quantity)
-        open_execution_policy = runtime.strategy.execution.execution_policy_for_action(
-            "open",
-            quantity=intent_quantity,
-        )
-        open_repricing_policy = dict(open_execution_policy.get("repricing_policy") or {})
-        open_executor_profile = runtime.strategy.execution.executor_profile_snapshot("open")
+        if intent_payload is None or intent_created_event_payload is None:
+            raise RuntimeError("Approved admission is missing a prebuilt execution intent payload.")
+        intent_payload = {
+            **intent_payload,
+            "admission_decision_id": selected_admission["admission_decision_id"],
+            "execution_admission": selected_admission,
+        }
+        intent_created_event_payload = {
+            **intent_created_event_payload,
+            "admission_decision_id": selected_admission["admission_decision_id"],
+        }
         selected_intent = issue_pending_execution_intent(
             execution_store,
             execution_intent_id=execution_intent_id,
@@ -820,43 +861,8 @@ def _run_trading_strategy_entry(
             state="pending",
             expires_at=intent_expires_at,
             superseded_by_id=None,
-            payload={
-                "trade_signal_id": trade_signal_id,
-                "trade_decision_id": decision["trade_decision_id"],
-                "admission_decision_id": selected_admission["admission_decision_id"],
-                "underlying_symbol": signal.get("underlying_symbol"),
-                "trade_structure": runtime.trade_structure,
-                "strategy_family": runtime.trade_structure,
-                "candidate_identity": candidate_identity,
-                "legs": signal_legs,
-                "execution_shape": signal_execution_shape,
-                "order_payload": signal_order_payload,
-                "quantity": intent_quantity,
-                "limit_price": intent_limit_price,
-                "execution_mode": runtime.strategy.execution.mode,
-                "approval_mode": runtime.strategy.execution.approval,
-                "execution_runtime": runtime.strategy.execution.runtime,
-                "executor_profile": open_executor_profile,
-                "execution_policy": open_execution_policy,
-                "repricing_policy": open_repricing_policy,
-                "validation_provenance": NATURAL_ENTRY_PROVENANCE,
-                "execution_admission": selected_admission,
-                "exit_policy": resolve_exit_policy_snapshot(
-                    session_date=resolved_market_date,
-                    payload=runtime.strategy.management_policy,
-                ),
-            },
-            created_event_payload={
-                "trade_signal_id": trade_signal_id,
-                "trade_decision_id": decision["trade_decision_id"],
-                "admission_decision_id": selected_admission["admission_decision_id"],
-                "slot_key": slot_key,
-                "execution_runtime": runtime.strategy.execution.runtime,
-                "executor_profile_id": open_executor_profile.get("executor_profile_id"),
-                "submit_ttl_minutes": open_execution_policy.get("submit_ttl_minutes"),
-                "leg_count": len(signal_legs),
-                "order_class": signal_order_payload.get("order_class") or ("mleg" if len(signal_legs) > 1 else "single"),
-            },
+            payload=intent_payload,
+            created_event_payload=intent_created_event_payload,
         )
         selected_decision = decision
         selected_signal = signal

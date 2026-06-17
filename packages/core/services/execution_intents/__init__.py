@@ -30,6 +30,7 @@ from core.storage.serializers import parse_datetime
 
 from .maintenance import (
     _auto_execution_gate,
+    _backfill_missing_approved_admission_intents,
     _backfill_strategy_position_links,
     _cleanup_slot_conflicts,
     _cleanup_inactive_strategy_intents,
@@ -839,6 +840,10 @@ def dispatch_pending_execution_intents(
         execution_store,
         limit=batch_limit,
     )
+    admission_intent_backfill = _backfill_missing_approved_admission_intents(
+        execution_store,
+        limit=batch_limit,
+    )
     slot_cleanup = _cleanup_slot_conflicts(
         execution_store,
         limit=batch_limit,
@@ -967,6 +972,7 @@ def dispatch_pending_execution_intents(
         "intent_owner_cleanup": intent_owner_cleanup,
         "intent_cleanup": intent_cleanup,
         "position_linkage": position_linkage,
+        "admission_intent_backfill": admission_intent_backfill,
         "slot_cleanup": slot_cleanup,
         "active_management": active_management,
         "reviewed": reviewed,

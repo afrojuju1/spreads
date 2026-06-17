@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,11 @@ from core.storage.execution_models import (
     ExecutionOrderModel,
     PortfolioPositionModel,
     PositionCloseModel,
+)
+from core.storage.lifecycle_models import (
+    TradeAdmissionModel,
+    TradeDecisionModel,
+    TradeExecutionIntentModel,
 )
 from core.storage.records import (
     ExecutionAttemptRecord,
@@ -456,6 +462,47 @@ class ExecutionRepository(RepositoryBase):
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
+
+    def list_approved_admissions_missing_execution_intents(
+        self,
+        *,
+        session_date: str | date | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        statement = (
+            select(TradeAdmissionModel, TradeDecisionModel, TradeExecutionIntentModel)
+            .outerjoin(
+                TradeDecisionModel,
+                TradeDecisionModel.trade_decision_id == TradeAdmissionModel.trade_decision_id,
+            )
+            .outerjoin(
+                TradeExecutionIntentModel,
+                TradeExecutionIntentModel.execution_intent_id == TradeAdmissionModel.execution_intent_id,
+            )
+            .outerjoin(
+                ExecutionIntentModel,
+                ExecutionIntentModel.execution_intent_id == TradeAdmissionModel.execution_intent_id,
+            )
+            .where(TradeAdmissionModel.admission_state == "approved")
+            .where(ExecutionIntentModel.execution_intent_id.is_(None))
+            .order_by(
+                TradeAdmissionModel.decided_at.asc(),
+                TradeAdmissionModel.admission_decision_id.asc(),
+            )
+            .limit(max(int(limit), 1))
+        )
+        if session_date is not None:
+            statement = statement.where(TradeAdmissionModel.session_date == parse_date(session_date))
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return [
+            {
+                "admission": self.row(admission),
+                "decision": None if decision is None else self.row(decision),
+                "legacy_intent": None if legacy_intent is None else self.row(legacy_intent),
+            }
+            for admission, decision, legacy_intent in rows
+        ]
 
     def append_execution_intent_event(
         self,
