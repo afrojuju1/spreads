@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from core.runtime.config import default_database_url
 from core.storage.alert_repository import AlertRepository
+from core.storage.backtest_repository import BacktestRepository
 from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
 from core.storage.capabilities import StorageCapabilities
@@ -38,6 +39,10 @@ class StorageContext:
     @property
     def alerts(self) -> AlertRepository:
         return self._build_repository("alerts", AlertRepository)  # type: ignore[return-value]
+
+    @property
+    def backtests(self) -> BacktestRepository:
+        return self._build_repository("backtests", BacktestRepository)  # type: ignore[return-value]
 
     @property
     def broker(self) -> BrokerRepository:

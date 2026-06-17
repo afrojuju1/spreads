@@ -6,6 +6,7 @@ import os
 DEFAULT_POSTGRES_URL = "postgresql://spreads:spreads@localhost:55432/spreads"
 DEFAULT_REDIS_URL = "redis://localhost:56379/0"
 DEFAULT_CLICKHOUSE_URL = "http://spreads:spreads@localhost:58123/spreads"
+DEFAULT_BACKTEST_ARTIFACT_ROOT = "outputs/backtest_runs"
 
 
 def normalize_database_url(url: str) -> str:
@@ -28,6 +29,10 @@ def default_redis_url() -> str:
 
 def default_clickhouse_url() -> str:
     return os.environ.get("SPREADS_CLICKHOUSE_URL") or os.environ.get("CLICKHOUSE_URL") or DEFAULT_CLICKHOUSE_URL
+
+
+def default_backtest_artifact_root() -> str:
+    return os.environ.get("SPREADS_BACKTEST_ARTIFACT_ROOT") or DEFAULT_BACKTEST_ARTIFACT_ROOT
 
 
 def default_alpha_vantage_api_key() -> str | None:

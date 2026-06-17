@@ -11,8 +11,8 @@ from sqlalchemy import and_, or_, select
 from core.db.decorators import with_storage
 from core.money import money_float, money_sum_float
 from core.services.ops.strategy_evidence_ledger import build_strategy_evidence_ledger
+from core.services.backtest.strategy_scope import load_backtest_strategy_scope, strategy_profile
 from core.services.trading_strategy_runtime_models import TradingStrategyConfig
-from core.services.trading_strategies import load_active_trading_strategies, load_trading_strategies
 from core.storage.engine_models import TradeCandidateModel
 from core.storage.execution_models import ExecutionAttemptModel, PortfolioPositionModel
 from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionModel, TradeSignalModel
@@ -59,54 +59,6 @@ def _normalize_window(start_date: str | date | None, end_date: str | date | None
         start_at=datetime.combine(start_day, datetime.min.time(), tzinfo=UTC),
         end_at=datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tzinfo=UTC),
     )
-
-
-def _strategy_quality_profile(strategy: TradingStrategyConfig) -> str | None:
-    if strategy.entry is None:
-        return None
-    return strategy.entry.quality.profile_id
-
-
-def _strategy_variant_id(strategy: TradingStrategyConfig) -> str:
-    return f"{strategy.trading_strategy_id}:{strategy.config_hash[:12]}"
-
-
-def _strategy_profile(strategy: TradingStrategyConfig) -> dict[str, Any]:
-    return {
-        "variant_id": _strategy_variant_id(strategy),
-        "trading_strategy_id": strategy.trading_strategy_id,
-        "name": strategy.name,
-        "trade_structure": strategy.trade_structure,
-        "quality_profile": _strategy_quality_profile(strategy),
-        "source_type": strategy.source.kind,
-        "source_id": strategy.source.ref,
-        "execution_mode": strategy.execution.mode,
-        "execution_runtime": strategy.execution.runtime,
-        "approval_mode": strategy.execution.approval,
-        "executor_profile_id": strategy.execution.executor_profile_id,
-        "config_hash": strategy.config_hash,
-        "enabled": strategy.enabled,
-        "paused": strategy.paused,
-    }
-
-
-def _requested_strategies(strategy_ids: Iterable[str] | None) -> tuple[str, ...] | None:
-    if strategy_ids is None:
-        return None
-    values = (strategy_ids,) if isinstance(strategy_ids, str) else strategy_ids
-    normalized = tuple(dict.fromkeys(str(value).strip() for value in values if str(value or "").strip()))
-    return normalized or None
-
-
-def _load_strategy_scope(strategy_ids: Iterable[str] | None) -> dict[str, TradingStrategyConfig]:
-    requested = _requested_strategies(strategy_ids)
-    strategies = load_active_trading_strategies() if requested is None else load_trading_strategies()
-    if requested is None:
-        return dict(strategies)
-    missing = [strategy_id for strategy_id in requested if strategy_id not in strategies]
-    if missing:
-        raise ValueError(f"Unknown trading_strategy_id(s): {', '.join(missing)}")
-    return {strategy_id: strategies[strategy_id] for strategy_id in requested}
 
 
 def _merge_counts(counter: Counter[str], value: Any) -> None:
@@ -294,7 +246,7 @@ def _aggregate_strategy_days(
     unrealized_pnl = _sum_money(daily_rows, "pnl", "unrealized_pnl")
 
     aggregate: dict[str, Any] = {
-        **_strategy_profile(strategy),
+        **strategy_profile(strategy),
         "market_dates": list(market_dates),
         "observed_day_count": len(daily_rows),
         "source_evidence": {
@@ -805,7 +757,7 @@ def build_stored_facts_backtest(
 
     del db_target
     window = _normalize_window(start_date, end_date, max_days=max_days)
-    strategies = _load_strategy_scope(strategy_ids)
+    strategies = load_backtest_strategy_scope(strategy_ids)
     strategy_id_tuple = tuple(strategies)
     daily_ledgers, rows_by_strategy, schema = _daily_ledgers_by_strategy(
         storage=storage,

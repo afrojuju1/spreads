@@ -7,6 +7,7 @@ from .db import DEFAULT_POSTGRES_URL, default_database_url
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "AlertRepository": (".alert_repository", "AlertRepository"),
+    "BacktestRepository": (".backtest_repository", "BacktestRepository"),
     "BrokerRepository": (".broker_repository", "BrokerRepository"),
     "CaptureRepository": (".capture_repository", "CaptureRepository"),
     "ControlRepository": (".control_repository", "ControlRepository"),
@@ -19,6 +20,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "StorageContext": (".context", "StorageContext"),
     "TradingStore": (".trading_store", "TradingStore"),
     "build_alert_repository": (".factory", "build_alert_repository"),
+    "build_backtest_repository": (".factory", "build_backtest_repository"),
     "build_broker_repository": (".factory", "build_broker_repository"),
     "build_capture_repository": (".factory", "build_capture_repository"),
     "build_control_repository": (".factory", "build_control_repository"),

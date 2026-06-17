@@ -228,6 +228,8 @@ Postgres owns durable run metadata and compact summaries:
 - `backtest_artifacts`
 - `backtest_variant_results`
 
+Implemented in `20260617_0061`: the first stored-facts mode writes run state, request/config snapshots, summary/fidelity, result artifact pointers, and one current-catalog variant row per strategy. These tables are isolated backtest state; backtest runs must not write live candidate, decision, execution, or position facts.
+
 Initial table sketch:
 
 ```text
@@ -302,6 +304,8 @@ Large per-run outputs should be stored outside Postgres:
 - equity curve
 
 The artifact index in Postgres should point to these files.
+
+The default local artifact root is `outputs/backtest_runs`, which is ignored by git. A request can override the root through `BacktestRequest.artifact_root`.
 
 ## Historical Data Providers
 
@@ -441,9 +445,9 @@ flowchart TD
 
 ## Implementation Order
 
-1. Create `services/backtest/` and move stored-facts evaluation into it.
-2. Add strict backtest DomainModels and `BacktestEngine`.
-3. Add experiment and artifact persistence.
+1. Done: create `services/backtest/` and move stored-facts evaluation into it.
+2. Done: add strict backtest DomainModels and `BacktestEngine`.
+3. Done: add run, variant, and artifact persistence for stored-facts mode.
 4. Add `HistoricalMarketSliceProvider`.
 5. Add `strategy_rerun` mode.
 6. Add `execution_simulation` mode.

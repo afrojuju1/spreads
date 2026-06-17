@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 
 from core.storage import alert_models as storage_alert_models  # noqa: F401
+from core.storage import backtest_models as storage_backtest_models  # noqa: F401
 from core.storage import broker_models as storage_broker_models  # noqa: F401
 from core.storage import calendar_models as storage_calendar_models  # noqa: F401
 from core.storage import capture_models as storage_capture_models  # noqa: F401

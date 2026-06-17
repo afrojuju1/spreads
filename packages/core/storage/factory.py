@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from core.runtime.config import DEFAULT_POSTGRES_URL, default_clickhouse_url, default_database_url
 from core.storage.alert_repository import AlertRepository
+from core.storage.backtest_repository import BacktestRepository
 from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
 from core.storage.control_repository import ControlRepository
@@ -39,6 +40,13 @@ def build_alert_repository(path_or_url: str | None = None, *, context: StorageCo
         return context.alerts
     value = _resolve_postgres_url(path_or_url)
     return AlertRepository(value)
+
+
+def build_backtest_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.backtests
+    value = _resolve_postgres_url(path_or_url)
+    return BacktestRepository(value)
 
 
 def build_broker_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
