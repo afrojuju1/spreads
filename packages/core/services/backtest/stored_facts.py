@@ -33,7 +33,7 @@ _OPTION_SYMBOL_KEYS = {
 
 
 @dataclass(frozen=True, slots=True)
-class HistoricalEvaluationWindow:
+class BacktestWindow:
     start_date: date
     end_date: date
     market_dates: tuple[str, ...]
@@ -41,18 +41,18 @@ class HistoricalEvaluationWindow:
     end_at: datetime
 
 
-def _normalize_window(start_date: str | date | None, end_date: str | date | None, *, max_days: int) -> HistoricalEvaluationWindow:
+def _normalize_window(start_date: str | date | None, end_date: str | date | None, *, max_days: int) -> BacktestWindow:
     if start_date is None:
-        raise ValueError("start_date is required for a bounded historical evaluation")
+        raise ValueError("start_date is required for a bounded backtest")
     start_day = parse_date(start_date)
     end_day = parse_date(end_date or start_day)
     if end_day < start_day:
         raise ValueError("end_date must be on or after start_date")
     day_count = (end_day - start_day).days + 1
     if day_count > max(int(max_days), 1):
-        raise ValueError(f"historical evaluation window is {day_count} days; max_days is {max_days}")
+        raise ValueError(f"backtest window is {day_count} days; max_days is {max_days}")
     market_dates = tuple((start_day + timedelta(days=offset)).isoformat() for offset in range(day_count))
-    return HistoricalEvaluationWindow(
+    return BacktestWindow(
         start_date=start_day,
         end_date=end_day,
         market_dates=market_dates,
@@ -434,7 +434,7 @@ def _collect_option_symbols_by_strategy(
     *,
     storage: Any,
     strategy_ids: tuple[str, ...],
-    window: HistoricalEvaluationWindow,
+    window: BacktestWindow,
     per_query_limit: int,
 ) -> dict[str, set[str]]:
     symbols_by_strategy = {strategy_id: set() for strategy_id in strategy_ids}
@@ -543,7 +543,7 @@ def _market_data_coverage_for_symbols(
     *,
     storage: Any,
     symbols: list[str],
-    window: HistoricalEvaluationWindow,
+    window: BacktestWindow,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     if not symbols:
         return (
@@ -621,7 +621,7 @@ def _market_data_fidelity_by_strategy(
     *,
     storage: Any,
     strategy_ids: tuple[str, ...],
-    window: HistoricalEvaluationWindow,
+    window: BacktestWindow,
     symbol_limit: int,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     per_query_limit = max(int(symbol_limit) * 10, 500)
@@ -670,7 +670,7 @@ def _risk_context_by_strategy(
     *,
     storage: Any,
     strategy_ids: tuple[str, ...],
-    window: HistoricalEvaluationWindow,
+    window: BacktestWindow,
 ) -> dict[str, dict[str, Any]]:
     payload = {
         strategy_id: {
@@ -785,7 +785,7 @@ def _comparison_payload(strategy_results: list[dict[str, Any]]) -> dict[str, Any
 
 
 @with_storage()
-def build_historical_strategy_evaluation(
+def build_stored_facts_backtest(
     *,
     start_date: str | date | None,
     end_date: str | date | None = None,
@@ -795,12 +795,12 @@ def build_historical_strategy_evaluation(
     db_target: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    """Evaluate a bounded historical window using current Spreads fact models.
+    """Evaluate a bounded backtest window using stored Spreads fact models.
 
-    This first primitive is intentionally fact-backed rather than a separate
-    simulator. It compares current catalog strategy/profile/source variants
-    through persisted source, candidate, signal, decision, admission, execution,
-    and position facts, then labels market-data and lifecycle fidelity explicitly.
+    This mode is intentionally fact-backed rather than simulated. It compares
+    current catalog strategy/profile/source variants through persisted source,
+    candidate, signal, decision, admission, execution, and position facts, then
+    labels market-data and lifecycle fidelity explicitly.
     """
 
     del db_target
@@ -892,4 +892,4 @@ def build_historical_strategy_evaluation(
     }
 
 
-__all__ = ["build_historical_strategy_evaluation"]
+__all__ = ["build_stored_facts_backtest"]
