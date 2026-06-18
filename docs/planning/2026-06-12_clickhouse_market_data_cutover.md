@@ -29,7 +29,7 @@ market_recorder
 
 ClickHouse owns high-volume market data:
 
-- `option_quote_ticks`: raw quote firehose, short TTL.
+- `option_quote_ticks`: raw quote firehose, 14-day TTL.
 - `option_trade_ticks`: raw option trades, medium TTL.
 - `option_quote_snapshots_1s`: compact latest quote per contract per second.
 - `option_quote_snapshots_1m`: compact latest quote per contract per minute for long-horizon operator/analytics use.

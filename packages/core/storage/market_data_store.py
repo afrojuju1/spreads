@@ -14,7 +14,7 @@ from core.runtime.config import default_clickhouse_url
 from core.storage.records import OptionQuoteTickRecord, OptionTradeTickRecord
 from core.storage.serializers import parse_datetime, render_value
 
-RAW_QUOTE_RETENTION_DAYS = 2
+RAW_QUOTE_RETENTION_DAYS = 14
 RAW_TRADE_RETENTION_DAYS = 90
 QUOTE_SNAPSHOT_1S_RETENTION_DAYS = 90
 QUOTE_SNAPSHOT_1M_RETENTION_DAYS = 730
@@ -155,6 +155,8 @@ class ClickHouseMarketDataStore:
         client = self._client_instance()
         for statement in self._schema_statements(database=database):
             client.command(statement)
+        for statement in self._retention_statements(database=database):
+            client.command(statement)
         self._schema_ready = True
 
     def schema_ready(self) -> bool:
@@ -219,7 +221,7 @@ class ClickHouseMarketDataStore:
         rows: list[dict[str, Any]] = []
         for table in MARKET_DATA_TABLES:
             stats = stats_by_table.get(table.name, {})
-            ttl_expression = f"toDateTime({table.retention_column})" if table.retention_column == "captured_at" else table.retention_column
+            ttl_expression = self._ttl_expression(table)
             rows.append(
                 {
                     "name": table.name,
@@ -825,6 +827,20 @@ class ClickHouseMarketDataStore:
             SETTINGS ttl_only_drop_parts = 1
             """,
         )
+
+    def _retention_statements(self, *, database: str) -> tuple[str, ...]:
+        return tuple(
+            f"""
+            ALTER TABLE {database}.{_identifier(table.name)}
+            MODIFY TTL {self._ttl_expression(table)} + INTERVAL {table.retention_days} DAY DELETE
+            """
+            for table in MARKET_DATA_TABLES
+        )
+
+    def _ttl_expression(self, table: MarketDataTable) -> str:
+        if table.retention_column == "captured_at":
+            return f"toDateTime({table.retention_column})"
+        return table.retention_column
 
 
 NEW_YORK = ZoneInfo("America/New_York")

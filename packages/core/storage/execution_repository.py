@@ -384,8 +384,21 @@ class ExecutionRepository(RepositoryBase):
         event_at = None if created_event is None else parse_datetime(created_event.get("event_at"))
         if execution_intent is not None and (execution_created_at is None or execution_updated_at is None):
             raise ValueError("execution intent created_at and updated_at are required")
+        if created_event is not None and execution_intent is None:
+            raise ValueError("created event requires execution_intent")
         if created_event is not None and event_at is None:
             raise ValueError("created event event_at is required")
+        if created_event is not None:
+            created_event_intent_id = str(created_event.get("execution_intent_id") or "").strip()
+            execution_intent_id = str(execution_intent.get("execution_intent_id") or "").strip()
+            if not created_event_intent_id:
+                raise ValueError("created event execution_intent_id is required")
+            if not execution_intent_id:
+                raise ValueError("execution intent execution_intent_id is required")
+            if created_event_intent_id != execution_intent_id:
+                raise ValueError("created event execution_intent_id must match execution_intent")
+            if str(created_event.get("event_type") or "") != "created":
+                raise ValueError("created event event_type must be created")
 
         with self.session_scope() as session:
             legacy_row = session.get(TradeExecutionIntentModel, str(legacy_intent["execution_intent_id"]))
@@ -440,6 +453,8 @@ class ExecutionRepository(RepositoryBase):
                 legacy_row.policy_snapshot_json = render_value(dict(legacy_intent.get("policy_snapshot") or {}))
                 legacy_row.config_hash = legacy_intent.get("config_hash")
                 legacy_row.updated_at = legacy_updated_at
+
+            session.flush()
 
             admission_row = session.get(TradeAdmissionModel, str(admission["admission_decision_id"]))
             if admission_row is None:
@@ -500,13 +515,24 @@ class ExecutionRepository(RepositoryBase):
                     expires_at=execution_expires_at,
                 )
                 if created_event is not None:
-                    event_row = ExecutionIntentEventModel(
-                        execution_intent_id=str(created_event["execution_intent_id"]),
-                        event_type=str(created_event["event_type"]),
-                        event_at=event_at,
-                        payload_json=render_value(dict(created_event.get("payload") or {})),
-                    )
-                    session.add(event_row)
+                    session.flush()
+                    event_row = session.execute(
+                        select(ExecutionIntentEventModel)
+                        .where(
+                            ExecutionIntentEventModel.execution_intent_id == str(created_event["execution_intent_id"]),
+                            ExecutionIntentEventModel.event_type == "created",
+                        )
+                        .order_by(ExecutionIntentEventModel.execution_intent_event_id.asc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    if event_row is None:
+                        event_row = ExecutionIntentEventModel(
+                            execution_intent_id=str(created_event["execution_intent_id"]),
+                            event_type=str(created_event["event_type"]),
+                            event_at=event_at,
+                            payload_json=render_value(dict(created_event.get("payload") or {})),
+                        )
+                        session.add(event_row)
             session.flush()
             for row in (legacy_row, admission_row, execution_row, event_row):
                 if row is not None:
