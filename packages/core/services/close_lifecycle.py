@@ -282,8 +282,30 @@ def build_close_lifecycle_summary(
     close_decision_state_counts = dict(sorted(Counter(close_decision_states).items()))
     missing_close_decision_count = len(close_attempts) + len(close_intents) - len(close_decision_states)
     anomaly_count = failed_count + max(stale_position_count, stale_decision_count) + intent_mismatch_decision_count + intent_mismatch_attempt_count
+    live_actionable_count = active_count + anomaly_count
+    if active_count:
+        live_action_reason = "active_close_work"
+        live_action_message = "Close lifecycle has pending intents or active attempts."
+    elif failed_count:
+        live_action_reason = "failed_close_work"
+        live_action_message = "Close lifecycle has failed close attempts that need review."
+    elif anomaly_count:
+        live_action_reason = "close_lifecycle_anomaly"
+        live_action_message = "Close lifecycle has reconciliation or intent mismatch evidence."
+    else:
+        live_action_reason = "no_live_close_work"
+        live_action_message = "No live close work is pending."
     return {
         "status": "degraded" if active_count or failed_count else "healthy",
+        "live_action_status": "needs_attention" if live_actionable_count else "idle",
+        "live_action_required": bool(live_actionable_count),
+        "live_actionable_close_count": live_actionable_count,
+        "live_action_reason": live_action_reason,
+        "live_action_message": live_action_message,
+        "accounting_close_attempt_count": len(close_attempts),
+        "accounting_close_intent_count": len(close_intents),
+        "accounting_close_decision_count": len(close_decision_states),
+        "accounting_missing_close_decision_count": missing_close_decision_count,
         "recent_close_attempt_count": len(close_attempts),
         "close_attempt_status_counts": status_counts,
         "position_lifecycle_state_counts": position_lifecycle_state_counts,

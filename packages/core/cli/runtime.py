@@ -78,11 +78,20 @@ def _render_positions(payload: dict[str, Any], *, no_color: bool) -> None:
     close_lifecycle = summary.get("close_lifecycle") if isinstance(summary.get("close_lifecycle"), dict) else {}
     if close_lifecycle:
         overview.add_row(
-            "Close Lifecycle",
+            "Live Close Work",
             (
-                f"{_render_value(close_lifecycle.get('status'))} | "
+                f"{_render_value(close_lifecycle.get('live_action_status') or close_lifecycle.get('status'))} | "
                 f"pending {_render_value(close_lifecycle.get('pending_close_intent_count'))} | "
-                f"active {_render_value(close_lifecycle.get('active_close_attempt_count'))}"
+                f"active {_render_value(close_lifecycle.get('active_close_attempt_count'))} | "
+                f"failed {_render_value(close_lifecycle.get('failed_close_attempt_count'))}"
+            ),
+        )
+        overview.add_row(
+            "Close Accounting",
+            (
+                f"attempts {_render_value(close_lifecycle.get('accounting_close_attempt_count'))} | "
+                f"intents {_render_value(close_lifecycle.get('accounting_close_intent_count'))} | "
+                f"missing decisions {_render_value(close_lifecycle.get('accounting_missing_close_decision_count'))}"
             ),
         )
     console.print(Panel(overview, title="Positions"))

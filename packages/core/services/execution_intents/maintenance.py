@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -352,7 +353,9 @@ def _cleanup_terminal_intent_history(
 ) -> dict[str, Any]:
     threshold = utc_now() - timedelta(minutes=max(older_than_minutes, 1))
     retained = 0
-    results: list[dict[str, Any]] = []
+    state_counts: Counter[str] = Counter()
+    slot_counts: Counter[str] = Counter()
+    sample: list[dict[str, Any]] = []
     intents = [dict(row) for row in execution_store.list_execution_intents(limit=max(int(limit), 1) * 25)]
     for intent in intents:
         if retained >= max(int(limit), 1):
@@ -363,16 +366,25 @@ def _cleanup_terminal_intent_history(
         created_at = parse_datetime(as_text(intent.get("created_at")))
         if created_at is None or created_at >= threshold:
             continue
-        execution_intent_id = str(intent["execution_intent_id"])
         retained += 1
-        results.append(
-            {
-                "execution_intent_id": execution_intent_id,
-                "state": state,
-                "slot_key": intent.get("slot_key"),
-            }
-        )
-    return {"deleted": 0, "retained": retained, "results": results[:25]}
+        state_counts[state] += 1
+        slot_key = as_text(intent.get("slot_key")) or "unknown"
+        slot_counts[slot_key] += 1
+        if len(sample) < 5:
+            sample.append(
+                {
+                    "state": state,
+                    "slot_key": slot_key,
+                    "created_at": intent.get("created_at"),
+                }
+            )
+    return {
+        "deleted": 0,
+        "retained": retained,
+        "retained_state_counts": dict(sorted(state_counts.items())),
+        "retained_slot_counts": dict(sorted(slot_counts.items(), key=lambda item: (-item[1], item[0]))[:5]),
+        "sample": sample,
+    }
 
 
 def _cleanup_inactive_strategy_intents(

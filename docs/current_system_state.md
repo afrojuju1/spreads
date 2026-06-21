@@ -393,7 +393,9 @@ Operator views should read service-owned state through:
 
 The dashboard should show strategy-owned runtime state, not recreate old runtime pages or infer business logic in the frontend.
 
-`TradingOpsState` exposes healthy no-entry rationale through each trading flow's `entry_posture` and the primary summary fields `primary_entry_state`, `primary_entry_message`, and `primary_entry_blocker_groups`. A flat strategy can therefore be explicitly healthy when source and candidate runs are fresh but account-agnostic quality filters, such as broad market regime or target-DTE chain viability, blocked all candidates.
+`TradingOpsState` exposes healthy no-entry rationale through each trading flow's `entry_posture`, `details.strategy_no_entry_summary`, and the primary summary fields `primary_entry_state`, `primary_entry_message`, `primary_entry_blocker_groups`, and `strategy_no_entry_category_counts`. A flat strategy can therefore be explicitly healthy when source and candidate runs are fresh but account-agnostic quality filters, such as broad market regime or target-DTE chain viability, blocked all candidates.
+
+`spreads execution positions` separates live close work from historical close accounting. `close_lifecycle.live_action_*` and the CLI `Live Close Work` row answer whether a date-scoped or unfiltered position view has actionable pending, active, failed, or anomalous close work. `accounting_*` fields and the CLI `Close Accounting` row can show retained historical close evidence without implying live close work is waiting.
 
 `TradingOpsState.details.strategy_breadth` is the canonical operator inventory for authored strategy breadth. Disabled paper/shadow strategies can appear there as `paper_observation_candidate` or `shadow_observation_candidate`, but their breadth contracts force effective automatic submission off unless the strategy is actually active through the scheduler-owned lifecycle spine.
 

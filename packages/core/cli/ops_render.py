@@ -650,6 +650,23 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
 
     flow_rows = list(details.get("trading_flows") or [])
     if flow_rows:
+        no_entry_rows = [row for row in details.get("strategy_no_entry_summary") or [] if isinstance(row, dict)]
+        if no_entry_rows:
+            table = Table(title="Strategy No-Entry Summary", header_style="bold")
+            table.add_column("Strategy", max_width=26, overflow="ellipsis", no_wrap=True)
+            table.add_column("Kind", min_width=6, max_width=10, overflow="ellipsis", no_wrap=True)
+            table.add_column("Why", max_width=34, overflow="ellipsis", no_wrap=True)
+            table.add_column("Codes", min_width=5, max_width=24, overflow="ellipsis", no_wrap=True)
+            for row in no_entry_rows:
+                message = str(row.get("message") or row.get("reason") or row.get("state") or "-")
+                table.add_row(
+                    str(row.get("trading_strategy_id") or "-"),
+                    _render_value(row.get("category")),
+                    message,
+                    _render_count_map(row.get("top_reason_codes"), limit=3, item_length=72),
+                )
+            console.print(table)
+
         posture_rows = [row for row in flow_rows if isinstance(row.get("entry_posture"), dict)]
         if posture_rows:
             table = Table(title="Entry Posture", header_style="bold")

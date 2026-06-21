@@ -116,6 +116,14 @@ NO_ENTRY_REASON_GROUPS = (
         ("delta_outside_range", "itm_call_skipped"),
     ),
 )
+NO_ENTRY_GROUP_CATEGORIES = {
+    "contract_fit": "contract_fit",
+    "expected_move_coverage": "data_quality",
+    "market_data_completeness": "data_quality",
+    "market_regime": "market_regime",
+    "option_liquidity": "liquidity",
+    "target_dte_chain": "data_quality",
+}
 
 
 @dataclass(frozen=True)
@@ -1470,6 +1478,93 @@ def _entry_posture_state(
     }
 
 
+def _top_reason_codes(group: Mapping[str, Any] | None, *, limit: int = 3) -> dict[str, int]:
+    reason_counts = as_mapping(None if group is None else group.get("reason_codes"))
+    ranked = sorted(
+        (
+            (str(reason), coerce_int(count) or 0)
+            for reason, count in reason_counts.items()
+            if str(reason or "").strip() and (coerce_int(count) or 0) > 0
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return dict(ranked[:limit])
+
+
+def _admission_no_entry_reason(flow: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    for key in ("protection_admission", "portfolio_admission"):
+        admission = as_mapping(flow.get(key))
+        status = as_text(admission.get("status"))
+        if status in {"blocked", "unknown"}:
+            return "admission", as_text(admission.get("reason")) or status
+    return None, None
+
+
+def _strategy_no_entry_category(
+    *,
+    flow: Mapping[str, Any],
+    entry_posture: Mapping[str, Any],
+    source_state: Mapping[str, Any],
+    candidate_state: Mapping[str, Any],
+    top_group: Mapping[str, Any] | None,
+) -> tuple[str, str | None]:
+    admission_category, admission_reason = _admission_no_entry_reason(flow)
+    if admission_category is not None:
+        return admission_category, admission_reason
+
+    state = as_text(entry_posture.get("state"))
+    if state == "market_closed":
+        return "market", "market_closed"
+    if state in {"source_needs_attention", "flat_no_source_symbols"}:
+        return "source", as_text(source_state.get("reason")) or state
+    if state == "entry_evidence_needs_attention":
+        return "data_quality", as_text(candidate_state.get("reason")) or state
+    if state == "candidates_available":
+        return "selection_ready", None
+
+    group = as_text(None if top_group is None else top_group.get("group"))
+    if group is not None:
+        return NO_ENTRY_GROUP_CATEGORIES.get(group, "policy"), group
+    return "policy", as_text(candidate_state.get("reason")) or as_text(entry_posture.get("reason")) or "no_candidates"
+
+
+def _strategy_no_entry_summary(flows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for flow in flows:
+        entry_posture = as_mapping(flow.get("entry_posture"))
+        source_state = as_mapping(flow.get("source_state"))
+        candidate_state = as_mapping(flow.get("candidate_state"))
+        blocker_groups = [as_mapping(group) for group in as_list(entry_posture.get("blocker_groups")) if isinstance(group, Mapping)]
+        top_group = blocker_groups[0] if blocker_groups else None
+        category, reason = _strategy_no_entry_category(
+            flow=flow,
+            entry_posture=entry_posture,
+            source_state=source_state,
+            candidate_state=candidate_state,
+            top_group=top_group,
+        )
+        rows.append(
+            {
+                "trading_strategy_id": flow.get("trading_strategy_id"),
+                "trade_structure": flow.get("trade_structure"),
+                "state": entry_posture.get("state"),
+                "status": entry_posture.get("status"),
+                "category": category,
+                "reason": reason,
+                "message": entry_posture.get("message"),
+                "top_blocker_group": None if top_group is None else top_group.get("group"),
+                "top_blocker_label": None if top_group is None else top_group.get("label"),
+                "top_reason_codes": _top_reason_codes(top_group),
+                "source_status": source_state.get("status"),
+                "source_reason": source_state.get("reason"),
+                "candidate_status": candidate_state.get("status"),
+                "candidate_reason": candidate_state.get("reason"),
+            }
+        )
+    rows.sort(key=lambda row: (str(row.get("category") or ""), str(row.get("trading_strategy_id") or "")))
+    return rows
+
+
 def _flow_position_summary(
     *,
     execution_store: Any,
@@ -2640,6 +2735,8 @@ def build_trading_ops_state(
         (flow for flow in flows.trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"),
         flows.trading_flows[0] if flows.trading_flows else {},
     )
+    strategy_no_entry_summary = _strategy_no_entry_summary(flows.trading_flows)
+    strategy_no_entry_category_counts = Counter(str(row.get("category") or "unknown") for row in strategy_no_entry_summary)
     primary_entry_posture = as_mapping(primary_flow.get("entry_posture"))
     primary_capacity = as_mapping(primary_flow.get("capacity"))
     primary_position_state = as_mapping(primary_flow.get("position_state"))
@@ -2666,6 +2763,7 @@ def build_trading_ops_state(
         "primary_entry_primary_blocker_group": primary_entry_posture.get("primary_blocker_group"),
         "primary_entry_healthy_flat": primary_entry_posture.get("healthy_flat"),
         "primary_entry_blocker_groups": primary_entry_posture.get("blocker_groups"),
+        "strategy_no_entry_category_counts": dict(sorted(strategy_no_entry_category_counts.items())),
         **strategy_breadth.summary,
         "broker_position_count": broker_exposure.get("broker_position_count"),
         "broker_option_position_count": broker_exposure.get("broker_option_position_count"),
@@ -2731,6 +2829,7 @@ def build_trading_ops_state(
         "open_execution_attempts": execution.summarized_open_execution_attempts,
         "open_positions": positions.open_positions,
         "top_positions": positions.top_positions,
+        "strategy_no_entry_summary": strategy_no_entry_summary,
         "trading_flows": flows.trading_flows,
         "primary_trading_flow": primary_flow,
         "protection_admission": {
