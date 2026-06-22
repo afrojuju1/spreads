@@ -85,6 +85,7 @@ PROTECTION_ADMISSION_BOUNDARY = "protection_admission"
 PORTFOLIO_ADMISSION_BOUNDARY = "portfolio_admission"
 DEFERRED_EXECUTION_READINESS_REASON = "deferred_to_execution_submit"
 ALLOCATION_DECISION_LIMIT = 200
+MARKET_CONTEXT_FILTER_ID = "market_context_regime_fit"
 BROAD_INDEX_CORRELATION_SYMBOLS = {"SPY", "QQQ", "DIA", "IWM"}
 PROTECTION_ADMISSIBLE_STATUSES = {"admissible", "approved", "ok", "pass", "passed"}
 TERMINAL_ENTRY_ATTEMPT_STATUSES = {
@@ -95,6 +96,7 @@ TERMINAL_ENTRY_ATTEMPT_STATUSES = {
     "failed",
     "rejected",
 }
+
 
 class BaselineRiskPolicyYamlPayload(DomainModel):
     enabled: bool
@@ -399,7 +401,9 @@ def build_candidate_position_sizing(
             key=lambda item: (item[1], item[0]),
         )
 
-    recommended_entry_notional = None if per_contract_entry_notional is None else money_scaled_float(per_contract_entry_notional, recommended_quantity)
+    recommended_entry_notional = (
+        None if per_contract_entry_notional is None else money_scaled_float(per_contract_entry_notional, recommended_quantity)
+    )
     recommended_max_loss = None if per_contract_max_loss is None else money_scaled_float(per_contract_max_loss, recommended_quantity)
     return {
         "applies": applies,
@@ -831,12 +835,116 @@ def _portfolio_policy_int(policy: Mapping[str, Any], key: str) -> int | None:
     return int(value)
 
 
-def _allocation_rank_key(row: Mapping[str, Any]) -> tuple[float, int, float, str]:
+def _market_context_fit_from_payload(*payloads: Mapping[str, Any]) -> dict[str, Any]:
+    for payload in payloads:
+        evidence = as_mapping(payload.get("evidence"))
+        waterfall = as_mapping(evidence.get("quality_waterfall"))
+        for result in list(waterfall.get("results") or []):
+            if not isinstance(result, Mapping):
+                continue
+            if as_text(result.get("filter_id")) != MARKET_CONTEXT_FILTER_ID:
+                continue
+            metrics = as_mapping(result.get("metrics"))
+            thresholds = as_mapping(result.get("thresholds"))
+            return {
+                "filter_id": MARKET_CONTEXT_FILTER_ID,
+                "status": as_text(result.get("status")) or "unknown",
+                "reason_codes": unique_text_list(result.get("reason_codes"), accept_scalar=True),
+                "market_context_snapshot_id": as_text(metrics.get("market_context_snapshot_id")),
+                "scope": as_text(metrics.get("market_context_scope")),
+                "observed_at": as_text(metrics.get("market_context_observed_at")),
+                "expires_at": as_text(metrics.get("market_context_expires_at")),
+                "regime_label": as_text(metrics.get("market_context_regime_label") or metrics.get("regime_label")),
+                "risk_posture": as_text(metrics.get("market_context_risk_posture") or metrics.get("risk_posture")),
+                "trend_strength": as_text(metrics.get("market_context_trend_strength") or metrics.get("trend_strength")),
+                "volatility_state": as_text(metrics.get("market_context_volatility_state") or metrics.get("volatility_state")),
+                "confidence": coerce_float(metrics.get("market_context_confidence") or metrics.get("confidence")),
+                "freshness": as_text(metrics.get("freshness")),
+                "data_quality": as_text(metrics.get("data_quality") or metrics.get("data_quality_state")),
+                "supportive_benchmark_count": coerce_int(metrics.get("supportive_benchmark_count")),
+                "blocking_benchmark_count": coerce_int(metrics.get("blocking_benchmark_count")),
+                "metrics": dict(metrics),
+                "thresholds": dict(thresholds),
+            }
+    return {}
+
+
+def _market_context_status_rank(context: Mapping[str, Any]) -> int:
+    status = as_text(context.get("status")) or "unknown"
+    return {
+        "pass": 0,
+        "watch": 1,
+        "unknown": 2,
+        "block": 3,
+    }.get(status, 2)
+
+
+def _allocation_market_context_block(row: Mapping[str, Any], *, evaluated_at: str) -> tuple[str, str, str, dict[str, Any]] | None:
+    context = as_mapping(row.get("market_context"))
+    if not context:
+        return None
+    metrics = {
+        "market_context_snapshot_id": context.get("market_context_snapshot_id"),
+        "market_context_status": context.get("status"),
+        "market_context_regime_label": context.get("regime_label"),
+        "market_context_risk_posture": context.get("risk_posture"),
+        "market_context_confidence": context.get("confidence"),
+        "market_context_reason_codes": list(context.get("reason_codes") or []),
+    }
+    expires_at = coerce_utc_datetime(context.get("expires_at"))
+    evaluated_dt = coerce_utc_datetime(evaluated_at)
+    if expires_at is not None and evaluated_dt is not None and expires_at <= evaluated_dt:
+        return (
+            "blocked",
+            "allocation_market_context_expired",
+            "AllocationPlan expired this selected decision because its market context snapshot is stale.",
+            metrics,
+        )
+    status = as_text(context.get("status")) or "unknown"
+    if status == "block":
+        return (
+            "blocked",
+            "allocation_market_context_blocked",
+            "AllocationPlan rejected this selected decision because shared market context does not fit the strategy policy.",
+            metrics,
+        )
+    return None
+
+
+def _allocation_market_context_summary(ranked_decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    snapshot_ids: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    reason_counts: dict[str, int] = {}
+    for row in ranked_decisions:
+        context = as_mapping(row.get("market_context"))
+        if not context:
+            continue
+        snapshot_id = as_text(context.get("market_context_snapshot_id"))
+        if snapshot_id is not None:
+            snapshot_ids[snapshot_id] = snapshot_ids.get(snapshot_id, 0) + 1
+        status = as_text(context.get("status")) or "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        for reason in list(context.get("reason_codes") or []):
+            reason_code = as_text(reason)
+            if reason_code is not None:
+                reason_counts[reason_code] = reason_counts.get(reason_code, 0) + 1
+    return {
+        "snapshot_ids": dict(sorted(snapshot_ids.items())),
+        "regime_fit_status_counts": dict(sorted(status_counts.items())),
+        "top_regime_fit_reasons": dict(sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:10]),
+    }
+
+
+def _allocation_rank_key(row: Mapping[str, Any]) -> tuple[int, float, float, int, float, str]:
     score = coerce_float(row.get("score"))
     rank = coerce_int(row.get("rank"))
     decided_at = coerce_utc_datetime(row.get("decided_at"))
     decided_timestamp = 0.0 if decided_at is None else decided_at.timestamp()
+    context = as_mapping(row.get("market_context"))
+    context_confidence = coerce_float(context.get("confidence"))
     return (
+        _market_context_status_rank(context),
+        -(context_confidence if context_confidence is not None else 0.0),
         -(score if score is not None else -1_000_000.0),
         rank if rank is not None and rank > 0 else 1_000_000,
         -decided_timestamp,
@@ -904,6 +1012,7 @@ def _allocation_decision_candidate(
     if candidate_max_loss is None:
         candidate_max_loss = required_buying_power
     per_contract_max_loss = _candidate_max_loss(candidate, 1.0)
+    market_context = _market_context_fit_from_payload(decision, signal)
     return {
         "trade_decision_id": as_text(decision.get("trade_decision_id")),
         "trade_signal_id": as_text(decision.get("trade_signal_id") or signal.get("trade_signal_id")),
@@ -921,6 +1030,7 @@ def _allocation_decision_candidate(
         "required_buying_power": required_buying_power,
         "per_contract_required_buying_power": coerce_float(unit_buying_power_requirement.get("required_buying_power")),
         "buying_power_basis": as_text(buying_power_requirement.get("basis")),
+        "market_context": market_context,
         "candidate": candidate,
     }
 
@@ -968,6 +1078,7 @@ def _allocation_item_result(
         "candidate_max_loss": row.get("candidate_max_loss"),
         "required_buying_power": row.get("required_buying_power"),
         "buying_power_basis": row.get("buying_power_basis"),
+        "market_context": dict(as_mapping(row.get("market_context"))),
         "active_intent_id": active_intent_id,
         "policy": dict(policy),
         "metrics": dict(metrics),
@@ -1043,14 +1154,11 @@ def _allocation_plan_admission_evidence(plan: Mapping[str, Any]) -> dict[str, An
         "reason": plan.get("reason"),
         "message": plan.get("message"),
         "summary": dict(plan.get("summary")) if isinstance(plan.get("summary"), Mapping) else {},
+        "market_context": dict(plan.get("market_context")) if isinstance(plan.get("market_context"), Mapping) else {},
         "capital": dict(plan.get("capital")) if isinstance(plan.get("capital"), Mapping) else {},
         "schedule_constraints": dict(plan.get("schedule_constraints")) if isinstance(plan.get("schedule_constraints"), Mapping) else {},
         "current_decision": dict(plan.get("current_decision")) if isinstance(plan.get("current_decision"), Mapping) else {},
-        "ranked_decisions": [
-            dict(item)
-            for item in list(plan.get("ranked_decisions") or [])[:10]
-            if isinstance(item, Mapping)
-        ],
+        "ranked_decisions": [dict(item) for item in list(plan.get("ranked_decisions") or [])[:10] if isinstance(item, Mapping)],
     }
 
 
@@ -1075,7 +1183,9 @@ def _allocation_unavailable_plan(
         "message": message,
         "allocation_rank": None,
         "admissible_quantity": 0,
+        "market_context": _market_context_fit_from_payload(selected_decision, selected_signal),
     }
+    market_context_summary = _allocation_market_context_summary([current_decision])
     return {
         "allocation_plan_id": f"allocation_plan:{safe_component(session_date)}:{safe_component(trade_decision_id)}",
         "status": status,
@@ -1091,7 +1201,9 @@ def _allocation_unavailable_plan(
             "blocked_count": 0,
             "unknown_count": 1,
             "already_active_count": 0,
+            "market_context_snapshot_count": len(market_context_summary["snapshot_ids"]),
         },
+        "market_context": market_context_summary,
         "capital": {},
         "schedule_constraints": {
             "mode": "observed_selected_decisions",
@@ -1218,6 +1330,22 @@ def build_allocation_plan_snapshot(
                     policy=policy,
                     metrics={"active_exposure_count": len(active_exposures)},
                     active_intent_id=as_text(active_intents[0].get("execution_intent_id")),
+                )
+            )
+            continue
+
+        context_block = _allocation_market_context_block(contender, evaluated_at=evaluated_at)
+        if context_block is not None:
+            context_status, context_reason, context_message, context_metrics = context_block
+            ranked_decisions.append(
+                _allocation_item_result(
+                    contender,
+                    allocation_rank=allocation_rank,
+                    status=context_status,
+                    reason=context_reason,
+                    message=context_message,
+                    policy=policy,
+                    metrics=context_metrics,
                 )
             )
             continue
@@ -1377,16 +1505,13 @@ def build_allocation_plan_snapshot(
         )
 
     selected_strategy_ids = sorted(
-        {
-            strategy_id
-            for strategy_id in (as_text(row.get("trading_strategy_id")) for row in ranked_decisions)
-            if strategy_id is not None
-        }
+        {strategy_id for strategy_id in (as_text(row.get("trading_strategy_id")) for row in ranked_decisions) if strategy_id is not None}
     )
     status = as_text(current_decision.get("status")) or "unknown"
     plan_status = "allocated" if status in {"allocated", "allocated_trimmed", "already_active"} else status
     reason = as_text(current_decision.get("reason")) or "allocation_unknown"
     message = as_text(current_decision.get("message")) or "AllocationPlan did not produce a message."
+    market_context_summary = _allocation_market_context_summary(ranked_decisions)
     return {
         "allocation_plan_id": allocation_plan_id,
         "status": plan_status,
@@ -1405,7 +1530,14 @@ def build_allocation_plan_snapshot(
             "already_active_count": sum(1 for row in ranked_decisions if row.get("status") == "already_active"),
             "planned_required_buying_power": money_float(planned_required_buying_power),
             "active_exposure_count": len(active_exposures),
+            "market_context_snapshot_count": len(market_context_summary["snapshot_ids"]),
+            "market_context_blocked_count": sum(
+                1
+                for row in ranked_decisions
+                if as_text(row.get("reason")) in {"allocation_market_context_blocked", "allocation_market_context_expired"}
+            ),
         },
+        "market_context": market_context_summary,
         "capital": {
             "broker_buying_power_status": broker_status,
             "available_buying_power": coerce_float(broker_buying_power.get("available_buying_power")),
@@ -1532,11 +1664,7 @@ def _drawdown_block(
     else:
         window_days = rule.positive_int("window_days") or 5
         start = now - timedelta(days=window_days)
-        window_positions = [
-            row
-            for row in scoped
-            if (activity_at := _protection_activity_at(row)) is not None and activity_at >= start
-        ]
+        window_positions = [row for row in scoped if (activity_at := _protection_activity_at(row)) is not None and activity_at >= start]
 
     open_positions = [row for row in scoped if as_text(row.get("status")) in OPEN_POSITION_STATUSES]
     realized = money_sum_float(coerce_float(row.get("realized_pnl")) for row in window_positions)
@@ -2231,9 +2359,7 @@ def build_portfolio_admission_snapshot(
     }
     if allocation_evidence:
         allocation_decision = (
-            dict(allocation_evidence.get("current_decision"))
-            if isinstance(allocation_evidence.get("current_decision"), Mapping)
-            else {}
+            dict(allocation_evidence.get("current_decision")) if isinstance(allocation_evidence.get("current_decision"), Mapping) else {}
         )
         allocation_status = as_text(allocation_decision.get("status") or allocation_evidence.get("status")) or "unknown"
         allocation_reason = as_text(allocation_decision.get("reason") or allocation_evidence.get("reason")) or "allocation_plan_not_selected"
@@ -2242,9 +2368,7 @@ def build_portfolio_admission_snapshot(
                 "allocation_plan_status": allocation_status,
                 "allocation_plan_reason": allocation_reason,
                 "allocation_rank": allocation_decision.get("allocation_rank"),
-                "allocation_selected_decision_count": (
-                    as_mapping(allocation_evidence.get("summary")).get("selected_decision_count")
-                ),
+                "allocation_selected_decision_count": (as_mapping(allocation_evidence.get("summary")).get("selected_decision_count")),
                 "allocation_allocated_count": as_mapping(allocation_evidence.get("summary")).get("allocated_count"),
             }
         )
