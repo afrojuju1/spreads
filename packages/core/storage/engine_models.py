@@ -273,3 +273,34 @@ class TradingFeatureSnapshotModel(Base):
     market_data_quality_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MarketContextSnapshotModel(Base):
+    __tablename__ = "market_context_snapshots"
+    __table_args__ = (
+        Index("idx_market_context_snapshots_scope_observed", "scope", "observed_at"),
+        Index("idx_market_context_snapshots_scope_expires", "scope", "expires_at"),
+        Index("idx_market_context_snapshots_regime_observed", "regime_label", "observed_at"),
+    )
+
+    market_context_snapshot_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    context_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    regime_label: Mapped[str] = mapped_column(Text, nullable=False)
+    risk_posture: Mapped[str] = mapped_column(Text, nullable=False)
+    trend_strength: Mapped[str] = mapped_column(Text, nullable=False)
+    volatility_state: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    data_quality_state: Mapped[str] = mapped_column(Text, nullable=False)
+    freshness_state: Mapped[str] = mapped_column(Text, nullable=False)
+    fidelity_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    regime_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    benchmark_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    source_evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
