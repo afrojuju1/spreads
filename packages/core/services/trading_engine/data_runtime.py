@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
+from core.domain.models import SymbolMarketSlice
 from core.services.strategy_builders import build_entry_runtime_candidates_with_diagnostics, runtime_owner_key
 from core.services.strategy_candidate_builders.settings import CandidateBuildParameters
 from core.services.ticker_sources import resolve_ticker_source_symbols
@@ -20,6 +21,8 @@ from core.services.trading_engine.data import (
 from core.services.trading_engine.entry_quality import FeatureSnapshot
 from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 from core.services.trading_engine.kernel import EngineContext
+from core.services.trading_engine.market_context import MarketContextSnapshot
+from core.services.trading_engine.market_context_runtime import MarketContextEngine, MarketContextRequest
 from core.services.trading_strategies import load_universe_symbols
 from core.services.trading_strategy_runtime_models import EntryRuntime, StrategySource
 from core.value_coercion import utc_expiry_iso
@@ -170,6 +173,17 @@ class DataEngine:
             quality_profile_id=quality_profile_id,
             ticker_set=ticker_set,
             candidate_result=candidate_result,
+        )
+
+    def build_market_context(
+        self,
+        *,
+        benchmark_slices: Mapping[str, SymbolMarketSlice],
+        request: MarketContextRequest | None = None,
+    ) -> MarketContextSnapshot:
+        return MarketContextEngine().build_from_market_slices(
+            benchmark_slices=benchmark_slices,
+            request=request,
         )
 
     def build_entry_trade_candidates(
