@@ -243,6 +243,8 @@ def _load_underlying_setup_bars(
     )
     session_start = datetime.combine(reference_date, time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
     session_end = reference_timestamp
+    if session_end <= session_start:
+        return daily_bars, []
     try:
         intraday_bars = client.get_intraday_bars(
             symbol,

@@ -219,3 +219,57 @@ class TradeCandidateModel(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TradingFeatureSnapshotModel(Base):
+    __tablename__ = "trading_feature_snapshots"
+    __table_args__ = (
+        Index("ux_trading_feature_snapshots_identity", "candidate_run_id", "underlying_symbol", "candidate_identity", unique=True),
+        Index("idx_trading_feature_snapshots_strategy_observed", "trading_strategy_id", "routine", "observed_at"),
+        Index("idx_trading_feature_snapshots_strategy_session", "trading_strategy_id", "session_date", "market_data_quality_state"),
+        Index("idx_trading_feature_snapshots_run", "candidate_run_id"),
+        Index("idx_trading_feature_snapshots_symbol_observed", "underlying_symbol", "observed_at"),
+    )
+
+    trading_feature_snapshot_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    feature_version: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("candidate_runs.candidate_run_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    trade_candidate_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_candidates.trade_candidate_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ticker_source_run_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("ticker_source_runs.ticker_source_run_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ticker_source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    ticker_source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trading_strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trade_structure: Mapped[str] = mapped_column(Text, nullable=False)
+    routine: Mapped[str] = mapped_column(Text, nullable=False)
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    feature_scope: Mapped[str] = mapped_column(Text, nullable=False)
+    quality_profile_id: Mapped[str] = mapped_column(Text, nullable=False)
+    quality_status: Mapped[str] = mapped_column(Text, nullable=False)
+    market_data_quality_state: Mapped[str] = mapped_column(Text, nullable=False)
+    market_data_quality_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    source_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    underlying_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    chain_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    premium_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    quality_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    market_data_quality_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

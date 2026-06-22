@@ -17,6 +17,7 @@ from core.storage.engine_models import (
     TickerSourceObservationModel,
     TickerSourceRunModel,
     TradeCandidateModel,
+    TradingFeatureSnapshotModel,
 )
 from core.storage.execution_models import (
     ExecutionAttemptModel,
@@ -157,6 +158,11 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "ranking_policy_status_counts": {},
             "top_ranking_policy_blockers": {},
             "market_data_coverage": {},
+            "feature_snapshot_count": 0,
+            "feature_quality_status_counts": {},
+            "market_data_quality_state_counts": {},
+            "top_market_data_quality_reasons": {},
+            "market_data_quality_component_state_counts": {},
             "latest_candidate_run_id": None,
             "latest_generated_at": None,
         },
@@ -239,6 +245,7 @@ def _build_engine_strategy_ledgers(
     market_day: date,
     start: datetime,
     end: datetime,
+    feature_store_schema_ready: bool,
 ) -> dict[str, dict[str, Any]]:
     strategy_list = list(strategies)
     payloads = {strategy.trading_strategy_id: _empty_engine_strategy_ledger(strategy) for strategy in strategy_list}
@@ -258,6 +265,10 @@ def _build_engine_strategy_ledgers(
             "ranking_policy_status_counts": Counter(),
             "ranking_policy_blockers": Counter(),
             "market_data_coverage": Counter(),
+            "feature_quality_status_counts": Counter(),
+            "market_data_quality_state_counts": Counter(),
+            "market_data_quality_reasons": Counter(),
+            "market_data_quality_component_state_counts": Counter(),
         }
         for strategy_id in strategy_ids
     }
@@ -467,6 +478,35 @@ def _build_engine_strategy_ledgers(
             if expected_move_total > 0:
                 coverage["symbols_with_expected_moves_count"] += 1
 
+    if candidate_run_strategy and feature_store_schema_ready:
+        feature_rows = session.execute(
+            select(
+                TradingFeatureSnapshotModel.candidate_run_id,
+                TradingFeatureSnapshotModel.quality_status,
+                TradingFeatureSnapshotModel.market_data_quality_state,
+                TradingFeatureSnapshotModel.market_data_quality_reason,
+                TradingFeatureSnapshotModel.market_data_quality_json,
+            ).where(TradingFeatureSnapshotModel.candidate_run_id.in_(list(candidate_run_strategy)))
+        )
+        for candidate_run_id, quality_status, market_data_quality_state, market_data_quality_reason, market_data_quality_json in feature_rows:
+            strategy_key = candidate_run_strategy.get(str(candidate_run_id))
+            if strategy_key is None:
+                continue
+            candidate_payload = payloads[strategy_key]["candidates"]
+            candidate_payload["feature_snapshot_count"] += 1
+            counters = candidate_diagnostic_counters[strategy_key]
+            counters["feature_quality_status_counts"][str(quality_status or "unknown")] += 1
+            counters["market_data_quality_state_counts"][str(market_data_quality_state or "unknown")] += 1
+            reason = as_text(market_data_quality_reason)
+            if reason is not None:
+                counters["market_data_quality_reasons"][reason] += 1
+                if str(market_data_quality_state or "").strip().lower() == "block":
+                    blockers_by_strategy[strategy_key][reason] += 1
+            for component_name, component in as_mapping(as_mapping(market_data_quality_json).get("components")).items():
+                component_state = as_text(as_mapping(component).get("state"))
+                if component_state is not None:
+                    counters["market_data_quality_component_state_counts"][f"{component_name}:{component_state}"] += 1
+
     trade_candidate_rows = session.execute(
         select(
             TradeCandidateModel.trading_strategy_id,
@@ -593,6 +633,12 @@ def _build_engine_strategy_ledgers(
         candidate_payload["ranking_policy_status_counts"] = _sorted_counts(diagnostic_counters["ranking_policy_status_counts"])
         candidate_payload["top_ranking_policy_blockers"] = _top_blockers(diagnostic_counters["ranking_policy_blockers"])
         candidate_payload["market_data_coverage"] = _sorted_counts(diagnostic_counters["market_data_coverage"])
+        candidate_payload["feature_quality_status_counts"] = _sorted_counts(diagnostic_counters["feature_quality_status_counts"])
+        candidate_payload["market_data_quality_state_counts"] = _sorted_counts(diagnostic_counters["market_data_quality_state_counts"])
+        candidate_payload["top_market_data_quality_reasons"] = _top_blockers(diagnostic_counters["market_data_quality_reasons"])
+        candidate_payload["market_data_quality_component_state_counts"] = _sorted_counts(
+            diagnostic_counters["market_data_quality_component_state_counts"]
+        )
         payload["decisions"]["selected_count"] = int(payload["decisions"]["decision_state_counts"].get("selected", 0))
         payload["top_blocker_reasons"] = _top_blockers(blockers_by_strategy[strategy_id])
         payload["latest_activity_at"] = utc_iso(latest_activity.get(strategy_id))
@@ -985,6 +1031,7 @@ def build_strategy_evidence_ledger(
     now = datetime.now(UTC)
     strategies = load_active_trading_strategies()
     engine_schema_ready = storage.engine_facts.schema_has_tables(*ENGINE_LEDGER_TABLES)
+    feature_store_schema_ready = storage.engine_facts.feature_store_schema_ready()
     execution_schema_ready = storage.execution.schema_ready()
     intent_schema_ready = storage.execution.intent_schema_ready()
     portfolio_schema_ready = storage.execution.portfolio_schema_ready()
@@ -1000,6 +1047,7 @@ def build_strategy_evidence_ledger(
                 market_day=market_day,
                 start=start,
                 end=end,
+                feature_store_schema_ready=feature_store_schema_ready,
             )
             if engine_schema_ready
             else {strategy.trading_strategy_id: {} for strategy in strategy_list}
@@ -1029,6 +1077,7 @@ def build_strategy_evidence_ledger(
     total_unrealized = money_sum_float(coerce_float(as_mapping(row.get("pnl")).get("unrealized_pnl")) for row in rows)
     schema = {
         "engine_facts": "ready" if engine_schema_ready else "blocked",
+        "feature_store": "ready" if feature_store_schema_ready else "blocked",
         "execution": "ready" if execution_schema_ready else "blocked",
         "execution_intents": "ready" if intent_schema_ready else "blocked",
         "portfolio": "ready" if portfolio_schema_ready else "blocked",

@@ -11,6 +11,7 @@ from core.services.candidate_fields import candidate_economics, risk_hints
 from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.entry_quality_evidence import EntryQualityAnalysis, quality_key
+from core.services.trading_engine.feature_store import build_trading_feature_snapshot_records
 from core.services.trading_strategy_runtime_models import EntryRuntime
 from core.value_coercion import coerce_float, coerce_int, unique_text_list, utc_now_iso as _utc_now
 
@@ -330,6 +331,31 @@ def persist_entry_engine_facts(
                 updated_at=now,
             )
 
+    feature_snapshot_count = 0
+    feature_snapshot_status = "skipped"
+    market_data_quality_state_counts: Counter[str] = Counter()
+    if candidate_run_id is not None and quality_analysis is not None:
+        if engine_facts.feature_store_schema_ready():
+            feature_records = build_trading_feature_snapshot_records(
+                runtime=runtime,
+                market_date=market_date,
+                generated_at=generated_at,
+                ticker_set=ticker_set,
+                candidate_run_id=candidate_run_id,
+                trade_candidate_ids_by_identity=trade_candidate_ids_by_identity,
+                quality_analysis=quality_analysis,
+            )
+            persisted_features = engine_facts.replace_trading_feature_snapshots(
+                candidate_run_id=candidate_run_id,
+                snapshots=[record.to_payload() for record in feature_records],
+                updated_at=now,
+            )
+            feature_snapshot_count = len(persisted_features)
+            feature_snapshot_status = "persisted"
+            market_data_quality_state_counts.update(record.market_data_quality_state for record in feature_records)
+        else:
+            feature_snapshot_status = "schema_unavailable"
+
     trade_signal_refs: list[dict[str, Any]] = []
     for signal_row in signal_rows:
         candidate = _candidate_payload(signal_row)
@@ -422,6 +448,9 @@ def persist_entry_engine_facts(
         "candidate_run_id": candidate_run_id,
         "trade_candidate_count": len(trade_candidate_ids_by_identity),
         "candidate_diagnostic_count": len(diagnostic_rows),
+        "feature_snapshot_status": feature_snapshot_status,
+        "feature_snapshot_count": feature_snapshot_count,
+        "market_data_quality_state_counts": dict(sorted(market_data_quality_state_counts.items())),
         "top_rejection_counts": _diagnostic_top_counts(diagnostic_rows),
         **(
             {}

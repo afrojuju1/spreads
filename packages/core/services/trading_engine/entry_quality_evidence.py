@@ -95,6 +95,7 @@ class EntryQualityAnalysis:
     context: EntryQualityContext
     by_candidate: Mapping[tuple[str, str], EntryQualityWaterfall]
     by_symbol: Mapping[str, EntryQualityWaterfall]
+    snapshots: tuple[FeatureSnapshot, ...]
     snapshots_by_candidate: Mapping[tuple[str, str], FeatureSnapshot]
     summary: Mapping[str, Any]
 
@@ -157,6 +158,7 @@ def build_entry_quality_analysis(
             context=context,
             by_candidate={},
             by_symbol={},
+            snapshots=(),
             snapshots_by_candidate={},
             summary=quality_summary(profile_id, ()),
         )
@@ -188,6 +190,7 @@ def build_entry_quality_analysis(
         context=context,
         by_candidate=by_candidate,
         by_symbol=by_symbol,
+        snapshots=tuple(snapshots),
         snapshots_by_candidate=snapshots_by_candidate,
         summary=quality_summary(profile_id, all_waterfalls),
     )

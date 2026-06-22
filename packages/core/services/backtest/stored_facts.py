@@ -161,6 +161,10 @@ def _aggregate_strategy_days(
     ranking_policy_status_counts: Counter[str] = Counter()
     ranking_policy_blocker_counts: Counter[str] = Counter()
     market_data_coverage_counts: Counter[str] = Counter()
+    feature_quality_status_counts: Counter[str] = Counter()
+    market_data_quality_state_counts: Counter[str] = Counter()
+    market_data_quality_reason_counts: Counter[str] = Counter()
+    market_data_quality_component_state_counts: Counter[str] = Counter()
     signal_state_counts: Counter[str] = Counter()
     decision_state_counts: Counter[str] = Counter()
     admission_state_counts: Counter[str] = Counter()
@@ -188,6 +192,10 @@ def _aggregate_strategy_days(
         _merge_counts(ranking_policy_status_counts, candidates.get("ranking_policy_status_counts"))
         _merge_counts(ranking_policy_blocker_counts, candidates.get("top_ranking_policy_blockers"))
         _merge_counts(market_data_coverage_counts, candidates.get("market_data_coverage"))
+        _merge_counts(feature_quality_status_counts, candidates.get("feature_quality_status_counts"))
+        _merge_counts(market_data_quality_state_counts, candidates.get("market_data_quality_state_counts"))
+        _merge_counts(market_data_quality_reason_counts, candidates.get("top_market_data_quality_reasons"))
+        _merge_counts(market_data_quality_component_state_counts, candidates.get("market_data_quality_component_state_counts"))
         _merge_counts(signal_state_counts, as_mapping(row.get("signals")).get("signal_state_counts"))
         _merge_counts(decision_state_counts, as_mapping(row.get("decisions")).get("decision_state_counts"))
         _merge_counts(admission_state_counts, as_mapping(row.get("admissions")).get("admission_state_counts"))
@@ -236,6 +244,7 @@ def _aggregate_strategy_days(
             "postprocess_candidate_count": _sum_int(daily_rows, "candidates", "postprocess_candidate_count"),
             "runtime_candidate_count": _sum_int(daily_rows, "candidates", "runtime_candidate_count"),
             "returned_candidate_count": _sum_int(daily_rows, "candidates", "returned_candidate_count"),
+            "feature_snapshot_count": _sum_int(daily_rows, "candidates", "feature_snapshot_count"),
             "candidate_productivity_state_counts": dict(sorted(candidate_state_counts.items())),
             "diagnostic_status_counts": dict(sorted(diagnostic_counts.items())),
             "top_raw_rejection_counts": _top_counts(raw_rejection_counts),
@@ -246,6 +255,10 @@ def _aggregate_strategy_days(
             "ranking_policy_status_counts": dict(sorted(ranking_policy_status_counts.items())),
             "top_ranking_policy_blockers": _top_counts(ranking_policy_blocker_counts),
             "market_data_coverage": dict(sorted(market_data_coverage_counts.items())),
+            "feature_quality_status_counts": dict(sorted(feature_quality_status_counts.items())),
+            "market_data_quality_state_counts": dict(sorted(market_data_quality_state_counts.items())),
+            "top_market_data_quality_reasons": _top_counts(market_data_quality_reason_counts),
+            "market_data_quality_component_state_counts": dict(sorted(market_data_quality_component_state_counts.items())),
             "latest_candidate_run_id": _latest_text(daily_rows, "candidates", "latest_candidate_run_id"),
         },
         "selection_quality": {
