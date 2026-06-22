@@ -41,6 +41,20 @@ from .feature_snapshots import (
 )
 from .exit_runtime import ExitEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
+from .market_context import (
+    MarketBenchmarkEvidence,
+    MarketBenchmarkRole,
+    MarketContextDataQuality,
+    MarketContextDataQualityState,
+    MarketContextFidelityLabel,
+    MarketContextFreshnessState,
+    MarketContextSnapshot,
+    MarketRegimeLabel,
+    MarketRiskPosture,
+    MarketTrendStrength,
+    MarketVolatilityState,
+    RegimeSnapshot,
+)
 from .portfolio_runtime import PortfolioEngine
 
 __all__ = [
@@ -66,6 +80,17 @@ __all__ = [
     "FeatureSnapshotBuilderKey",
     "FilterResult",
     "FilterResultStatus",
+    "MarketBenchmarkEvidence",
+    "MarketBenchmarkRole",
+    "MarketContextDataQuality",
+    "MarketContextDataQualityState",
+    "MarketContextFidelityLabel",
+    "MarketContextFreshnessState",
+    "MarketContextSnapshot",
+    "MarketRegimeLabel",
+    "MarketRiskPosture",
+    "MarketTrendStrength",
+    "MarketVolatilityState",
     "MOMENTUM_LONG_CALL_PROFILE_ID",
     "MOMENTUM_LONG_CALL_V1",
     "OPTION_STRUCTURE_PROFILE_IDS",
@@ -73,6 +98,7 @@ __all__ = [
     "POST_SELECTION_ENTRY_QUALITY_STAGES",
     "PRE_SELECTION_ENTRY_QUALITY_STAGES",
     "PortfolioEngine",
+    "RegimeSnapshot",
     "ExitEngine",
     "build_entry_quality_analysis",
     "build_feature_snapshots_for_strategy",
