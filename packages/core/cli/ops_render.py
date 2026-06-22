@@ -447,6 +447,9 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     broker_exposure = dict(details.get("broker_exposure") or {})
+    market_context = dict(details.get("market_context") or {})
+    market_context_regime = dict(market_context.get("regime") or {})
+    market_context_evidence = dict(market_context.get("major_evidence") or {})
     strategy_breadth = dict(details.get("strategy_breadth") or {})
     strategy_breadth_summary = dict(strategy_breadth.get("summary") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
@@ -475,6 +478,16 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             f"{_render_value(summary.get('market_session_status'))} "
             f"{_render_value(summary.get('market_open_at'))}"
             f"..{_render_value(summary.get('market_close_at'))}"
+        ),
+    )
+    overview.add_row(
+        "Market Context",
+        (
+            f"{_render_value(summary.get('market_context_status'))}/"
+            f"{_render_value(summary.get('market_context_state'))} | "
+            f"{_render_value(summary.get('market_context_regime_label'))} "
+            f"{_render_value(summary.get('market_context_risk_posture'))} | "
+            f"conf {_render_value(summary.get('market_context_confidence'))}"
         ),
     )
     overview.add_row("Broker Env", _render_value(summary.get("broker_environment")))
@@ -613,6 +626,33 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         value=engine_summary,
     )
 
+    if market_context:
+        table = Table(title="Market Context", header_style="bold")
+        table.add_column("Snapshot", max_width=34, overflow="ellipsis", no_wrap=True)
+        table.add_column("State")
+        table.add_column("Regime")
+        table.add_column("Risk")
+        table.add_column("Trend")
+        table.add_column("Vol")
+        table.add_column("Fresh")
+        table.add_column("Benchmarks", max_width=36, overflow="ellipsis", no_wrap=True)
+        table.add_row(
+            _render_value(market_context.get("market_context_snapshot_id")),
+            f"{_render_value(market_context.get('status'))}/{_render_value(market_context.get('state'))}",
+            _render_value(market_context_regime.get("regime_label")),
+            _render_value(market_context_regime.get("risk_posture")),
+            _render_value(market_context_regime.get("trend_strength")),
+            _render_value(market_context_regime.get("volatility_state")),
+            f"{_render_value(market_context.get('age_seconds'))}s old",
+            (
+                f"obs {_render_value(market_context_evidence.get('observed_benchmark_count'))}/"
+                f"{_render_value(market_context_evidence.get('expected_benchmark_count'))} | "
+                f"support {_render_value(market_context_evidence.get('supportive_benchmark_count'))} | "
+                f"block {_render_value(market_context_evidence.get('blocking_benchmark_count'))}"
+            ),
+        )
+        console.print(table)
+
     strategy_breadth_rows = list(strategy_breadth.get("strategies") or [])
     if strategy_breadth_rows:
         table = Table(title="Strategy Breadth", header_style="bold")
@@ -674,6 +714,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             table.add_column("Kind", min_width=6, max_width=10, overflow="ellipsis", no_wrap=True)
             table.add_column("Why", max_width=34, overflow="ellipsis", no_wrap=True)
             table.add_column("Codes", min_width=5, max_width=24, overflow="ellipsis", no_wrap=True)
+            table.add_column("Context", max_width=28, overflow="ellipsis", no_wrap=True)
             for row in no_entry_rows:
                 message = str(row.get("message") or row.get("reason") or row.get("state") or "-")
                 table.add_row(
@@ -681,6 +722,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
                     _render_value(row.get("category")),
                     message,
                     _render_count_map(row.get("top_reason_codes"), limit=3, item_length=72),
+                    (f"{_render_value(row.get('market_context_regime_label'))}/" f"{_render_value(row.get('market_context_risk_posture'))}"),
                 )
             console.print(table)
 

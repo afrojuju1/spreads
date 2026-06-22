@@ -35,6 +35,7 @@ LEDGER_MARK_STALE_AFTER_SECONDS = 15 * 60
 SOURCE_SYMBOL_LIMIT = 25
 TOP_BLOCKER_LIMIT = 10
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
+MARKET_CONTEXT_FILTER_ID = "market_context_regime_fit"
 ENGINE_LEDGER_TABLES = (
     "ticker_source_runs",
     "ticker_source_observations",
@@ -88,6 +89,86 @@ def _top_blockers(counter: Counter[str]) -> dict[str, int]:
     return dict(counter.most_common(TOP_BLOCKER_LIMIT))
 
 
+def _market_context_reference_from_summary(summary: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = as_mapping(summary)
+    snapshot_id = as_text(payload.get("market_context_snapshot_id") or payload.get("snapshot_id"))
+    regime_label = as_text(payload.get("market_context_regime_label") or payload.get("regime_label"))
+    risk_posture = as_text(payload.get("market_context_risk_posture") or payload.get("risk_posture"))
+    confidence = coerce_float(payload.get("market_context_confidence") or payload.get("confidence"))
+    observed_at = payload.get("market_context_observed_at") or payload.get("observed_at")
+    expires_at = payload.get("market_context_expires_at") or payload.get("expires_at")
+    freshness = as_text(payload.get("market_context_freshness") or payload.get("freshness"))
+    data_quality = as_text(payload.get("market_context_data_quality") or payload.get("data_quality"))
+    if not any((snapshot_id, regime_label, risk_posture, confidence is not None, observed_at, expires_at, freshness, data_quality)):
+        return {}
+    return {
+        "market_context_snapshot_id": snapshot_id,
+        "observed_at": observed_at,
+        "expires_at": expires_at,
+        "scope": as_text(payload.get("market_context_scope") or payload.get("scope")),
+        "regime_label": regime_label,
+        "risk_posture": risk_posture,
+        "confidence": confidence,
+        "freshness": freshness,
+        "data_quality": data_quality,
+    }
+
+
+def _market_context_reference_from_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    market_context = as_mapping(payload)
+    if not market_context:
+        return {}
+    regime = as_mapping(market_context.get("regime"))
+    data_quality = as_mapping(market_context.get("data_quality"))
+    return _market_context_reference_from_summary(
+        {
+            "market_context_snapshot_id": market_context.get("snapshot_id") or market_context.get("market_context_snapshot_id"),
+            "market_context_observed_at": market_context.get("observed_at"),
+            "market_context_expires_at": market_context.get("expires_at"),
+            "market_context_scope": market_context.get("scope"),
+            "market_context_regime_label": regime.get("regime_label"),
+            "market_context_risk_posture": regime.get("risk_posture"),
+            "market_context_confidence": regime.get("confidence"),
+            "market_context_freshness": data_quality.get("freshness"),
+            "market_context_data_quality": data_quality.get("state"),
+        }
+    )
+
+
+def _record_market_context_link(
+    *,
+    section_payload: dict[str, Any],
+    strategy_context: dict[str, Any],
+    stage: str,
+    context: Mapping[str, Any],
+    latest: bool = False,
+) -> None:
+    context_ref = dict(context)
+    if not context_ref:
+        return
+    snapshot_id = as_text(context_ref.get("market_context_snapshot_id"))
+    if latest or not section_payload.get("latest_market_context"):
+        section_payload["latest_market_context"] = context_ref
+    if latest or not strategy_context.get("latest"):
+        strategy_context["latest"] = context_ref
+    if snapshot_id is not None:
+        _bump_count(section_payload["market_context_snapshot_ids"], snapshot_id)
+        _bump_count(strategy_context[f"{stage}_snapshot_ids"], snapshot_id)
+
+
+def _add_market_context_regime_fit(counter: Counter[str], status_counter: Counter[str], waterfall: Any) -> None:
+    for result in as_list(as_mapping(waterfall).get("results")):
+        if not isinstance(result, Mapping):
+            continue
+        if as_text(result.get("filter_id")) != MARKET_CONTEXT_FILTER_ID:
+            continue
+        status_counter[as_text(result.get("status")) or "unknown"] += 1
+        for reason in as_list(result.get("reason_codes")):
+            reason_code = as_text(reason)
+            if reason_code is not None:
+                counter[reason_code] += 1
+
+
 def _sorted_counts(counter: Counter[str]) -> dict[str, int]:
     return dict(sorted((str(key), int(count)) for key, count in counter.items() if int(count) > 0))
 
@@ -135,7 +216,9 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "configured_symbol_count": len(strategy.symbols),
             "latest_symbol_count": len(strategy.symbols),
             "symbols": configured_source_symbols,
-            "source_evidence_state": "static_symbols_configured" if strategy.source.kind == "static" and configured_source_symbols else "not_observed",
+            "source_evidence_state": (
+                "static_symbols_configured" if strategy.source.kind == "static" and configured_source_symbols else "not_observed"
+            ),
             "latest_ticker_source_run_id": None,
             "latest_generated_at": None,
         },
@@ -163,6 +246,10 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "market_data_quality_state_counts": {},
             "top_market_data_quality_reasons": {},
             "market_data_quality_component_state_counts": {},
+            "latest_market_context": {},
+            "market_context_snapshot_ids": {},
+            "market_context_regime_fit_status_counts": {},
+            "top_market_context_reasons": {},
             "latest_candidate_run_id": None,
             "latest_generated_at": None,
         },
@@ -176,14 +263,26 @@ def _empty_engine_strategy_ledger(strategy: Any) -> dict[str, Any]:
             "decision_count": 0,
             "decision_state_counts": {},
             "selected_count": 0,
+            "latest_market_context": {},
+            "market_context_snapshot_ids": {},
             "latest_trade_decision_id": None,
             "latest_decided_at": None,
         },
         "admissions": {
             "admission_count": 0,
             "admission_state_counts": {},
+            "latest_market_context": {},
+            "market_context_snapshot_ids": {},
             "latest_admission_decision_id": None,
             "latest_decided_at": None,
+        },
+        "market_context": {
+            "latest": {},
+            "candidate_snapshot_ids": {},
+            "decision_snapshot_ids": {},
+            "admission_snapshot_ids": {},
+            "regime_fit_status_counts": {},
+            "top_regime_fit_reasons": {},
         },
         "top_blocker_reasons": {},
         "latest_activity_at": None,
@@ -269,9 +368,12 @@ def _build_engine_strategy_ledgers(
             "market_data_quality_state_counts": Counter(),
             "market_data_quality_reasons": Counter(),
             "market_data_quality_component_state_counts": Counter(),
+            "market_context_regime_fit_status_counts": Counter(),
+            "market_context_regime_fit_reasons": Counter(),
         }
         for strategy_id in strategy_ids
     }
+    candidate_context_by_run: dict[str, dict[str, Any]] = {}
 
     source_to_strategies: dict[str, list[str]] = {}
     for strategy in strategy_list:
@@ -370,12 +472,28 @@ def _build_engine_strategy_ledgers(
         candidate_payload = payloads[strategy_key]["candidates"]
         candidate_payload["candidate_run_count"] += 1
         candidate_payload["candidate_count"] += int(candidate_count or 0)
-        if _newer_desc_asc(generated_at, candidate_run_id, latest_candidate_at.get(strategy_key), candidate_payload.get("latest_candidate_run_id")):
+        is_latest_candidate = _newer_desc_asc(
+            generated_at,
+            candidate_run_id,
+            latest_candidate_at.get(strategy_key),
+            candidate_payload.get("latest_candidate_run_id"),
+        )
+        if is_latest_candidate:
             latest_candidate_at[strategy_key] = generated_at
             candidate_payload["latest_candidate_run_id"] = run_id
             candidate_payload["latest_generated_at"] = utc_iso(generated_at)
         _set_latest_activity(latest_activity, strategy_key, generated_at)
         summary = as_mapping(summary_json)
+        context_ref = _market_context_reference_from_summary(summary)
+        if context_ref:
+            candidate_context_by_run[run_id] = context_ref
+            _record_market_context_link(
+                section_payload=candidate_payload,
+                strategy_context=payloads[strategy_key]["market_context"],
+                stage="candidate",
+                context=context_ref,
+                latest=is_latest_candidate,
+            )
         _add_count_mapping(blockers_by_strategy[strategy_key], summary.get("top_quality_blockers"))
         _add_count_mapping(blockers_by_strategy[strategy_key], summary.get("top_rejection_counts"))
 
@@ -427,6 +545,20 @@ def _build_engine_strategy_ledgers(
             _add_quality_waterfall_reasons(blockers_by_strategy[strategy_key], evidence.get("quality_waterfall"))
 
             counters = candidate_diagnostic_counters[strategy_key]
+            diagnostic_context = _market_context_reference_from_payload(evidence.get("market_context"))
+            if diagnostic_context:
+                candidate_context_by_run.setdefault(str(candidate_run_id), diagnostic_context)
+                _record_market_context_link(
+                    section_payload=candidate_payload,
+                    strategy_context=payloads[strategy_key]["market_context"],
+                    stage="candidate",
+                    context=diagnostic_context,
+                )
+            _add_market_context_regime_fit(
+                counters["market_context_regime_fit_reasons"],
+                counters["market_context_regime_fit_status_counts"],
+                evidence.get("quality_waterfall"),
+            )
             rejection_counts = as_mapping(rejection_counts_json)
             ranking_gate = as_mapping(ranking_gate_json)
             replay_details = as_mapping(evidence.get("replay_details"))
@@ -552,6 +684,7 @@ def _build_engine_strategy_ledgers(
         _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
 
     latest_decision_at: dict[str, datetime] = {}
+    candidate_run_ref = func.coalesce(TradeCandidateModel.candidate_run_id, TradeSignalModel.source_id)
     decision_rows = session.execute(
         select(
             TradeDecisionModel.trading_strategy_id,
@@ -560,22 +693,52 @@ def _build_engine_strategy_ledgers(
             TradeDecisionModel.decided_at,
             TradeDecisionModel.reason_codes_json,
             TradeDecisionModel.blockers_json,
+            TradeDecisionModel.evidence_json,
+            candidate_run_ref,
         )
+        .join(TradeSignalModel, TradeDecisionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+        .outerjoin(TradeCandidateModel, TradeSignalModel.trade_candidate_id == TradeCandidateModel.trade_candidate_id)
         .where(TradeDecisionModel.trading_strategy_id.in_(strategy_ids))
         .where(TradeDecisionModel.routine == "entry")
         .where(TradeDecisionModel.decided_at >= start)
         .where(TradeDecisionModel.decided_at < end)
         .order_by(TradeDecisionModel.trading_strategy_id.asc(), TradeDecisionModel.decided_at.desc(), TradeDecisionModel.trade_decision_id.asc())
     )
-    for strategy_id, decision_state, trade_decision_id, decided_at, reason_codes_json, blockers_json in decision_rows:
+    for (
+        strategy_id,
+        decision_state,
+        trade_decision_id,
+        decided_at,
+        reason_codes_json,
+        blockers_json,
+        evidence_json,
+        candidate_run_id,
+    ) in decision_rows:
         strategy_key = str(strategy_id)
         decision_payload = payloads[strategy_key]["decisions"]
         _bump_count(decision_payload["decision_state_counts"], decision_state)
-        if _newer_desc_asc(decided_at, trade_decision_id, latest_decision_at.get(strategy_key), decision_payload.get("latest_trade_decision_id")):
+        is_latest_decision = _newer_desc_asc(
+            decided_at,
+            trade_decision_id,
+            latest_decision_at.get(strategy_key),
+            decision_payload.get("latest_trade_decision_id"),
+        )
+        if is_latest_decision:
             latest_decision_at[strategy_key] = decided_at
             decision_payload["latest_trade_decision_id"] = str(trade_decision_id)
             decision_payload["latest_decided_at"] = utc_iso(decided_at)
         _set_latest_activity(latest_activity, strategy_key, decided_at)
+        context_ref = candidate_context_by_run.get(str(candidate_run_id)) or _market_context_reference_from_payload(
+            as_mapping(evidence_json).get("market_context")
+        )
+        if context_ref:
+            _record_market_context_link(
+                section_payload=decision_payload,
+                strategy_context=payloads[strategy_key]["market_context"],
+                stage="decision",
+                context=context_ref,
+                latest=is_latest_decision,
+            )
         _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
         _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
 
@@ -588,8 +751,11 @@ def _build_engine_strategy_ledgers(
             TradeAdmissionModel.decided_at,
             TradeAdmissionModel.reason_codes_json,
             TradeAdmissionModel.blockers_json,
+            TradeAdmissionModel.evidence_json,
+            candidate_run_ref,
         )
         .join(TradeSignalModel, TradeAdmissionModel.trade_signal_id == TradeSignalModel.trade_signal_id)
+        .outerjoin(TradeCandidateModel, TradeSignalModel.trade_candidate_id == TradeCandidateModel.trade_candidate_id)
         .where(TradeSignalModel.trading_strategy_id.in_(strategy_ids))
         .where(TradeAdmissionModel.session_date == market_day)
         .order_by(
@@ -598,20 +764,41 @@ def _build_engine_strategy_ledgers(
             TradeAdmissionModel.admission_decision_id.asc(),
         )
     )
-    for strategy_id, admission_state, admission_decision_id, decided_at, reason_codes_json, blockers_json in admission_rows:
+    for (
+        strategy_id,
+        admission_state,
+        admission_decision_id,
+        decided_at,
+        reason_codes_json,
+        blockers_json,
+        evidence_json,
+        candidate_run_id,
+    ) in admission_rows:
         strategy_key = str(strategy_id)
         admission_payload = payloads[strategy_key]["admissions"]
         _bump_count(admission_payload["admission_state_counts"], admission_state)
-        if _newer_desc_asc(
+        is_latest_admission = _newer_desc_asc(
             decided_at,
             admission_decision_id,
             latest_admission_at.get(strategy_key),
             admission_payload.get("latest_admission_decision_id"),
-        ):
+        )
+        if is_latest_admission:
             latest_admission_at[strategy_key] = decided_at
             admission_payload["latest_admission_decision_id"] = str(admission_decision_id)
             admission_payload["latest_decided_at"] = utc_iso(decided_at)
         _set_latest_activity(latest_activity, strategy_key, decided_at)
+        context_ref = candidate_context_by_run.get(str(candidate_run_id)) or _market_context_reference_from_payload(
+            as_mapping(evidence_json).get("market_context")
+        )
+        if context_ref:
+            _record_market_context_link(
+                section_payload=admission_payload,
+                strategy_context=payloads[strategy_key]["market_context"],
+                stage="admission",
+                context=context_ref,
+                latest=is_latest_admission,
+            )
         _add_reason_list(blockers_by_strategy[strategy_key], reason_codes_json)
         _add_reason_list(blockers_by_strategy[strategy_key], blockers_json)
 
@@ -639,6 +826,22 @@ def _build_engine_strategy_ledgers(
         candidate_payload["market_data_quality_component_state_counts"] = _sorted_counts(
             diagnostic_counters["market_data_quality_component_state_counts"]
         )
+        candidate_payload["market_context_regime_fit_status_counts"] = _sorted_counts(diagnostic_counters["market_context_regime_fit_status_counts"])
+        candidate_payload["top_market_context_reasons"] = _top_blockers(diagnostic_counters["market_context_regime_fit_reasons"])
+        for section_name in ("candidates", "decisions", "admissions"):
+            section_payload = payload[section_name]
+            section_payload["market_context_snapshot_ids"] = dict(
+                sorted(
+                    (str(snapshot_id), int(count)) for snapshot_id, count in as_mapping(section_payload.get("market_context_snapshot_ids")).items()
+                )
+            )
+        market_context_payload = payload["market_context"]
+        market_context_payload["regime_fit_status_counts"] = _sorted_counts(diagnostic_counters["market_context_regime_fit_status_counts"])
+        market_context_payload["top_regime_fit_reasons"] = _top_blockers(diagnostic_counters["market_context_regime_fit_reasons"])
+        for key in ("candidate_snapshot_ids", "decision_snapshot_ids", "admission_snapshot_ids"):
+            market_context_payload[key] = dict(
+                sorted((str(snapshot_id), int(count)) for snapshot_id, count in as_mapping(market_context_payload.get(key)).items())
+            )
         payload["decisions"]["selected_count"] = int(payload["decisions"]["decision_state_counts"].get("selected", 0))
         payload["top_blocker_reasons"] = _top_blockers(blockers_by_strategy[strategy_id])
         payload["latest_activity_at"] = utc_iso(latest_activity.get(strategy_id))
@@ -742,7 +945,9 @@ def _build_execution_strategy_ledgers(
             .where(ExecutionIntentModel.trading_strategy_id.in_(strategy_ids))
             .where(ExecutionIntentModel.created_at >= start)
             .where(ExecutionIntentModel.created_at < end)
-            .order_by(ExecutionIntentModel.trading_strategy_id.asc(), ExecutionIntentModel.created_at.desc(), ExecutionIntentModel.execution_intent_id.asc())
+            .order_by(
+                ExecutionIntentModel.trading_strategy_id.asc(), ExecutionIntentModel.created_at.desc(), ExecutionIntentModel.execution_intent_id.asc()
+            )
         )
         for strategy_id, state, action_type, execution_intent_id, created_at in intent_rows:
             strategy_key = str(strategy_id)
@@ -776,7 +981,11 @@ def _build_execution_strategy_ledgers(
                     ),
                 )
             )
-            .order_by(ExecutionAttemptModel.trading_strategy_id.asc(), ExecutionAttemptModel.requested_at.desc(), ExecutionAttemptModel.execution_attempt_id.asc())
+            .order_by(
+                ExecutionAttemptModel.trading_strategy_id.asc(),
+                ExecutionAttemptModel.requested_at.desc(),
+                ExecutionAttemptModel.execution_attempt_id.asc(),
+            )
         )
         for strategy_id, status, trade_intent, execution_attempt_id, requested_at in attempt_rows:
             strategy_key = str(strategy_id)
@@ -840,7 +1049,9 @@ def _build_execution_strategy_ledgers(
                     PortfolioPositionModel.status.in_(sorted(OPEN_POSITION_STATUSES)),
                 )
             )
-            .order_by(PortfolioPositionModel.trading_strategy_id.asc(), PortfolioPositionModel.updated_at.desc(), PortfolioPositionModel.position_id.asc())
+            .order_by(
+                PortfolioPositionModel.trading_strategy_id.asc(), PortfolioPositionModel.updated_at.desc(), PortfolioPositionModel.position_id.asc()
+            )
         )
         for strategy_id, position_id, status, realized_pnl, unrealized_pnl, close_mark, close_marked_at, updated_at in position_rows:
             strategy_key = str(strategy_id)
@@ -936,15 +1147,21 @@ def _build_execution_strategy_ledgers(
         payload["intents"]["intent_action_state_counts"] = _sort_nested_counts(payload["intents"]["intent_action_state_counts"])
         payload["intents"]["intent_count"] = int(sum(intent_state_counts.values()))
 
-        attempt_status_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["attempts"]["attempt_status_counts"]).items()))
+        attempt_status_counts = dict(
+            sorted((str(state), int(count)) for state, count in as_mapping(payload["attempts"]["attempt_status_counts"]).items())
+        )
         payload["attempts"]["attempt_status_counts"] = attempt_status_counts
         payload["attempts"]["attempt_intent_status_counts"] = _sort_nested_counts(payload["attempts"]["attempt_intent_status_counts"])
         payload["attempts"]["attempt_count"] = int(sum(attempt_status_counts.values()))
 
-        position_status_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["positions"]["position_status_counts"]).items()))
+        position_status_counts = dict(
+            sorted((str(state), int(count)) for state, count in as_mapping(payload["positions"]["position_status_counts"]).items())
+        )
         payload["positions"]["position_status_counts"] = position_status_counts
         payload["positions"]["position_count"] = int(sum(position_status_counts.values()))
-        payload["positions"]["open_position_count"] = int(sum(count for state, count in position_status_counts.items() if state in OPEN_POSITION_STATUSES))
+        payload["positions"]["open_position_count"] = int(
+            sum(count for state, count in position_status_counts.items() if state in OPEN_POSITION_STATUSES)
+        )
         payload["positions"]["closed_position_count"] = int(position_status_counts.get("closed", 0))
         payload["closes"]["close_decision_state_counts"] = dict(
             sorted((str(state), int(count)) for state, count in as_mapping(payload["closes"]["close_decision_state_counts"]).items())
@@ -1002,6 +1219,7 @@ def _strategy_row(
         "positions": positions,
         "closes": closes,
         "pnl": as_mapping(execution_payload.get("pnl")),
+        "market_context": as_mapping(engine_payload.get("market_context")),
         "top_blocker_reasons": dict(as_mapping(engine_payload.get("top_blocker_reasons"))),
         "latest_lifecycle_ids": {
             "ticker_source_run_id": source.get("latest_ticker_source_run_id"),
@@ -1032,6 +1250,7 @@ def build_strategy_evidence_ledger(
     strategies = load_active_trading_strategies()
     engine_schema_ready = storage.engine_facts.schema_has_tables(*ENGINE_LEDGER_TABLES)
     feature_store_schema_ready = storage.engine_facts.feature_store_schema_ready()
+    market_context_schema_ready = storage.engine_facts.market_context_schema_ready()
     execution_schema_ready = storage.execution.schema_ready()
     intent_schema_ready = storage.execution.intent_schema_ready()
     portfolio_schema_ready = storage.execution.portfolio_schema_ready()
@@ -1078,6 +1297,7 @@ def build_strategy_evidence_ledger(
     schema = {
         "engine_facts": "ready" if engine_schema_ready else "blocked",
         "feature_store": "ready" if feature_store_schema_ready else "blocked",
+        "market_context": "ready" if market_context_schema_ready else "blocked",
         "execution": "ready" if execution_schema_ready else "blocked",
         "execution_intents": "ready" if intent_schema_ready else "blocked",
         "portfolio": "ready" if portfolio_schema_ready else "blocked",
@@ -1098,6 +1318,11 @@ def build_strategy_evidence_ledger(
             "decision_count": sum(coerce_int(as_mapping(row.get("decisions")).get("decision_count")) or 0 for row in rows),
             "selected_count": sum(coerce_int(as_mapping(row.get("decisions")).get("selected_count")) or 0 for row in rows),
             "admission_count": sum(coerce_int(as_mapping(row.get("admissions")).get("admission_count")) or 0 for row in rows),
+            "market_context_snapshot_count": len(
+                {snapshot_id for row in rows for snapshot_id in as_mapping(as_mapping(row.get("market_context")).get("candidate_snapshot_ids"))}
+                | {snapshot_id for row in rows for snapshot_id in as_mapping(as_mapping(row.get("market_context")).get("decision_snapshot_ids"))}
+                | {snapshot_id for row in rows for snapshot_id in as_mapping(as_mapping(row.get("market_context")).get("admission_snapshot_ids"))}
+            ),
             "intent_count": sum(coerce_int(as_mapping(row.get("intents")).get("intent_count")) or 0 for row in rows),
             "attempt_count": sum(coerce_int(as_mapping(row.get("attempts")).get("attempt_count")) or 0 for row in rows),
             "order_count": sum(coerce_int(as_mapping(row.get("attempts")).get("order_count")) or 0 for row in rows),

@@ -123,6 +123,7 @@ def _render_strategy_evidence_ledger(console: Any, payload: dict[str, Any]) -> N
             f"fills {_render_value(summary.get('fill_count'))}"
         ),
     )
+    overview.add_row("Market Contexts", _render_value(summary.get("market_context_snapshot_count")))
     overview.add_row(
         "Positions",
         (
@@ -150,6 +151,8 @@ def _render_strategy_evidence_ledger(console: Any, payload: dict[str, Any]) -> N
         signals = dict(row.get("signals") or {})
         decisions = dict(row.get("decisions") or {})
         admissions = dict(row.get("admissions") or {})
+        market_context = dict(row.get("market_context") or {})
+        latest_context = dict(market_context.get("latest") or {})
         attempts = dict(row.get("attempts") or {})
         positions = dict(row.get("positions") or {})
         closes = dict(row.get("closes") or {})
@@ -167,6 +170,9 @@ def _render_strategy_evidence_ledger(console: Any, payload: dict[str, Any]) -> N
             f"data {_render_count_map(candidates.get('top_data_quality_reasons'), limit=1, length=28)}; "
             f"mdq {_render_count_map(candidates.get('top_market_data_quality_reasons'), limit=1, length=28)}; "
             f"rank {_render_count_map(candidates.get('top_ranking_policy_blockers'), limit=1, length=28)}; "
+            f"ctx {_render_value(latest_context.get('regime_label'))}/"
+            f"{_render_value(latest_context.get('risk_posture'))} "
+            f"{_render_count_map(market_context.get('top_regime_fit_reasons'), limit=1, length=32)}; "
             f"s/d/sel/adm "
             f"{_render_value(signals.get('signal_count'))}/"
             f"{_render_value(decisions.get('decision_count'))}/"
