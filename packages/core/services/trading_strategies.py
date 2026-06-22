@@ -21,7 +21,7 @@ from core.services.payload_validation import (
     validate_payload_model,
 )
 from core.services.trade_structure_specs import resolve_trade_structure_spec
-from core.services.trading_strategy_build_models import RoutineSchedule, StrategyLiquidityRules
+from core.services.trading_strategy_build_models import RoutineSchedule, StrategyLiquidityRules, StrategyMarketContextPolicy
 from core.services.trading_strategy_execution_models import StrategyExecutionPolicy
 from core.services.trading_strategy_exit_models import ExitControllerPolicy, ExitControllerProfile
 from core.services.trading_strategy_risk_models import (
@@ -157,6 +157,7 @@ class StrategyCatalogRoutinePayload(DomainModel):
     enabled: bool = True
     selection: dict[str, Any] = Field(default_factory=dict)
     quality_overrides: dict[str, Any] = Field(default_factory=dict)
+    market_context: StrategyMarketContextPolicy | None = None
     recipes: tuple[str, ...] = Field(default_factory=tuple)
     policy: dict[str, Any] = Field(default_factory=dict)
 
@@ -367,13 +368,22 @@ def _compose_entry_routine(
     )
     if routine_profile_ref is None:
         raise ValueError("entry routine profile is required")
+    market_context_policy = StrategyMarketContextPolicy.model_validate(
+        _deep_merge(
+            normalize_mapping(structure_model.get("market_context")),
+            {} if routine.market_context is None else routine.market_context.to_payload(),
+        )
+    )
     payload: dict[str, Any] = {
         "routine": "entry",
         "enabled": routine.enabled,
         "schedule": _resolve_profile(profiles, "routine_profiles", routine_profile_ref),
         "selection": dict(routine.selection),
-        "quality_profile": normalize_required_text(structure_model.get("quality_profile")),
-        "quality_overrides": dict(routine.quality_overrides),
+        "quality": {
+            "quality_profile": normalize_required_text(structure_model.get("quality_profile")),
+            "quality_overrides": dict(routine.quality_overrides),
+            "market_context": market_context_policy.to_payload(),
+        },
         "recipes": list(routine.recipes),
         "policy": dict(routine.policy),
     }
@@ -463,11 +473,15 @@ def _compose_strategy_payload(
         archetype_key="protection_model",
     )
     executor_profile_ref = (
-        strategy.execution.executor_profile
-        or strategy.executor_profile
-        or normalize_required_text(archetype.get("executor_profile"))
+        strategy.execution.executor_profile or strategy.executor_profile or normalize_required_text(archetype.get("executor_profile"))
     )
-    if source_model_ref is None or structure_model_ref is None or liquidity_profile_ref is None or portfolio_model_ref is None or protection_model_ref is None:
+    if (
+        source_model_ref is None
+        or structure_model_ref is None
+        or liquidity_profile_ref is None
+        or portfolio_model_ref is None
+        or protection_model_ref is None
+    ):
         raise ValueError(f"{strategy.trading_strategy_id} has incomplete profile references")
 
     source_model = _resolve_profile(profiles, "source_models", source_model_ref)

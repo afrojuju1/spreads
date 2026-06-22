@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, TypeAdapter, field_validator, model_validator
 from whenever import Time
@@ -9,6 +9,17 @@ from core.domain.profiles import RankingPolicyConfig
 from core.model_contracts import DomainModel
 
 RANKING_POLICY_CONFIG = TypeAdapter(RankingPolicyConfig)
+MARKET_REGIME_LABELS = {
+    "bullish_trend",
+    "bearish_trend",
+    "range_bound",
+    "volatility_expansion",
+    "transition",
+    "unknown",
+}
+MARKET_RISK_POSTURES = {"risk_on", "neutral", "risk_off", "defensive", "unknown"}
+MARKET_TREND_STRENGTHS = {"strong_up", "modest_up", "flat", "modest_down", "strong_down", "unknown"}
+MARKET_VOLATILITY_STATES = {"compressed", "normal", "elevated", "stressed", "unknown"}
 
 
 class DteRange(DomainModel):
@@ -234,19 +245,110 @@ class EntrySelectionPolicy(DomainModel):
     min_signal_score: float | None = None
 
 
+def _normalize_context_labels(value: Any, *, allowed_values: set[str]) -> tuple[str, ...]:
+    if value in (None, "", (), []):
+        return ()
+    values = (value,) if isinstance(value, str) else tuple(value)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        label = str(item or "").strip().lower()
+        if label not in allowed_values:
+            allowed = ", ".join(sorted(allowed_values))
+            raise ValueError(f"unsupported market context label {item!r}; expected one of: {allowed}")
+        if label in seen:
+            continue
+        seen.add(label)
+        normalized.append(label)
+    return tuple(normalized)
+
+
+class StrategyMarketContextPolicy(DomainModel):
+    allowed_regime_labels: tuple[str, ...] = ()
+    preferred_regime_labels: tuple[str, ...] = ()
+    blocked_regime_labels: tuple[str, ...] = ()
+    allowed_risk_postures: tuple[str, ...] = ()
+    preferred_risk_postures: tuple[str, ...] = ()
+    blocked_risk_postures: tuple[str, ...] = ()
+    allowed_trend_strengths: tuple[str, ...] = ()
+    blocked_trend_strengths: tuple[str, ...] = ()
+    allowed_volatility_states: tuple[str, ...] = ()
+    blocked_volatility_states: tuple[str, ...] = ()
+    min_confidence: float | None = None
+    min_benchmark_count: int | None = None
+    min_supportive_benchmark_count: int | None = None
+    min_blocking_benchmark_count: int | None = None
+    missing_context_status: Literal["watch", "block"] = "watch"
+    unsupported_context_status: Literal["watch", "block"] = "watch"
+    low_confidence_status: Literal["watch", "block"] = "watch"
+
+    @field_validator("allowed_regime_labels", "preferred_regime_labels", "blocked_regime_labels", mode="before")
+    @classmethod
+    def _normalize_regimes(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_context_labels(value, allowed_values=MARKET_REGIME_LABELS)
+
+    @field_validator("allowed_risk_postures", "preferred_risk_postures", "blocked_risk_postures", mode="before")
+    @classmethod
+    def _normalize_risk_postures(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_context_labels(value, allowed_values=MARKET_RISK_POSTURES)
+
+    @field_validator("allowed_trend_strengths", "blocked_trend_strengths", mode="before")
+    @classmethod
+    def _normalize_trends(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_context_labels(value, allowed_values=MARKET_TREND_STRENGTHS)
+
+    @field_validator("allowed_volatility_states", "blocked_volatility_states", mode="before")
+    @classmethod
+    def _normalize_volatility(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_context_labels(value, allowed_values=MARKET_VOLATILITY_STATES)
+
+    @field_validator("missing_context_status", "unsupported_context_status", "low_confidence_status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: Any) -> str:
+        rendered = str(value or "watch").strip().lower()
+        if rendered not in {"watch", "block"}:
+            raise ValueError("market_context status policy must be watch or block")
+        return rendered
+
+    @model_validator(mode="after")
+    def _validate_policy(self) -> StrategyMarketContextPolicy:
+        if self.min_confidence is not None and not (0 <= self.min_confidence <= 1):
+            raise ValueError("market_context.min_confidence must be between 0 and 1")
+        for field_name in (
+            "min_benchmark_count",
+            "min_supportive_benchmark_count",
+            "min_blocking_benchmark_count",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"market_context.{field_name} must be >= 0")
+        return self
+
+    def to_quality_overrides(self) -> dict[str, Any]:
+        return self.to_payload()
+
+
 class StrategyEntryQualityPolicy(DomainModel):
-    profile_id: str | None = Field(default=None, validation_alias=AliasChoices("profile_id", "quality_profile"), serialization_alias="quality_profile")
+    profile_id: str | None = Field(
+        default=None, validation_alias=AliasChoices("profile_id", "quality_profile"), serialization_alias="quality_profile"
+    )
     overrides: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("overrides", "quality_overrides"),
         serialization_alias="quality_overrides",
     )
+    market_context: StrategyMarketContextPolicy = Field(default_factory=StrategyMarketContextPolicy)
 
     @field_validator("profile_id", mode="before")
     @classmethod
     def _normalize_optional_text(cls, value: Any) -> str | None:
         rendered = str(value or "").strip()
         return rendered or None
+
+    @field_validator("market_context", mode="before")
+    @classmethod
+    def _normalize_market_context(cls, value: Any) -> Any:
+        return {} if value is None else value
 
 
 __all__ = [
@@ -261,6 +363,7 @@ __all__ = [
     "StrategyBuildConfig",
     "StrategyEntryQualityPolicy",
     "StrategyLiquidityRules",
+    "StrategyMarketContextPolicy",
     "StrategyRecipes",
     "VerticalSpreadBuildConfig",
 ]

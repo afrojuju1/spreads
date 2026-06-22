@@ -86,6 +86,20 @@ liquidity_profiles:
 structure_models:
   momentum_long_call_7_21d:
     quality_profile: momentum_long_call_v1
+    market_context:
+      allowed_regime_labels: [bullish_trend, range_bound, transition]
+      preferred_regime_labels: [bullish_trend]
+      blocked_regime_labels: [bearish_trend]
+      allowed_risk_postures: [risk_on, neutral]
+      preferred_risk_postures: [risk_on]
+      blocked_risk_postures: [risk_off, defensive]
+      min_confidence: 0.45
+      min_benchmark_count: 2
+      min_supportive_benchmark_count: 1
+      min_blocking_benchmark_count: 2
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 7
@@ -103,6 +117,15 @@ structure_models:
           entry_slippage_dollars: 0.24
   index_call_credit_4_10d:
     quality_profile: call_credit_spread_v1
+    market_context:
+      allowed_regime_labels: [bearish_trend, range_bound, transition, volatility_expansion]
+      preferred_regime_labels: [bearish_trend, range_bound]
+      allowed_risk_postures: [risk_off, neutral, defensive]
+      preferred_risk_postures: [risk_off, neutral]
+      min_confidence: 0.35
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 4
@@ -125,6 +148,17 @@ structure_models:
           model_implied_volatility: 0.08
   index_put_credit_5_10d:
     quality_profile: put_credit_spread_v1
+    market_context:
+      allowed_regime_labels: [bullish_trend, range_bound, transition]
+      preferred_regime_labels: [bullish_trend, range_bound]
+      blocked_regime_labels: [bearish_trend]
+      allowed_risk_postures: [risk_on, neutral]
+      preferred_risk_postures: [risk_on, neutral]
+      blocked_risk_postures: [risk_off, defensive]
+      min_confidence: 0.35
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 5
@@ -147,6 +181,15 @@ structure_models:
           model_implied_volatility: 0.08
   index_iron_condor_5_10d:
     quality_profile: iron_condor_v1
+    market_context:
+      allowed_regime_labels: [range_bound, transition, volatility_expansion]
+      preferred_regime_labels: [range_bound]
+      allowed_risk_postures: [neutral]
+      preferred_risk_postures: [neutral]
+      min_confidence: 0.35
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 5
@@ -173,6 +216,14 @@ structure_models:
           model_implied_volatility: 0.08
   earnings_call_debit_4_10d:
     quality_profile: call_debit_spread_v1
+    market_context:
+      allowed_regime_labels: [bullish_trend, range_bound, transition, volatility_expansion]
+      preferred_regime_labels: [bullish_trend, volatility_expansion]
+      blocked_risk_postures: [defensive]
+      min_confidence: 0.25
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 4
@@ -197,8 +248,24 @@ structure_models:
   earnings_put_debit_4_10d:
     quality_profile: put_debit_spread_v1
     extends: earnings_call_debit_4_10d
+    market_context:
+      allowed_regime_labels: [bearish_trend, range_bound, transition, volatility_expansion]
+      preferred_regime_labels: [bearish_trend, volatility_expansion]
+      blocked_risk_postures: [defensive]
+      min_confidence: 0.25
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
   earnings_long_straddle_2_10d:
     quality_profile: long_straddle_v1
+    market_context:
+      allowed_regime_labels: [range_bound, transition, volatility_expansion, bullish_trend, bearish_trend]
+      preferred_regime_labels: [volatility_expansion, transition]
+      blocked_risk_postures: [defensive]
+      min_confidence: 0.25
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 2
@@ -221,6 +288,14 @@ structure_models:
           model_implied_volatility: 0.08
   earnings_long_strangle_2_10d:
     quality_profile: long_strangle_v1
+    market_context:
+      allowed_regime_labels: [range_bound, transition, volatility_expansion, bullish_trend, bearish_trend]
+      preferred_regime_labels: [volatility_expansion, transition]
+      blocked_risk_postures: [defensive]
+      min_confidence: 0.25
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 2
@@ -243,6 +318,17 @@ structure_models:
           model_implied_volatility: 0.08
   etf_short_put_4_10d:
     quality_profile: short_put_v1
+    market_context:
+      allowed_regime_labels: [bullish_trend, range_bound, transition]
+      preferred_regime_labels: [bullish_trend, range_bound]
+      blocked_regime_labels: [bearish_trend]
+      allowed_risk_postures: [risk_on, neutral]
+      preferred_risk_postures: [risk_on, neutral]
+      blocked_risk_postures: [risk_off, defensive]
+      min_confidence: 0.35
+      missing_context_status: watch
+      unsupported_context_status: watch
+      low_confidence_status: watch
     build:
       dte:
         min: 4

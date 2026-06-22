@@ -265,7 +265,15 @@ class EntryRuntime:
     def quality_overrides(self) -> dict[str, Any]:
         if self.strategy.entry is None:
             return {}
-        return dict(self.strategy.entry.quality.overrides)
+        overrides = dict(self.strategy.entry.quality.overrides)
+        context_policy = self.strategy.entry.quality.market_context.to_quality_overrides()
+        existing_filter_policy = overrides.get("market_context_regime_fit")
+        merged_filter_policy = dict(context_policy)
+        if isinstance(existing_filter_policy, dict):
+            merged_filter_policy.update(existing_filter_policy)
+        overrides["market_context_regime_fit"] = merged_filter_policy
+        overrides["market_context_policy"] = dict(context_policy)
+        return overrides
 
 
 @dataclass(frozen=True)

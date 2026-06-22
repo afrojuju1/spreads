@@ -288,6 +288,16 @@ def _status(status: FilterResultStatus | str) -> FilterResultStatus:
     return status if isinstance(status, FilterResultStatus) else FilterResultStatus(status)
 
 
+def _context_policy_status(value: Any, *, default: FilterResultStatus = FilterResultStatus.WATCH) -> FilterResultStatus:
+    rendered = as_text(value)
+    if rendered is None:
+        return default
+    normalized = rendered.strip().lower()
+    if normalized == FilterResultStatus.BLOCK.value:
+        return FilterResultStatus.BLOCK
+    return FilterResultStatus.WATCH
+
+
 def _result(
     *,
     filter_ref: EntryFilterRef,
@@ -597,6 +607,20 @@ def _market_context_regime_fit(context: EntryQualityContext, snapshot: FeatureSn
     minimum_benchmark_count = _threshold_int(thresholds, filter_ref, "min_benchmark_count")
     minimum_supportive_count = _threshold_int(thresholds, filter_ref, "min_supportive_benchmark_count")
     minimum_blocking_count = _threshold_int(thresholds, filter_ref, "min_blocking_benchmark_count")
+    minimum_confidence = _threshold_float(thresholds, filter_ref, "min_confidence")
+    missing_context_status = _context_policy_status(thresholds.get("missing_context_status"))
+    unsupported_context_status = _context_policy_status(thresholds.get("unsupported_context_status"))
+    low_confidence_status = _context_policy_status(thresholds.get("low_confidence_status"))
+    allowed_regime_labels = set(unique_text_list(thresholds.get("allowed_regime_labels")))
+    preferred_regime_labels = set(unique_text_list(thresholds.get("preferred_regime_labels")))
+    blocked_regime_labels = set(unique_text_list(thresholds.get("blocked_regime_labels")))
+    allowed_risk_postures = set(unique_text_list(thresholds.get("allowed_risk_postures")))
+    preferred_risk_postures = set(unique_text_list(thresholds.get("preferred_risk_postures")))
+    blocked_risk_postures = set(unique_text_list(thresholds.get("blocked_risk_postures")))
+    allowed_trend_strengths = set(unique_text_list(thresholds.get("allowed_trend_strengths")))
+    blocked_trend_strengths = set(unique_text_list(thresholds.get("blocked_trend_strengths")))
+    allowed_volatility_states = set(unique_text_list(thresholds.get("allowed_volatility_states")))
+    blocked_volatility_states = set(unique_text_list(thresholds.get("blocked_volatility_states")))
     market_context = _market_context_payload(context, snapshot)
     regime = as_mapping(market_context.get("regime"))
     regime_metrics = as_mapping(regime.get("metrics"))
@@ -618,16 +642,44 @@ def _market_context_regime_fit(context: EntryQualityContext, snapshot: FeatureSn
     if blocking_count is None:
         blocking_count = len(blocking_symbols)
     regime_reason_codes = unique_text_list(regime.get("reason_codes"))
+    regime_label = as_text(regime.get("regime_label"))
+    risk_posture = as_text(regime.get("risk_posture"))
+    trend_strength = as_text(regime.get("trend_strength"))
+    volatility_state = as_text(regime.get("volatility_state"))
+    confidence = coerce_float(regime.get("confidence"))
+    blocked_policy_reasons: list[str] = []
+    if regime_label in blocked_regime_labels:
+        blocked_policy_reasons.append("market_context_regime_blocked")
+    if risk_posture in blocked_risk_postures:
+        blocked_policy_reasons.append("market_context_risk_posture_blocked")
+    if trend_strength in blocked_trend_strengths:
+        blocked_policy_reasons.append("market_context_trend_strength_blocked")
+    if volatility_state in blocked_volatility_states:
+        blocked_policy_reasons.append("market_context_volatility_state_blocked")
+    unsupported_policy_reasons: list[str] = []
+    if allowed_regime_labels and regime_label not in allowed_regime_labels:
+        unsupported_policy_reasons.append("market_context_regime_not_allowed")
+    if allowed_risk_postures and risk_posture not in allowed_risk_postures:
+        unsupported_policy_reasons.append("market_context_risk_posture_not_allowed")
+    if allowed_trend_strengths and trend_strength not in allowed_trend_strengths:
+        unsupported_policy_reasons.append("market_context_trend_strength_not_allowed")
+    if allowed_volatility_states and volatility_state not in allowed_volatility_states:
+        unsupported_policy_reasons.append("market_context_volatility_state_not_allowed")
+    preferred_policy_reasons: list[str] = []
+    if regime_label in preferred_regime_labels:
+        preferred_policy_reasons.append("market_context_regime_preferred")
+    if risk_posture in preferred_risk_postures:
+        preferred_policy_reasons.append("market_context_risk_posture_preferred")
     metrics = {
         "market_context_snapshot_id": market_context.get("snapshot_id"),
         "market_context_scope": market_context.get("scope"),
         "market_context_observed_at": market_context.get("observed_at"),
         "market_context_expires_at": market_context.get("expires_at"),
-        "regime_label": regime.get("regime_label"),
-        "risk_posture": regime.get("risk_posture"),
-        "trend_strength": regime.get("trend_strength"),
-        "volatility_state": regime.get("volatility_state"),
-        "confidence": regime.get("confidence"),
+        "regime_label": regime_label,
+        "risk_posture": risk_posture,
+        "trend_strength": trend_strength,
+        "volatility_state": volatility_state,
+        "confidence": confidence,
         "freshness": data_quality.get("freshness"),
         "data_quality_state": data_quality.get("state"),
         "fidelity": list(market_context.get("fidelity") or []),
@@ -638,21 +690,47 @@ def _market_context_regime_fit(context: EntryQualityContext, snapshot: FeatureSn
         "supportive_benchmarks": supportive_symbols,
         "blocking_benchmark_count": blocking_count,
         "blocking_benchmarks": blocking_symbols,
+        "blocked_policy_reasons": blocked_policy_reasons,
+        "unsupported_policy_reasons": unsupported_policy_reasons,
+        "preferred_policy_reasons": preferred_policy_reasons,
         "regime_reason_codes": regime_reason_codes,
     }
     resolved_thresholds = {
         "min_benchmark_count": minimum_benchmark_count,
         "min_supportive_benchmark_count": minimum_supportive_count,
         "min_blocking_benchmark_count": minimum_blocking_count,
+        "min_confidence": minimum_confidence,
+        "missing_context_status": missing_context_status.value,
+        "unsupported_context_status": unsupported_context_status.value,
+        "low_confidence_status": low_confidence_status.value,
+        "allowed_regime_labels": sorted(allowed_regime_labels),
+        "preferred_regime_labels": sorted(preferred_regime_labels),
+        "blocked_regime_labels": sorted(blocked_regime_labels),
+        "allowed_risk_postures": sorted(allowed_risk_postures),
+        "preferred_risk_postures": sorted(preferred_risk_postures),
+        "blocked_risk_postures": sorted(blocked_risk_postures),
+        "allowed_trend_strengths": sorted(allowed_trend_strengths),
+        "blocked_trend_strengths": sorted(blocked_trend_strengths),
+        "allowed_volatility_states": sorted(allowed_volatility_states),
+        "blocked_volatility_states": sorted(blocked_volatility_states),
     }
     if not market_context:
         return _result(
             filter_ref=filter_ref,
-            status=FilterResultStatus.WATCH,
+            status=missing_context_status,
             reason_codes=("market_context_missing",),
             metrics=metrics,
             thresholds=resolved_thresholds,
             message="Shared market context was not available for entry-quality evaluation.",
+        )
+    if minimum_confidence is not None and confidence is not None and confidence < minimum_confidence:
+        return _result(
+            filter_ref=filter_ref,
+            status=low_confidence_status,
+            reason_codes=("market_context_confidence_below_min",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Shared market context confidence was below the strategy policy threshold.",
         )
     if observed_count < (minimum_benchmark_count or 0):
         return _result(
@@ -662,6 +740,24 @@ def _market_context_regime_fit(context: EntryQualityContext, snapshot: FeatureSn
             metrics=metrics,
             thresholds=resolved_thresholds,
             message="Shared market context did not have enough benchmark evidence.",
+        )
+    if blocked_policy_reasons:
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.BLOCK,
+            reason_codes=tuple(blocked_policy_reasons),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Shared market context matched a blocked strategy policy state.",
+        )
+    if unsupported_policy_reasons:
+        return _result(
+            filter_ref=filter_ref,
+            status=unsupported_context_status,
+            reason_codes=tuple(unsupported_policy_reasons),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Shared market context was outside the strategy policy's allowed states.",
         )
     if blocking_count >= (minimum_blocking_count or observed_count + 1):
         return _result(
@@ -676,7 +772,7 @@ def _market_context_regime_fit(context: EntryQualityContext, snapshot: FeatureSn
         return _result(
             filter_ref=filter_ref,
             status=FilterResultStatus.PASS,
-            reason_codes=("market_context_regime_supportive",),
+            reason_codes=tuple(preferred_policy_reasons or ("market_context_regime_supportive",)),
             metrics=metrics,
             thresholds=resolved_thresholds,
             message="Shared market context was supportive enough for long-call entries.",
