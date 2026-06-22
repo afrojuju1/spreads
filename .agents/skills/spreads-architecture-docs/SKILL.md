@@ -29,7 +29,7 @@ Use these only for the roles they now own:
 - [docs/planning/2026-06-08_trading_engine_inspiration_repos.md](../../../docs/planning/2026-06-08_trading_engine_inspiration_repos.md)
   - external trading-engine repos/frameworks to check first when designing trading-engine, source/scanner, strategy-quality, execution, risk, or portfolio refactors
 - [docs/planning/2026-06-08_entry_quality_pipeline_refactor.md](../../../docs/planning/2026-06-08_entry_quality_pipeline_refactor.md)
-  - implementation plan for the `quality_profile` / `EntryQualityPipeline` refactor; `momentum_long_calls` is cut over to `momentum_long_call_v1`, while later beads still cover new filters, ops rendering, cleanup, and final cutover validation
+  - completed implementation plan for the `quality_profile` / `EntryQualityPipeline` refactor; use it for historical cutover context and filter-stage naming, but use `docs/current_system_state.md` for current shared `MarketContextEngine` / `RegimeSnapshot` ownership
 - [docs/planning/2026-06-11_strategy_archetype_profile_contract.md](../../../docs/planning/2026-06-11_strategy_archetype_profile_contract.md)
   - implemented strategy catalog/profile contract; use it for authored strategy config shape under `packages/config/strategies`, while `docs/current_system_state.md` remains the current runtime source of truth
 - [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
@@ -95,6 +95,7 @@ When editing repo-local skills under `.agents/skills`:
 - keep `spreads-ops`, `spreads-strategy-lab`, `spreads-data-platform`, `spreads-live-rollout`, and `spreads-architecture-docs` as distinct workflows instead of duplicating the same triage guidance across skills
 - refresh stale service references when package splits change ownership
 - keep selection, execution-admission, and alert-projection boundaries explicit instead of letting them collapse into one vague “trading” layer
+- keep shared market-context ownership explicit: `MarketContextEngine` owns broad-market regime facts, strategies declare `market_context` policy, and entry quality consumes `market_context_regime_fit` instead of local regime calculators
 
 ## Quality Bar
 

@@ -99,7 +99,7 @@ Examples:
 - relative volume
 - VWAP reclaim or trend confirmation
 - relative strength vs SPY/QQQ/sector
-- market regime supportive enough for long calls
+- shared market context / regime fit supportive enough for long calls
 - quote age/spread sanity on the underlying
 
 ### 3. Chain Viability
@@ -173,12 +173,12 @@ Examples:
 
 ## Existing Gate Migration
 
-The active `momentum_long_call_v1` profile now carries the migrated gates plus target-DTE chain viability and SPY/QQQ relative-strength/regime filters. EV and richer premium-quality work remain separate future beads so the current cutover does not pretend those checks are active.
+The active `momentum_long_call_v1` profile now carries the migrated gates plus target-DTE chain viability, SPY/QQQ relative strength, and shared `market_context_regime_fit`. EV and richer premium-quality work remain separate future beads so the current cutover does not pretend those checks are active.
 
 | Stage | Active filter ids | Existing evidence / reason codes |
 | --- | --- | --- |
 | `source_preflight` | `source_is_fresh` | `ResolvedTickerSet.blockers`, `ticker_source_ready`, `ticker_source_fallback`, stale/missing source reasons |
-| `underlying_setup` | `setup_context_usable`, `relative_strength_supportive`, `market_regime_supportive` | setup status/score/reasons from candidate-builder diagnostics; SPY/QQQ benchmark return and relative-strength metrics; unfavorable setup is watch unless current scoring blocks it |
+| `underlying_setup` | `setup_context_usable`, `relative_strength_supportive`, `market_context_regime_fit` | setup status/score/reasons from candidate-builder diagnostics; SPY/QQQ benchmark return and relative-strength metrics; shared MarketContext/RegimeSnapshot fit evidence and policy reaction; unfavorable setup/context is watch unless current scoring blocks it |
 | `chain_viability` | `chain_data_available`, `option_snapshots_available`, `greeks_available`, `target_dte_chain_usable` | `data_unavailable`, `no_snapshot`, `no_delta`, target-DTE contract/snapshot/delta counts, raw viable-contract count, open-interest/size/spread chain blockers |
 | `contract_fit` | `strategy_family_matches`, `dte_in_range`, `delta_in_range`, `entry_recipe_passed` | `strategy_family_mismatch`, `dte_below_min`, `dte_above_max`, `short_delta_below_min`, `short_delta_above_max`, `delta_outside_range`, recipe failure reasons |
 | `premium_quality` | `open_interest_ok`, `relative_spread_ok`, `return_on_risk_ok`, `ranking_policy_passed` | `open_interest_below_min`, `open_interest_below_floor`, `relative_spread_above_max`, `relative_spread_above_ceiling`, `return_on_risk_below_min`, `return_on_risk_below_floor`, ranking policy blockers |
@@ -314,7 +314,7 @@ This is intentionally a full cleanup path, not a compatibility wrapper.
 4. Done: persist the quality waterfall on candidate diagnostics and candidate evidence.
 5. Done: cut over `momentum_long_calls` entry to `quality_profile: momentum_long_call_v1`.
 6. Done: add target-DTE optionable chain viability early.
-7. Done: add SPY/QQQ relative-strength and market-regime filters.
+7. Done: add SPY/QQQ relative-strength and shared market-context regime-fit filters.
 8. Done: update ops CLI/dashboard to show filter waterfall.
 9. Done: remove stale duplicate gate plumbing once the pipeline is canonical.
 10. Done: live-validate the cutover after the filter, ops, and cleanup beads. First selected-order lifecycle validation is tracked separately and should wait for an actual selected decision.
@@ -333,7 +333,7 @@ QUALITY_PROFILES = {
                 underlying_price_volume_ok,
                 relative_strength_supportive,
                 vwap_reclaim_confirmed,
-                market_regime_supportive,
+                market_context_regime_fit,
             ]),
             Stage("chain_viability", filters=[
                 has_target_dte_chain,

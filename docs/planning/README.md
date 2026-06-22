@@ -58,6 +58,8 @@ Implementation and evaluation companion:
 
 Detailed design specifications:
 
+The April regime design specs below are target/historical design references unless a task explicitly names one as active. Current live broad-market regime ownership is documented in `docs/current_system_state.md`: `MarketContextEngine` computes shared `MarketContextSnapshot` / `RegimeSnapshot` facts, and strategy quality consumes those facts through `market_context_regime_fit`.
+
 - [Regime Detection Specification](./2026-04-11_regime_detection_spec.md)
 - [Strategy Policy Matrix](./2026-04-11_strategy_policy_matrix.md)
 - [Horizon Selection Specification](./2026-04-12_horizon_selection_spec.md)

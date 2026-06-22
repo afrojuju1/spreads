@@ -25,7 +25,7 @@ Read [docs/current_system_state.md](../../../docs/current_system_state.md) for a
 Working assumptions:
 
 - ClickHouse owns high-volume option quote/trade events and market-data analytics.
-- Postgres owns domain facts, job state, trading state, strategy state, trading feature snapshots, capture summaries, calendar provider facts, provider fetch audit, earnings event consensus, and operator read models.
+- Postgres owns domain facts, job state, trading state, strategy state, trading feature snapshots, market context snapshots, capture summaries, calendar provider facts, provider fetch audit, earnings event consensus, and operator read models.
 - Redis is runtime coordination/cache infrastructure, not the durable market-data store. For earnings/event providers, Redis owns only short-lived hot provider responses, backoff, and ad-hoc refresh locks; Postgres owns durable audit and consensus truth.
 - `StorageOpsState` is the canonical storage health surface.
 - Do not reintroduce Postgres tick partitions, Postgres tick-retention pruning, or dual-write tick stores.
@@ -90,6 +90,7 @@ Market-closed recorder idle is healthy unless storage state says capture is degr
 - Raw tick firehose goes to ClickHouse.
 - Postgres stores facts needed by trading, operations, jobs, alerts, and summaries.
 - Trading feature facts live in `trading_feature_snapshots`; the company-valuation `feature_snapshots` table is not the trading feature store.
+- Shared broad-market context facts live in `market_context_snapshots`; backtests, ops, allocation, and entry quality should replay or link those facts rather than recomputing regime in strategy-local data paths.
 - Entry-time market-data SLA evidence lives in strategy-ledger fields and `trading_feature_snapshots.market_data_quality_json`, while ClickHouse remains the raw event source for historical coverage checks.
 - Calendar provider rows live in `calendar_events`; derived earnings truth lives in `earnings_event_consensus`; bounded provider fetch summaries live in `provider_fetch_audit`.
 - Rollups should be named by the analytical question they answer, not by the ingestion accident that produced them.

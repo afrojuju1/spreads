@@ -31,6 +31,7 @@
 - If research surfaces another repo or framework with a clearly better pattern for the active design problem, propose adding it to the inspiration list with the specific pattern to borrow and what not to copy. Do not silently expand the inspiration set or chase broad framework rewrites.
 - Keep the current runtime boundary explicit:
   - candidate and signal selection are account-agnostic strategy truth
+  - `MarketContextEngine` owns shared `MarketContextSnapshot` / `RegimeSnapshot` facts; strategies declare context policy and consume context, but must not recompute broad-market regime locally
   - execution admission is a separate execution/risk concern
   - alerts are downstream job-backed projections, not source-of-truth state
 - Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, execution intent handoff, execution admission, and deterministic broker-reject handling under `account_capacity.py`, `risk_manager.py`, `services/execution_intents/`, and `services/execution/`, not back into the account snapshot layer.
