@@ -8,6 +8,10 @@ from typing import Any
 
 from core.money import close_pnl, money_sum_float, premium_float
 from core.services.backtest.execution_simulation import build_execution_simulation_backtest
+from core.services.backtest.market_context import (
+    merge_market_context_from_strategy_results,
+    summarize_market_context_day_results,
+)
 from core.services.backtest.market_slices import load_latest_historical_option_quotes
 from core.services.backtest.metrics import compute_backtest_performance_metrics
 from core.services.backtest.strategy_scope import load_backtest_strategy_scope
@@ -106,7 +110,9 @@ def _weighted_fill(fills: list[Mapping[str, Any]]) -> tuple[float, float | None,
     return total_quantity, premium_float(notional / total_quantity), min(filled_at_values, default=None)
 
 
-def _position_from_fill(*, runtime: Any, day_result: Mapping[str, Any], attempt: Mapping[str, Any], fills: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+def _position_from_fill(
+    *, runtime: Any, day_result: Mapping[str, Any], attempt: Mapping[str, Any], fills: list[Mapping[str, Any]]
+) -> dict[str, Any] | None:
     quantity, entry_value, filled_at = _weighted_fill(fills)
     if quantity <= 0:
         return None
@@ -417,6 +423,7 @@ def _update_strategy_portfolio(strategy_result: dict[str, Any]) -> None:
         "admission_approval_rate": metrics["admission"]["admission_approval_rate"],
         "quote_coverage": metrics["market_data"]["quote_coverage"],
     }
+    strategy_result["market_context"] = summarize_market_context_day_results(day_results)
     strategy_result["metrics_fidelity"] = dict(metrics["fidelity"])
     fidelity = as_mapping(strategy_result.get("fidelity_labels"))
     strategy_result["fidelity_labels"] = {
@@ -427,9 +434,7 @@ def _update_strategy_portfolio(strategy_result: dict[str, Any]) -> None:
         "metrics": str(metrics["fidelity"]["metrics_engine"]),
     }
     strategy_result["outcome_label"] = (
-        "simulated_closed_positions"
-        if closes
-        else ("simulated_open_positions_marked" if positions else strategy_result.get("outcome_label"))
+        "simulated_closed_positions" if closes else ("simulated_open_positions_marked" if positions else strategy_result.get("outcome_label"))
     )
 
 
@@ -495,12 +500,15 @@ def build_portfolio_simulation_backtest(
         if isinstance(day, Mapping)
     ]
     metrics = compute_backtest_performance_metrics(all_day_results)
+    market_context_summary = merge_market_context_from_strategy_results([row for row in result.get("strategies") or [] if isinstance(row, Mapping)])
     result["evaluation_mode"] = "portfolio_simulation_current_model"
     result["generated_at"] = utc_now_iso()
     result["summary"] = {
         **dict(as_mapping(result.get("summary"))),
         "position_count": sum(coerce_int(as_mapping(row.get("positions")).get("position_count")) or 0 for row in result.get("strategies") or []),
-        "close_decision_count": sum(coerce_int(as_mapping(row.get("exits")).get("close_decision_count")) or 0 for row in result.get("strategies") or []),
+        "close_decision_count": sum(
+            coerce_int(as_mapping(row.get("exits")).get("close_decision_count")) or 0 for row in result.get("strategies") or []
+        ),
         "close_count": sum(coerce_int(as_mapping(row.get("exits")).get("close_count")) or 0 for row in result.get("strategies") or []),
         "realized_pnl": metrics["pnl"]["realized_pnl"],
         "unrealized_pnl": metrics["pnl"]["unrealized_pnl"],
@@ -512,7 +520,10 @@ def build_portfolio_simulation_backtest(
             "admission_approval_rate": metrics["admission"]["admission_approval_rate"],
             "quote_coverage": metrics["market_data"]["quote_coverage"],
         },
+        "market_context_status_counts": dict(market_context_summary.get("status_counts") or {}),
+        "market_context_regime_buckets": list(market_context_summary.get("regime_buckets") or []),
     }
+    result["market_context"] = market_context_summary
     result["fidelity_labels"] = {
         **dict(as_mapping(result.get("fidelity_labels"))),
         "mode": "portfolio_simulation_current_model",

@@ -8,6 +8,10 @@ import hashlib
 from typing import Any
 
 from core.money import option_contract_notional, option_limit_price, repriced_limit_price
+from core.services.backtest.market_context import (
+    merge_market_context_from_strategy_results,
+    summarize_market_context_day_results,
+)
 from core.services.backtest.market_slices import load_latest_historical_option_quotes
 from core.services.backtest.strategy_rerun import build_strategy_rerun_backtest
 from core.services.backtest.strategy_scope import load_backtest_strategy_scope
@@ -82,9 +86,7 @@ def _admission_allows_simulation(admission: Mapping[str, Any] | None) -> bool:
     if state in {"blocked", "failed", "rejected", "unknown"}:
         return False
     blockers = [
-        str(item)
-        for item in admission.get("blockers") or []
-        if str(item or "").strip() and str(item) != "backtest_execution_capacity_deferred"
+        str(item) for item in admission.get("blockers") or [] if str(item or "").strip() and str(item) != "backtest_execution_capacity_deferred"
     ]
     return not blockers
 
@@ -231,7 +233,9 @@ def _initial_order_request(
     return order_request, limit_price
 
 
-def _quote_rows_by_time(snapshot_rows: list[dict[str, Any]], latest_quotes: Mapping[str, Mapping[str, Any]]) -> list[tuple[datetime, dict[str, dict[str, Any]]]]:
+def _quote_rows_by_time(
+    snapshot_rows: list[dict[str, Any]], latest_quotes: Mapping[str, Mapping[str, Any]]
+) -> list[tuple[datetime, dict[str, dict[str, Any]]]]:
     grouped: dict[datetime, dict[str, dict[str, Any]]] = {}
     for row in snapshot_rows:
         symbol = str(row.get("option_symbol") or "").upper()
@@ -740,6 +744,7 @@ def _update_strategy_execution(strategy_result: dict[str, Any]) -> None:
         "fill_rate": None if not attempts else round(len(fills) / len(attempts), 4),
         "fill_model": DEFAULT_FILL_MODEL,
     }
+    strategy_result["market_context"] = summarize_market_context_day_results(day_results)
     fidelity = as_mapping(strategy_result.get("fidelity_labels"))
     strategy_result["fidelity_labels"] = {
         **dict(fidelity),
@@ -747,9 +752,7 @@ def _update_strategy_execution(strategy_result: dict[str, Any]) -> None:
         "fill": "simulated_quote_touch_or_no_fill",
     }
     strategy_result["outcome_label"] = (
-        "simulated_fills_created"
-        if fills
-        else ("simulated_attempts_no_fill" if attempts else strategy_result.get("outcome_label"))
+        "simulated_fills_created" if fills else ("simulated_attempts_no_fill" if attempts else strategy_result.get("outcome_label"))
     )
 
 
@@ -804,6 +807,7 @@ def build_execution_simulation_backtest(
 
     total_attempts = sum(coerce_int(as_mapping(row.get("execution")).get("attempt_count")) or 0 for row in result.get("strategies") or [])
     total_fills = sum(coerce_int(as_mapping(row.get("execution")).get("fill_count")) or 0 for row in result.get("strategies") or [])
+    market_context_summary = merge_market_context_from_strategy_results([row for row in result.get("strategies") or [] if isinstance(row, Mapping)])
     result["evaluation_mode"] = "execution_simulation_current_model"
     result["generated_at"] = utc_now_iso()
     result["summary"] = {
@@ -811,7 +815,10 @@ def build_execution_simulation_backtest(
         "attempt_count": total_attempts,
         "fill_count": total_fills,
         "fill_rate": None if total_attempts <= 0 else round(total_fills / total_attempts, 4),
+        "market_context_status_counts": dict(market_context_summary.get("status_counts") or {}),
+        "market_context_regime_buckets": list(market_context_summary.get("regime_buckets") or []),
     }
+    result["market_context"] = market_context_summary
     result["fidelity_labels"] = {
         **dict(as_mapping(result.get("fidelity_labels"))),
         "mode": "execution_simulation_current_model",

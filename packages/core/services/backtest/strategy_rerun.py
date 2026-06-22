@@ -17,6 +17,11 @@ from core.services.backtest.market_slices import (
     HistoricalMarketSliceRequest,
     load_historical_trade_candidate_payloads,
 )
+from core.services.backtest.market_context import (
+    merge_market_context_from_strategy_results,
+    resolve_backtest_market_context,
+    summarize_market_context_day_results,
+)
 from core.services.backtest.strategy_scope import load_backtest_strategy_scope, strategy_profile, strategy_variant_id
 from core.services.backtest.windows import normalize_backtest_window
 from core.services.entry_planner import plan_entry_selection
@@ -285,6 +290,8 @@ def _candidate_build_result(
     greeks_provider: Any,
     candidate_limit: int,
     per_symbol_top: int,
+    market_context: Mapping[str, Any],
+    market_context_payload: Mapping[str, Any],
 ) -> tuple[CandidateBuildResult, dict[str, Any]]:
     candidate_request = CandidateBuildRequest(
         run_ref=EngineRunRef(
@@ -401,10 +408,12 @@ def _candidate_build_result(
         "build_profile": runtime.build_settings.build_profile,
         "greeks_source": base_parameters.greeks_source,
         "market_slice_fidelity": {
-            symbol: dict(as_mapping(diagnostics).get("fidelity_labels"))
-            for symbol, diagnostics in market_slice_diagnostics.items()
+            symbol: dict(as_mapping(diagnostics).get("fidelity_labels")) for symbol, diagnostics in market_slice_diagnostics.items()
         },
+        "market_context_reference": dict(market_context),
     }
+    if market_context_payload:
+        summary["market_context"] = dict(market_context_payload)
     if failures and not flattened:
         summary["status"] = "failed"
         summary["reason"] = "market_slice_failures"
@@ -434,10 +443,7 @@ def _attach_trade_signal_ids(
     for row in signal_rows:
         candidate = candidate_payload(row)
         symbol = str(row.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
-        candidate_identity = str(
-            row.get("candidate_identity")
-            or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))
-        ).strip()
+        candidate_identity = str(row.get("candidate_identity") or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))).strip()
         if not symbol or not candidate_identity:
             rows.append(dict(row))
             continue
@@ -591,6 +597,9 @@ def _strategy_day_result(
 ) -> dict[str, Any]:
     generated_at = utc_now_iso()
     as_of = _session_as_of(market_date)
+    backtest_market_context = resolve_backtest_market_context(storage=storage, as_of=as_of)
+    market_context = dict(backtest_market_context["reference"])
+    market_context_payload = dict(backtest_market_context["payload"])
     runtime = build_entry_runtime(strategy)
     resolved_symbols = _resolve_strategy_symbols(
         storage=storage,
@@ -609,6 +618,7 @@ def _strategy_day_result(
             "reason": "ticker_source_blocked",
             "market_date": market_date,
             "as_of": as_of.isoformat().replace("+00:00", "Z"),
+            "market_context": market_context,
             "ticker_set": ticker_summary,
             "candidate_build": candidate_result_summary(None),
             "signals": [],
@@ -620,6 +630,7 @@ def _strategy_day_result(
                 "signal": "not_run",
                 "decision": "not_run",
                 "admission": "not_run",
+                "market_context": str(backtest_market_context["fidelity_label"]),
             },
         }
 
@@ -636,6 +647,8 @@ def _strategy_day_result(
         greeks_provider=greeks_provider,
         candidate_limit=candidate_limit,
         per_symbol_top=per_symbol_top,
+        market_context=market_context,
+        market_context_payload=market_context_payload,
     )
     selection_result = EntrySelectionEngine().select(
         runtime=runtime_with_symbols,
@@ -690,6 +703,7 @@ def _strategy_day_result(
         "status": "ok",
         "market_date": market_date,
         "as_of": as_of.isoformat().replace("+00:00", "Z"),
+        "market_context": market_context,
         "ticker_set": ticker_summary,
         "candidate_build": {
             **candidate_result_summary(selection_result.candidate_result),
@@ -715,6 +729,7 @@ def _strategy_day_result(
             "source": "stored_dynamic_source_or_config_scope",
             "calendar": "stored_calendar_no_refresh",
             "market_data": "historical_clickhouse_slices",
+            "market_context": str(backtest_market_context["fidelity_label"]),
             "candidate": str(selection_result.candidate_result.summary.get("candidate_source") or "current_builder_rerun"),
             "entry_quality": "current_entry_quality_pipeline",
             "signal": "current_entry_selection_engine",
@@ -736,6 +751,7 @@ def _aggregate_strategy_result(strategy: Any, day_results: list[dict[str, Any]])
     candidate_fidelity = "current_builder_rerun"
     if any(as_mapping(result.get("fidelity_labels")).get("candidate") == "stored_trade_candidate_fallback" for result in day_results):
         candidate_fidelity = "stored_trade_candidate_fallback"
+    market_context_summary = summarize_market_context_day_results([row for row in day_results if isinstance(row, Mapping)])
     return {
         **strategy_profile(strategy),
         "variant_id": strategy_variant_id(strategy),
@@ -760,11 +776,22 @@ def _aggregate_strategy_result(strategy: Any, day_results: list[dict[str, Any]])
             "admission_state_counts": _state_counts(admission_rows, "admission_state"),
             "approval_rate": None if not admission_rows else round(approved_count / len(admission_rows), 4),
         },
+        "market_context": market_context_summary,
         "pnl": {"net_pnl": 0.0},
         "execution": {"attempt_count": 0, "fill_count": 0},
         "fidelity_labels": {
             "mode": "strategy_rerun_current_config",
             "candidate": candidate_fidelity,
+            "market_context": ",".join(
+                sorted(
+                    {
+                        str(as_mapping(result.get("fidelity_labels")).get("market_context") or "")
+                        for result in day_results
+                        if as_mapping(result.get("fidelity_labels")).get("market_context")
+                    }
+                )
+            )
+            or "not_available",
             "signal": "current_entry_selection_engine",
             "decision": "artifact_decision_from_current_entry_policy",
             "admission": "current_policy_execution_capacity_deferred",
@@ -797,9 +824,7 @@ def build_strategy_rerun_backtest(
     window = normalize_backtest_window(start_date, end_date, max_days=max_days)
     strategies = load_backtest_strategy_scope(strategy_ids) if strategy_scope is None else dict(strategy_scope)
     entry_strategies = {
-        strategy_id: strategy
-        for strategy_id, strategy in strategies.items()
-        if strategy.entry is not None and strategy.entry.enabled
+        strategy_id: strategy for strategy_id, strategy in strategies.items() if strategy.entry is not None and strategy.entry.enabled
     }
     calendar_resolver = _StoredCalendarResolver(storage.database_url or db_target)
     greeks_provider = build_local_greeks_provider()
@@ -827,12 +852,12 @@ def build_strategy_rerun_backtest(
         calendar_resolver.close()
 
     total_candidates = sum(
-        coerce_int(as_mapping(result.get("candidate_productivity")).get("trade_candidate_count")) or 0
-        for result in strategy_results
+        coerce_int(as_mapping(result.get("candidate_productivity")).get("trade_candidate_count")) or 0 for result in strategy_results
     )
     total_signals = sum(coerce_int(as_mapping(result.get("selection_quality")).get("signal_count")) or 0 for result in strategy_results)
     total_decisions = sum(coerce_int(as_mapping(result.get("selection_quality")).get("decision_count")) or 0 for result in strategy_results)
     total_admissions = sum(coerce_int(as_mapping(result.get("admissions")).get("admission_count")) or 0 for result in strategy_results)
+    market_context_summary = merge_market_context_from_strategy_results([row for row in strategy_results if isinstance(row, Mapping)])
     candidate_fidelity = "current_builder_rerun"
     if any(as_mapping(result.get("fidelity_labels")).get("candidate") == "stored_trade_candidate_fallback" for result in strategy_results):
         candidate_fidelity = "stored_trade_candidate_fallback"
@@ -851,13 +876,26 @@ def build_strategy_rerun_backtest(
             "signal_count": total_signals,
             "decision_count": total_decisions,
             "admission_count": total_admissions,
+            "market_context_status_counts": dict(market_context_summary.get("status_counts") or {}),
+            "market_context_regime_buckets": list(market_context_summary.get("regime_buckets") or []),
             "net_pnl": 0.0,
         },
+        "market_context": market_context_summary,
         "strategies": strategy_results,
         "fidelity_labels": {
             "mode": "strategy_rerun_current_model",
             "source": "stored_dynamic_source_or_config_scope",
             "market_data": "historical_clickhouse_slices",
+            "market_context": ",".join(
+                sorted(
+                    {
+                        str(as_mapping(result.get("fidelity_labels")).get("market_context") or "")
+                        for result in strategy_results
+                        if as_mapping(result.get("fidelity_labels")).get("market_context")
+                    }
+                )
+            )
+            or "not_available",
             "calendar": "stored_calendar_no_refresh",
             "candidate": candidate_fidelity,
             "signal": "current_entry_selection_engine",

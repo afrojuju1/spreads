@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from core.services.backtest.execution_simulation import build_execution_simulation_backtest
+from core.services.backtest.market_context import merge_market_context_from_strategy_results
 from core.services.backtest.models import BacktestArtifactKind, BacktestMode, BacktestSweepConfig
 from core.services.backtest.portfolio_simulation import build_portfolio_simulation_backtest
 from core.services.backtest.strategy_rerun import build_strategy_rerun_backtest
@@ -251,6 +252,26 @@ def _acceleration_fidelity() -> str:
     return "available_" + "_".join(available) if available else "not_installed_polars_vectorbt"
 
 
+def _regime_bucket_metric_rows(strategy_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for strategy_result in strategy_rows:
+        market_context = as_mapping(strategy_result.get("market_context"))
+        for bucket in market_context.get("regime_buckets") or []:
+            if not isinstance(bucket, Mapping):
+                continue
+            rows.append(
+                {
+                    "sweep_variant_id": strategy_result.get("sweep_variant_id"),
+                    "variant_id": strategy_result.get("variant_id"),
+                    "trading_strategy_id": strategy_result.get("trading_strategy_id"),
+                    "base_mode": strategy_result.get("base_mode"),
+                    "variant_parameters": dict(as_mapping(strategy_result.get("variant_parameters"))),
+                    **dict(bucket),
+                }
+            )
+    return rows
+
+
 def build_parameter_sweep_backtest(
     *,
     start_date: str | date,
@@ -274,13 +295,11 @@ def build_parameter_sweep_backtest(
     generated_at = utc_now_iso()
 
     for index, parameters in enumerate(parameter_sets, start=1):
-        variant_scope = {
-            strategy_id: _apply_variant_parameters(strategy, parameters)
-            for strategy_id, strategy in base_strategies.items()
-        }
-        sweep_variant_id = "sweep_variant:" + hashlib.sha1(
-            json.dumps({"index": index, "parameters": parameters}, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()[:16]
+        variant_scope = {strategy_id: _apply_variant_parameters(strategy, parameters) for strategy_id, strategy in base_strategies.items()}
+        sweep_variant_id = (
+            "sweep_variant:"
+            + hashlib.sha1(json.dumps({"index": index, "parameters": parameters}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+        )
         variant_result = _run_base_mode(
             mode=sweep.base_mode,
             start_date=start_date,
@@ -338,6 +357,8 @@ def build_parameter_sweep_backtest(
 
     rankings = _rankings(strategy_rows, sweep.rank_metric)
     top_rank = rankings.get(sweep.rank_metric, [{}])[0] if rankings.get(sweep.rank_metric) else {}
+    market_context_summary = merge_market_context_from_strategy_results([row for row in strategy_rows if isinstance(row, Mapping)])
+    regime_bucket_metrics = _regime_bucket_metric_rows(strategy_rows)
     return {
         "status": "ready",
         "evaluation_mode": "parameter_sweep_current_model",
@@ -351,8 +372,11 @@ def build_parameter_sweep_backtest(
             "top_variant_id": top_rank.get("variant_id"),
             "top_sweep_variant_id": top_rank.get("sweep_variant_id"),
             "top_rank_value": top_rank.get("value"),
+            "market_context_status_counts": dict(market_context_summary.get("status_counts") or {}),
+            "market_context_regime_bucket_count": len(regime_bucket_metrics),
             "net_pnl": sum(coerce_float(as_mapping(row.get("pnl")).get("net_pnl")) or 0.0 for row in strategy_rows),
         },
+        "market_context": market_context_summary,
         "sweep": {
             "base_mode": sweep.base_mode.value,
             "max_variants": sweep.max_variants,
@@ -367,6 +391,7 @@ def build_parameter_sweep_backtest(
             "base_mode": sweep.base_mode.value,
             "primary_rank_metric": sweep.rank_metric,
             "rankings": rankings,
+            "regime_bucket_metrics": regime_bucket_metrics,
         },
         "variant_artifacts": variant_artifacts,
         "fidelity_labels": {
