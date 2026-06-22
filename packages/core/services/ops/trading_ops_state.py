@@ -499,6 +499,11 @@ def _symbols_from_ticker_source_run(ticker_source_run: Mapping[str, Any] | None)
     return [str(symbol).strip().upper() for symbol in tickers if str(symbol or "").strip()]
 
 
+def _normalized_symbols(symbols: tuple[str, ...] | list[str]) -> list[str]:
+    normalized = [str(symbol).strip().upper() for symbol in symbols if str(symbol or "").strip()]
+    return list(dict.fromkeys(normalized))
+
+
 def _normalize_broker_environment(value: Any) -> str:
     normalized = as_text(value)
     if normalized is None:
@@ -1201,19 +1206,44 @@ def _source_state(
     *,
     ticker_source_run: Mapping[str, Any] | None,
     source_kind: str,
+    configured_symbols: tuple[str, ...] | list[str],
     max_age_seconds: int | None,
     market_open: bool,
     now: datetime,
 ) -> dict[str, Any]:
+    normalized_source_kind = str(source_kind or "").strip().lower()
+    configured = _normalized_symbols(configured_symbols)
+    if normalized_source_kind == "static":
+        symbol_count = len(configured)
+        return {
+            "status": "healthy" if symbol_count > 0 else ("degraded" if market_open else "idle"),
+            "raw_status": "configured" if symbol_count > 0 else "empty",
+            "source_kind": "static",
+            "source_basis": "configured_universe",
+            "source_evidence_state": "static_symbols_configured" if symbol_count > 0 else "no_source_symbols",
+            "age_seconds": None,
+            "max_age_seconds": None,
+            "stale": False,
+            "symbol_count": symbol_count,
+            "symbols": configured[:SOURCE_SYMBOL_LIMIT],
+            "latest_run": None,
+            "reason": None if symbol_count > 0 else "source_empty",
+        }
+
     if ticker_source_run is None:
         return {
-            "status": "degraded" if market_open and source_kind == "dynamic" else "idle",
+            "status": "degraded" if market_open and normalized_source_kind == "dynamic" else "idle",
+            "raw_status": "missing",
+            "source_kind": normalized_source_kind or source_kind,
+            "source_basis": "ticker_source_run",
+            "source_evidence_state": "no_recent_source_run",
             "age_seconds": None,
             "max_age_seconds": max_age_seconds,
+            "stale": bool(market_open and normalized_source_kind == "dynamic"),
             "symbol_count": 0,
             "symbols": [],
             "latest_run": None,
-            "reason": "ticker_source_run_missing",
+            "reason": "no_recent_source_run",
         }
     raw_status = str(ticker_source_run.get("status") or "unknown")
     age_seconds = _age_seconds(ticker_source_run.get("generated_at") or ticker_source_run.get("completed_at"), now=now)
@@ -1224,16 +1254,22 @@ def _source_state(
     symbols = _symbols_from_ticker_source_run(ticker_source_run)
     symbol_count = coerce_int(ticker_source_run.get("selected_count")) or len(symbols)
     empty = status == "healthy" and symbol_count == 0
+    source_evidence_state = "source_symbols_available" if symbol_count > 0 else "no_source_symbols"
+    if stale:
+        source_evidence_state = "source_stale"
     return {
         "status": status,
         "raw_status": raw_status,
+        "source_kind": normalized_source_kind or source_kind,
+        "source_basis": "ticker_source_run",
+        "source_evidence_state": source_evidence_state,
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
         "stale": stale,
         "symbol_count": symbol_count,
         "symbols": symbols[:25],
         "latest_run": dict(ticker_source_run),
-        "reason": "source_stale" if stale else "source_empty" if empty else None,
+        "reason": "source_stale" if stale else "source_empty" if empty else (None if status == "healthy" else "source_degraded"),
     }
 
 
@@ -1679,6 +1715,7 @@ def _build_trading_flows(
         source_state = _source_state(
             ticker_source_run=latest_source,
             source_kind=strategy.source.kind,
+            configured_symbols=strategy.symbols,
             max_age_seconds=strategy.source.max_age_seconds,
             market_open=market_open,
             now=now,

@@ -153,6 +153,23 @@ def _render_stage_count_map(value: Any, *, item_length: int = 30) -> str:
     return _truncate(rendered or "-", length=item_length)
 
 
+def _render_source_state(value: Any) -> str:
+    if not isinstance(value, dict):
+        return "-"
+    status = _render_value(value.get("status"))
+    basis = str(value.get("source_basis") or "").strip()
+    evidence_state = str(value.get("source_evidence_state") or "").strip()
+    if basis == "configured_universe":
+        label = "static"
+        if evidence_state == "static_symbols_configured":
+            label = "static configured"
+        return f"{status} {label}"
+    age_seconds = value.get("age_seconds")
+    if age_seconds is None:
+        return f"{status} dynamic"
+    return f"{status} dynamic {_render_value(age_seconds)}s"
+
+
 def _waterfall_stage_counts(waterfall: dict[str, Any], stage: str) -> dict[str, Any]:
     stage_counts = waterfall.get("stage_counts")
     if isinstance(stage_counts, dict) and isinstance(stage_counts.get(stage), dict):
@@ -725,7 +742,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
             table.add_row(
                 str(row.get("trading_strategy_id") or row.get("name") or "-"),
                 _status_text(row.get("status")),
-                f"{_render_value(source_state.get('status'))} ({_render_value(source_state.get('age_seconds'))}s)",
+                _render_source_state(source_state),
                 _render_value(source_state.get("symbol_count")),
                 (f"{_render_value(candidate_state.get('candidate_count'))} " f"({_render_value(candidate_state.get('diagnostic_status'))})"),
                 _render_count_map(

@@ -416,6 +416,9 @@ protection_models:
       extends: short_dated_default
   momentum_intraday_protections:
     extends: short_dated_default_protections
+    rules:
+      strategy_family_cooldown:
+        cooldown_minutes_after_loss: 25
     runtime:
       cancel_pending_entries_after_et: "15:30"
       flatten_positions_at_et: "15:45"
