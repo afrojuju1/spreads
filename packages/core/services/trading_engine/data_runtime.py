@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.domain.models import SymbolMarketSlice
-from core.services.strategy_builders import build_entry_runtime_candidates_with_diagnostics, runtime_owner_key
+from core.services.strategy_builders import (
+    DEFAULT_MARKET_BENCHMARK_SYMBOLS,
+    build_entry_runtime_candidates_with_diagnostics_from_market_slices,
+    build_symbol_market_slice_parameters,
+    runtime_owner_key,
+)
+from core.services.strategy_candidate_builders.market_data import AlpacaMarketSliceProvider
 from core.services.strategy_candidate_builders.settings import CandidateBuildParameters
 from core.services.ticker_sources import resolve_ticker_source_symbols
 from core.services.trading_engine.data import (
@@ -236,12 +242,40 @@ class DataEngine:
         )
         greeks_provider = build_local_greeks_provider()
         try:
-            candidates_by_owner, diagnostics_by_owner = build_entry_runtime_candidates_with_diagnostics(
+            provider = AlpacaMarketSliceProvider(
+                client=client,
+                greeks_provider=greeks_provider,
+            )
+            market_slices_by_symbol: dict[str, SymbolMarketSlice] = {}
+            for symbol in symbols:
+                market_slice_parameters = build_symbol_market_slice_parameters(
+                    symbol=symbol,
+                    base_parameters=base_parameters,
+                    runtimes=[runtime],
+                )
+                market_slices_by_symbol[symbol] = provider.get_symbol_market_slice(
+                    symbol=symbol,
+                    parameters=market_slice_parameters,
+                )
+            benchmark_slices_by_symbol = self._build_benchmark_market_slices(
+                benchmark_symbols=DEFAULT_MARKET_BENCHMARK_SYMBOLS,
+                base_parameters=base_parameters,
+                provider=provider,
+                runtime=runtime,
+                market_slices_by_symbol=market_slices_by_symbol,
+            )
+            market_context = self._build_and_persist_market_context(
+                benchmark_slices=benchmark_slices_by_symbol,
+                request=request,
+            )
+            market_context_payload = market_context.to_payload()
+            candidates_by_owner, diagnostics_by_owner = build_entry_runtime_candidates_with_diagnostics_from_market_slices(
                 entry_runtimes=[runtime],
                 base_parameters=base_parameters,
-                client=client,
                 calendar_resolver=calendar_resolver,
-                greeks_provider=greeks_provider,
+                market_slices_by_symbol=market_slices_by_symbol,
+                benchmark_slices_by_symbol=benchmark_slices_by_symbol,
+                market_context=market_context_payload,
                 per_runtime_limit=entry_candidate_limit(request),
             )
         finally:
@@ -264,7 +298,9 @@ class DataEngine:
                 "candidate_builder": runtime.build_settings.candidate_builder_key,
                 "build_profile": runtime.build_settings.build_profile,
                 "greeks_source": base_parameters.greeks_source,
+                "market_context": market_context_payload,
             },
+            market_context=market_context,
         )
 
     def declare_capture_targets(
@@ -352,6 +388,64 @@ class DataEngine:
     @staticmethod
     def _candidate_run_id(request: CandidateBuildRequest) -> str:
         return f"candidate_run:{request.run_ref.run_id}"
+
+    def _build_benchmark_market_slices(
+        self,
+        *,
+        benchmark_symbols: tuple[str, ...],
+        base_parameters: CandidateBuildParameters,
+        provider: AlpacaMarketSliceProvider,
+        runtime: EntryRuntime,
+        market_slices_by_symbol: Mapping[str, SymbolMarketSlice],
+    ) -> dict[str, SymbolMarketSlice]:
+        benchmark_slices: dict[str, SymbolMarketSlice] = {}
+        for symbol in benchmark_symbols:
+            benchmark_symbol = str(symbol or "").upper().strip()
+            if not benchmark_symbol:
+                continue
+            existing = market_slices_by_symbol.get(benchmark_symbol)
+            if existing is not None:
+                benchmark_slices[benchmark_symbol] = existing
+                continue
+            benchmark_parameters = build_symbol_market_slice_parameters(
+                symbol=benchmark_symbol,
+                base_parameters=base_parameters,
+                runtimes=[runtime],
+            )
+            benchmark_slices[benchmark_symbol] = provider.get_symbol_market_slice(
+                symbol=benchmark_symbol,
+                parameters=benchmark_parameters,
+            )
+        return benchmark_slices
+
+    def _build_and_persist_market_context(
+        self,
+        *,
+        benchmark_slices: Mapping[str, SymbolMarketSlice],
+        request: CandidateBuildRequest,
+    ) -> MarketContextSnapshot:
+        snapshot = self.build_market_context(
+            benchmark_slices=benchmark_slices,
+            request=MarketContextRequest(
+                benchmark_symbols=DEFAULT_MARKET_BENCHMARK_SYMBOLS,
+                metadata={
+                    "candidate_run_id": self._candidate_run_id(request),
+                    "run_id": request.run_ref.run_id,
+                    "trading_strategy_id": request.trading_strategy_id,
+                    "trade_structure": request.trade_structure,
+                    "job_run_id": request.run_ref.job_run_id,
+                    "source_id": request.run_ref.source_id,
+                },
+            ),
+        )
+        engine_facts = self.context.storage.engine_facts
+        if not engine_facts.market_context_schema_ready():
+            return snapshot
+        row = engine_facts.upsert_market_context_snapshot(snapshot)
+        snapshot_id = row.get("market_context_snapshot_id")
+        if snapshot_id in (None, ""):
+            return snapshot
+        return snapshot.model_copy(update={"snapshot_id": str(snapshot_id)})
 
 
 __all__ = [

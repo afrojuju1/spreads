@@ -394,11 +394,16 @@ def _metadata_snapshot(
         candidate_payload=candidate_payload,
         trade_structure=trade_structure or as_text(candidate_payload.get("strategy") or candidate_payload.get("strategy_family")),
     )
+    diagnostic_evidence = as_mapping(diagnostic.get("evidence"))
+    market_context = as_mapping(diagnostic_evidence.get("market_context"))
+    if not market_context:
+        market_context = as_mapping(as_mapping(candidate_result.summary or {}).get("market_context"))
     return {
         "candidate_run_id": candidate_result.candidate_run_id,
         "candidate_result_summary": dict(candidate_result.summary or {}),
         "diagnostic": dict(diagnostic),
-        "diagnostic_evidence": as_mapping(diagnostic.get("evidence")),
+        "diagnostic_evidence": diagnostic_evidence,
+        "market_context": market_context,
         "candidate_attached": candidate is not None,
         "candidate_count_for_symbol": candidate_count_for_symbol,
         "candidate_identity": candidate_payload.get("candidate_identity") or candidate_payload.get("structure_identity"),

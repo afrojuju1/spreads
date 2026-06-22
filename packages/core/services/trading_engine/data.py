@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from .kernel import EngineEvidence, EnginePayload, EngineSummary, EngineRunRef
 
 if TYPE_CHECKING:
+    from core.services.trading_engine.market_context import MarketContextSnapshot
     from core.services.trading_strategy_runtime_models import EntryRuntime
 
 
@@ -58,6 +59,7 @@ class CandidateBuildResult:
     diagnostics: tuple[EnginePayload, ...] = ()
     failures: tuple[EnginePayload, ...] = ()
     summary: EngineSummary = field(default_factory=dict)
+    market_context: MarketContextSnapshot | None = None
 
 
 @dataclass(frozen=True)

@@ -425,6 +425,28 @@ def _benchmark_values(rows: Mapping[str, Mapping[str, Any]], field: str) -> dict
     return values
 
 
+def _payload_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    to_payload = getattr(value, "to_payload", None)
+    if callable(to_payload):
+        return as_mapping(to_payload())
+    return {}
+
+
+def _market_context_payload(context: EntryQualityContext, snapshot: FeatureSnapshot) -> dict[str, Any]:
+    for value in (
+        as_mapping(context.metadata).get("market_context"),
+        as_mapping(snapshot.metadata).get("market_context"),
+        as_mapping(as_mapping(snapshot.metadata).get("candidate_result_summary")).get("market_context"),
+        as_mapping(_diagnostic_evidence(snapshot)).get("market_context"),
+    ):
+        payload = _payload_mapping(value)
+        if payload:
+            return payload
+    return {}
+
+
 def _source_is_fresh(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
     source = as_mapping(snapshot.source)
     thresholds = _resolved_thresholds(
@@ -570,92 +592,102 @@ def _relative_strength_supportive(context: EntryQualityContext, snapshot: Featur
     )
 
 
-def _market_regime_supportive(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
+def _market_context_regime_fit(context: EntryQualityContext, snapshot: FeatureSnapshot, filter_ref: EntryFilterRef) -> FilterResult:
     thresholds = _resolved_thresholds(context, filter_ref, {})
     minimum_benchmark_count = _threshold_int(thresholds, filter_ref, "min_benchmark_count")
     minimum_supportive_count = _threshold_int(thresholds, filter_ref, "min_supportive_benchmark_count")
-    minimum_benchmark_5d = _threshold_float(thresholds, filter_ref, "min_benchmark_5d_return_pct")
-    minimum_benchmark_intraday = _threshold_float(thresholds, filter_ref, "min_benchmark_intraday_return_pct")
-    maximum_5d_drawdown = _threshold_float(thresholds, filter_ref, "max_benchmark_5d_drawdown_pct")
-    maximum_intraday_drawdown = _threshold_float(thresholds, filter_ref, "max_benchmark_intraday_drawdown_pct")
     minimum_blocking_count = _threshold_int(thresholds, filter_ref, "min_blocking_benchmark_count")
-    market_regime = as_mapping(_setup_metrics(snapshot).get("market_regime"))
-    rows = _benchmark_rows(market_regime)
-    returns_5d = _benchmark_values(rows, "return_5d_pct")
-    intraday_returns = _benchmark_values(rows, "intraday_return_pct")
-    available_count = len(returns_5d)
-    supportive: list[str] = []
-    drawdown_5d: list[str] = []
-    drawdown_intraday: list[str] = []
-    for symbol, value_5d in returns_5d.items():
-        intraday_value = intraday_returns.get(symbol)
-        if maximum_5d_drawdown is not None and value_5d <= maximum_5d_drawdown:
-            drawdown_5d.append(symbol)
-        if maximum_intraday_drawdown is not None and intraday_value is not None and intraday_value <= maximum_intraday_drawdown:
-            drawdown_intraday.append(symbol)
-        passes_5d = minimum_benchmark_5d is None or value_5d >= minimum_benchmark_5d
-        passes_intraday = minimum_benchmark_intraday is None or intraday_value is None or intraday_value >= minimum_benchmark_intraday
-        if passes_5d and passes_intraday:
-            supportive.append(symbol)
-    blocking_symbols = tuple(dict.fromkeys((*drawdown_5d, *drawdown_intraday)))
+    market_context = _market_context_payload(context, snapshot)
+    regime = as_mapping(market_context.get("regime"))
+    regime_metrics = as_mapping(regime.get("metrics"))
+    data_quality = as_mapping(market_context.get("data_quality"))
+    benchmark_evidence = [as_mapping(row) for row in list(market_context.get("benchmark_evidence") or []) if isinstance(row, Mapping)]
+    benchmark_symbols = list(market_context.get("benchmark_symbols") or [str(row.get("symbol") or "").upper() for row in benchmark_evidence])
+    observed_count = coerce_int(regime_metrics.get("observed_benchmark_count"))
+    if observed_count is None:
+        observed_count = len([symbol for symbol in benchmark_symbols if symbol])
+    expected_count = coerce_int(regime_metrics.get("expected_benchmark_count"))
+    if expected_count is None:
+        expected_count = len(benchmark_symbols)
+    supportive_symbols = unique_text_list(regime_metrics.get("supportive_benchmarks"))
+    blocking_symbols = unique_text_list(regime_metrics.get("blocking_benchmarks"))
+    supportive_count = coerce_int(regime_metrics.get("supportive_benchmark_count"))
+    if supportive_count is None:
+        supportive_count = len(supportive_symbols)
+    blocking_count = coerce_int(regime_metrics.get("blocking_benchmark_count"))
+    if blocking_count is None:
+        blocking_count = len(blocking_symbols)
+    regime_reason_codes = unique_text_list(regime.get("reason_codes"))
     metrics = {
-        "benchmark_symbols": list(market_regime.get("benchmark_symbols") or rows.keys()),
-        "available_benchmark_count": available_count,
-        "supportive_benchmark_count": len(supportive),
-        "supportive_benchmarks": supportive,
-        "blocking_benchmark_count": len(blocking_symbols),
-        "blocking_benchmarks": list(blocking_symbols),
-        "benchmark_return_5d_pct": returns_5d,
-        "benchmark_intraday_return_pct": intraday_returns,
+        "market_context_snapshot_id": market_context.get("snapshot_id"),
+        "market_context_scope": market_context.get("scope"),
+        "market_context_observed_at": market_context.get("observed_at"),
+        "market_context_expires_at": market_context.get("expires_at"),
+        "regime_label": regime.get("regime_label"),
+        "risk_posture": regime.get("risk_posture"),
+        "trend_strength": regime.get("trend_strength"),
+        "volatility_state": regime.get("volatility_state"),
+        "confidence": regime.get("confidence"),
+        "freshness": data_quality.get("freshness"),
+        "data_quality_state": data_quality.get("state"),
+        "fidelity": list(market_context.get("fidelity") or []),
+        "benchmark_symbols": benchmark_symbols,
+        "expected_benchmark_count": expected_count,
+        "available_benchmark_count": observed_count,
+        "supportive_benchmark_count": supportive_count,
+        "supportive_benchmarks": supportive_symbols,
+        "blocking_benchmark_count": blocking_count,
+        "blocking_benchmarks": blocking_symbols,
+        "regime_reason_codes": regime_reason_codes,
     }
     resolved_thresholds = {
         "min_benchmark_count": minimum_benchmark_count,
         "min_supportive_benchmark_count": minimum_supportive_count,
-        "min_benchmark_5d_return_pct": minimum_benchmark_5d,
-        "min_benchmark_intraday_return_pct": minimum_benchmark_intraday,
-        "max_benchmark_5d_drawdown_pct": maximum_5d_drawdown,
-        "max_benchmark_intraday_drawdown_pct": maximum_intraday_drawdown,
         "min_blocking_benchmark_count": minimum_blocking_count,
     }
-    if not rows or available_count < (minimum_benchmark_count or 0):
+    if not market_context:
         return _result(
             filter_ref=filter_ref,
             status=FilterResultStatus.WATCH,
-            reason_codes=("market_regime_benchmark_data_missing",),
+            reason_codes=("market_context_missing",),
             metrics=metrics,
             thresholds=resolved_thresholds,
-            message="Broad-market regime could not be fully proven from SPY/QQQ.",
+            message="Shared market context was not available for entry-quality evaluation.",
         )
-    if len(blocking_symbols) >= (minimum_blocking_count or available_count + 1):
-        reasons = ["market_regime_broad_drawdown"]
-        if drawdown_5d:
-            reasons.append("market_regime_5d_drawdown")
-        if drawdown_intraday:
-            reasons.append("market_regime_intraday_drawdown")
+    if observed_count < (minimum_benchmark_count or 0):
+        return _result(
+            filter_ref=filter_ref,
+            status=FilterResultStatus.WATCH,
+            reason_codes=("market_context_benchmark_data_missing",),
+            metrics=metrics,
+            thresholds=resolved_thresholds,
+            message="Shared market context did not have enough benchmark evidence.",
+        )
+    if blocking_count >= (minimum_blocking_count or observed_count + 1):
         return _result(
             filter_ref=filter_ref,
             status=FilterResultStatus.BLOCK,
-            reason_codes=tuple(reasons),
+            reason_codes=tuple(regime_reason_codes or ("market_context_broad_drawdown",)),
             metrics=metrics,
             thresholds=resolved_thresholds,
-            message="SPY/QQQ regime was too weak for new long-call entries.",
+            message="Shared market context showed broad-market drawdown risk for new long-call entries.",
         )
-    if len(supportive) >= (minimum_supportive_count or 1):
+    if supportive_count >= (minimum_supportive_count or 1):
         return _result(
             filter_ref=filter_ref,
             status=FilterResultStatus.PASS,
-            reason_codes=("market_regime_supportive",),
+            reason_codes=("market_context_regime_supportive",),
             metrics=metrics,
             thresholds=resolved_thresholds,
-            message="SPY/QQQ regime was supportive enough for long-call entries.",
+            message="Shared market context was supportive enough for long-call entries.",
         )
     return _result(
         filter_ref=filter_ref,
         status=FilterResultStatus.WATCH,
-        reason_codes=("market_regime_not_supportive",),
+        reason_codes=("market_context_regime_not_supportive",),
         metrics=metrics,
         thresholds=resolved_thresholds,
-        message="SPY/QQQ regime was not supportive, but did not hit drawdown blockers.",
+        message="Shared market context was not supportive, but did not hit drawdown blockers.",
     )
 
 
@@ -1723,7 +1755,7 @@ _FILTERS = {
     "source_is_fresh": _source_is_fresh,
     "setup_context_usable": _setup_context_usable,
     "relative_strength_supportive": _relative_strength_supportive,
-    "market_regime_supportive": _market_regime_supportive,
+    "market_context_regime_fit": _market_context_regime_fit,
     "chain_data_available": _chain_data_available,
     "option_snapshots_available": _option_snapshots_available,
     "greeks_available": _greeks_available,

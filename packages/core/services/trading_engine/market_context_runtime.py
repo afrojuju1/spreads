@@ -28,6 +28,8 @@ from .market_context import (
 DEFAULT_MARKET_CONTEXT_BENCHMARK_SYMBOLS = ("SPY", "QQQ")
 DEFAULT_MARKET_CONTEXT_TTL_SECONDS = 300
 MARKET_CONTEXT_VERSION = 1
+SUPPORTIVE_BENCHMARK_5D_RETURN_MIN_PCT = -0.01
+SUPPORTIVE_BENCHMARK_INTRADAY_RETURN_MIN_PCT = -0.006
 
 
 @dataclass(frozen=True)
@@ -438,6 +440,13 @@ class MarketContextEngine:
             if (item.return_5d_pct is not None and item.return_5d_pct <= -0.03)
             or (item.intraday_return_pct is not None and item.intraday_return_pct <= -0.012)
         )
+        supportive_symbols = tuple(
+            item.symbol
+            for item in evidence
+            if item.return_5d_pct is not None
+            and item.return_5d_pct >= SUPPORTIVE_BENCHMARK_5D_RETURN_MIN_PCT
+            and (item.intraday_return_pct is None or item.intraday_return_pct >= SUPPORTIVE_BENCHMARK_INTRADAY_RETURN_MIN_PCT)
+        )
         average_return_5d = _average(return_5d_values)
         average_intraday_return = _average(intraday_values)
         volatility_state = _volatility_state(volatility_values)
@@ -496,6 +505,10 @@ class MarketContextEngine:
                 "average_realized_volatility_5d_pct": _rounded(_average(volatility_values)),
                 "blocking_benchmark_count": len(blocking_symbols),
                 "blocking_benchmarks": list(blocking_symbols),
+                "supportive_benchmark_count": len(supportive_symbols),
+                "supportive_benchmarks": list(supportive_symbols),
+                "supportive_benchmark_5d_return_min_pct": SUPPORTIVE_BENCHMARK_5D_RETURN_MIN_PCT,
+                "supportive_benchmark_intraday_return_min_pct": SUPPORTIVE_BENCHMARK_INTRADAY_RETURN_MIN_PCT,
                 "expected_benchmark_count": expected_count,
                 "observed_benchmark_count": len(evidence),
             },

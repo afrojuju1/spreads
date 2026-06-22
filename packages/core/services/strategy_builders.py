@@ -234,6 +234,7 @@ def build_entry_runtime_symbol_diagnostic(
     symbol: str,
     market_slice: SymbolMarketSlice,
     benchmark_slices_by_symbol: Mapping[str, SymbolMarketSlice] | None = None,
+    market_context: Mapping[str, Any] | None = None,
     runtime_parameters: CandidateBuildParameters,
     setup_context: UnderlyingSetupContext | None,
     replay_details: dict[str, Any],
@@ -326,6 +327,7 @@ def build_entry_runtime_symbol_diagnostic(
             "candidate_builder": runtime.build_settings.candidate_builder_key,
             "build_profile": runtime.build_settings.build_profile,
             "trade_structure": runtime.trade_structure,
+            "market_context": dict(market_context or {}),
             "raw_pass_count": single_leg_diagnostics.get("pass_count") or 0,
             "replay_details": _json_ready({key: value for key, value in replay_details.items() if key != "calendar_decisions_by_expiration"}),
         },
@@ -340,6 +342,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     calendar_resolver: Any,
     market_slice: Any,
     benchmark_slices_by_symbol: Mapping[str, SymbolMarketSlice] | None = None,
+    market_context: Mapping[str, Any] | None = None,
     per_runtime_limit: int = 6,
 ) -> dict[str, Any]:
     runtime_parameters = build_runtime_candidate_parameters(
@@ -368,6 +371,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         symbol=symbol,
         market_slice=market_slice,
         benchmark_slices_by_symbol=benchmark_slices_by_symbol,
+        market_context=market_context,
         runtime_parameters=runtime_parameters,
         setup_context=setup_context,
         replay_details=replay_details,
@@ -392,6 +396,7 @@ def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
     calendar_resolver: Any,
     market_slices_by_symbol: dict[str, Any],
     benchmark_slices_by_symbol: Mapping[str, SymbolMarketSlice] | None = None,
+    market_context: Mapping[str, Any] | None = None,
     per_runtime_limit: int = 6,
 ) -> tuple[dict[tuple[str, str], dict[str, list[dict[str, Any]]]], dict[tuple[str, str], list[dict[str, Any]]]]:
     candidates_by_runtime: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
@@ -413,6 +418,7 @@ def build_entry_runtime_candidates_with_diagnostics_from_market_slices(
                 calendar_resolver=calendar_resolver,
                 market_slice=market_slice,
                 benchmark_slices_by_symbol=benchmark_slices_by_symbol,
+                market_context=market_context,
                 per_runtime_limit=per_runtime_limit,
             )
             owner_key = runtime_owner_key(runtime)
@@ -432,6 +438,7 @@ def build_entry_runtime_candidates_from_market_slices(
     calendar_resolver: Any,
     market_slices_by_symbol: dict[str, Any],
     benchmark_slices_by_symbol: Mapping[str, SymbolMarketSlice] | None = None,
+    market_context: Mapping[str, Any] | None = None,
     per_runtime_limit: int = 6,
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime, _diagnostics_by_runtime = build_entry_runtime_candidates_with_diagnostics_from_market_slices(
@@ -440,6 +447,7 @@ def build_entry_runtime_candidates_from_market_slices(
         calendar_resolver=calendar_resolver,
         market_slices_by_symbol=market_slices_by_symbol,
         benchmark_slices_by_symbol=benchmark_slices_by_symbol,
+        market_context=market_context,
         per_runtime_limit=per_runtime_limit,
     )
     return candidates_by_runtime

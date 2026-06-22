@@ -78,6 +78,32 @@ def quality_summary(profile_id: str, waterfalls: Sequence[EntryQualityWaterfall]
     }
 
 
+def _market_context_payload(candidate_result: CandidateBuildResult | None) -> dict[str, Any]:
+    if candidate_result is None:
+        return {}
+    if candidate_result.market_context is not None:
+        return dict(candidate_result.market_context.to_payload())
+    return dict(candidate_result.summary.get("market_context") or {})
+
+
+def _market_context_summary(market_context: Mapping[str, Any]) -> dict[str, Any]:
+    if not market_context:
+        return {}
+    regime = market_context.get("regime") if isinstance(market_context.get("regime"), Mapping) else {}
+    data_quality = market_context.get("data_quality") if isinstance(market_context.get("data_quality"), Mapping) else {}
+    return {
+        "market_context_snapshot_id": market_context.get("snapshot_id"),
+        "market_context_observed_at": market_context.get("observed_at"),
+        "market_context_expires_at": market_context.get("expires_at"),
+        "market_context_scope": market_context.get("scope"),
+        "market_context_regime_label": regime.get("regime_label"),
+        "market_context_risk_posture": regime.get("risk_posture"),
+        "market_context_confidence": regime.get("confidence"),
+        "market_context_freshness": data_quality.get("freshness"),
+        "market_context_data_quality": data_quality.get("state"),
+    }
+
+
 def waterfall_evidence(profile_id: str, waterfall: EntryQualityWaterfall | None) -> dict[str, Any]:
     if waterfall is None:
         return {
@@ -152,6 +178,7 @@ def build_entry_quality_analysis(
         trade_structure=runtime.trade_structure,
         quality_profile_id=profile_id,
         policy=runtime.quality_overrides,
+        metadata={"market_context": _market_context_payload(candidate_result)},
     )
     if candidate_result is None:
         return EntryQualityAnalysis(
@@ -160,7 +187,7 @@ def build_entry_quality_analysis(
             by_symbol={},
             snapshots=(),
             snapshots_by_candidate={},
-            summary=quality_summary(profile_id, ()),
+            summary={**quality_summary(profile_id, ()), **_market_context_summary(context.metadata.get("market_context") or {})},
         )
 
     snapshots = build_feature_snapshots_for_strategy(
@@ -192,7 +219,7 @@ def build_entry_quality_analysis(
         by_symbol=by_symbol,
         snapshots=tuple(snapshots),
         snapshots_by_candidate=snapshots_by_candidate,
-        summary=quality_summary(profile_id, all_waterfalls),
+        summary={**quality_summary(profile_id, all_waterfalls), **_market_context_summary(context.metadata.get("market_context") or {})},
     )
 
 

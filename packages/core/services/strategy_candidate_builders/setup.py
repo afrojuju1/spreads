@@ -129,7 +129,6 @@ def build_relative_strength_market_context(
         )
         by_benchmark[benchmark_symbol] = benchmark_summary
     available_relative_5d = sum(1 for row in by_benchmark.values() if row.get("relative_return_5d_pct") is not None)
-    available_regime_5d = sum(1 for row in by_benchmark.values() if row.get("return_5d_pct") is not None)
     return {
         "relative_strength": {
             "symbol": market_slice.symbol,
@@ -138,12 +137,7 @@ def build_relative_strength_market_context(
             "symbol_intraday_return_pct": symbol_intraday_return,
             "available_benchmark_count": available_relative_5d,
             "by_benchmark": by_benchmark,
-        },
-        "market_regime": {
-            "benchmark_symbols": [str(symbol).upper() for symbol in benchmark_symbols],
-            "available_benchmark_count": available_regime_5d,
-            "by_benchmark": by_benchmark,
-        },
+        }
     }
 
 

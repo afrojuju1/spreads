@@ -368,15 +368,11 @@ MOMENTUM_LONG_CALL_V1 = EntryQualityProfile(
                     },
                 ),
                 EntryFilterRef(
-                    filter_id="market_regime_supportive",
+                    filter_id="market_context_regime_fit",
                     stage=EntryQualityStageName.UNDERLYING_SETUP,
                     thresholds={
                         "min_benchmark_count": 2,
                         "min_supportive_benchmark_count": 1,
-                        "min_benchmark_5d_return_pct": -0.01,
-                        "min_benchmark_intraday_return_pct": -0.006,
-                        "max_benchmark_5d_drawdown_pct": -0.03,
-                        "max_benchmark_intraday_drawdown_pct": -0.012,
                         "min_blocking_benchmark_count": 2,
                     },
                 ),
