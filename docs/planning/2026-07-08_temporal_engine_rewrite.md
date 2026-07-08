@@ -10,7 +10,7 @@ The new ownership model is:
 
 - `core.engine`: command/event vocabulary, deterministic IDs, lifecycle transition facade, outbox publishing.
 - `engine_events`: append-only cross-aggregate event log for workflow, broker, position, and projection facts.
-- `engine_outbox`: transactional fanout queue for JetStream projections.
+- `engine_outbox`: transactional fanout queue for JetStream projections, drained by the scheduled `engine_outbox_publish` runtime job.
 - `core.workflows`: Temporal trade and close lifecycle orchestration.
 - Existing strategy, admission, execution, broker, and portfolio services become workflow activities where they still own real domain work.
 
@@ -36,6 +36,6 @@ The new ownership model is:
 
 - Alembic can create `engine_events` and `engine_outbox`.
 - `EngineEventRepository.append_engine_event()` is idempotent by `idempotency_key` and creates at most one outbox row per event/stream/subject.
-- `publish_pending_engine_outbox()` marks messages published only after JetStream accepts them and retries failed publishes from the outbox.
+- `publish_pending_engine_outbox()` ensures the lifecycle stream exists, marks messages published only after JetStream accepts them, and retries failed publishes from the outbox through `engine_outbox_publish`.
 - Workflow IDs come from `core.engine.ids`, not caller-local string formatting.
 - Active config exposes Temporal and NATS connection settings without changing current paper runtime behavior.

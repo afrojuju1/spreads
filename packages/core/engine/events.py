@@ -9,7 +9,7 @@ from pydantic import Field
 from core.engine.ids import engine_event_id, engine_outbox_id, idempotency_key
 from core.model_contracts import DomainModel
 
-ENGINE_EVENT_STREAM = "spreads.engine.lifecycle"
+ENGINE_EVENT_STREAM = "spreads_engine_lifecycle"
 ENGINE_EVENT_SUBJECT_PREFIX = "spreads.engine"
 ENGINE_EVENT_VERSION = 1
 

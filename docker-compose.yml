@@ -47,6 +47,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - spreads_nats_data:/data
   temporal:
     image: temporalio/auto-setup:1.25.2
     restart: unless-stopped
@@ -140,12 +149,15 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      nats:
+        condition: service_started
     env_file:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
+      SPREADS_NATS_URL: nats://nats:4222
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
     volumes:
@@ -303,6 +315,7 @@ services:
 volumes:
   spreads_postgres_data:
   spreads_clickhouse_data:
+  spreads_nats_data:
   web_node_modules:
   web_next_data:
   web_npm_cache:

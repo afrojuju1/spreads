@@ -25,7 +25,7 @@ Last updated: 2026-07-08
 | Backtest evaluation | `services/backtest/` | Backend-only BacktestEngine primitive exposed by `spreads backtests run`. Shipped modes are `stored_facts`, `strategy_rerun`, `execution_simulation`, `portfolio_simulation`, and `parameter_sweep`. `stored_facts` evaluates bounded date windows over the current ticker-source, candidate, signal, decision, admission, intent, attempt, position, and ClickHouse market-data model. `strategy_rerun` reruns current strategy config through historical source scope, `HistoricalMarketSliceProvider`, candidate builders, entry quality, entry selection, decision planning, and protection/portfolio admission artifacts while deferring broker/allocation capacity to execution simulation. `execution_simulation` composes over strategy reruns to emit isolated simulated intents, attempts, orders, and fills using executor profile TTL/repricing policy, structure validation, and historical quote snapshots/trade ticks with explicit fill-model fidelity. `portfolio_simulation` projects simulated or artifact-shaped stored fills into isolated positions, evaluates current close policy against historical quote marks, computes realized/unrealized PnL with `core.money`, and emits performance metrics with explicit metrics-engine fidelity. `parameter_sweep` expands bounded current-config overlays for profile/source/ranking/exit and related strategy parameters, validates each variant as a `TradingStrategyConfig`, runs a rerun or simulation base mode, ranks variants by the requested metric, and persists per-variant artifacts/results. Backtest persists isolated `backtest_runs`, `backtest_artifacts`, and `backtest_variant_results` rows plus ignored local result artifacts under `outputs/backtest_runs` by default. `HistoricalMarketSliceProvider` is the historical sibling of `AlpacaMarketSliceProvider`; it returns `SymbolMarketSlice` inputs from ClickHouse option quote/trade data plus Postgres source, candidate diagnostic, stored candidate, and earnings consensus facts with explicit fidelity labels. It compares current catalog strategy/profile/source variants from persisted facts and labels source, candidate, decision, execution, fill, position, exit, PnL, metrics, sweep, and market-data fidelity explicitly. It is not an operator app UI and does not revive removed replay/audit/analyze wrappers or the removed historical singular `spreads backtest` command. |
 | Company valuation lane | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Company valuation is an offline research/maintenance lane. It can support future analysis, but live strategy selection, admission, execution, and position management must not depend on it by default. |
 | Research AI lane | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, optional `worker-research`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. This lane is disabled by default and is not a live execution dependency. |
-| Persistence and transport | Postgres, ClickHouse, Redis, Temporal, NATS JetStream | Postgres is source of truth for durable domain and ops state, including engine events/outbox, calendar provider facts, provider fetch audit, and earnings event consensus. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles non-lifecycle queues, leases, pub/sub fanout, and short-lived provider cache/backoff state. Temporal owns execution/close lifecycle orchestration. NATS JetStream receives projection events from the Postgres outbox. |
+| Persistence and transport | Postgres, ClickHouse, Redis, Temporal, NATS JetStream | Postgres is source of truth for durable domain and ops state, including engine events/outbox, calendar provider facts, provider fetch audit, and earnings event consensus. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles non-lifecycle queues, leases, pub/sub fanout, and short-lived provider cache/backoff state. Temporal owns execution/close lifecycle orchestration. The `engine_outbox_publish` runtime job publishes pending Postgres outbox rows to NATS JetStream and marks rows published only after JetStream acknowledges them. |
 
 ## Non-Negotiable Boundary Rules
 
@@ -112,7 +112,7 @@ Postgres = domain and ops source of truth
 ClickHouse = high-volume raw market-data ticks and quote snapshots
 Redis = queues, leases, pub/sub, short-lived provider cache/backoff
 Temporal = execution and close lifecycle orchestration
-NATS JetStream = event projection fanout from engine_outbox
+NATS JetStream = event projection fanout from engine_outbox via engine_outbox_publish
 ```
 
 ## Current Runtime Jobs
@@ -125,6 +125,7 @@ Default live trading job types:
 - `trading_strategy_entry`
 - `trading_strategy_manage`
 - `execution_lifecycle_start`
+- `engine_outbox_publish`
 - `alert_delivery`
 - `alert_reconcile`
 
@@ -371,7 +372,7 @@ Dynamic-source and static-source strategies both flow through the same strategy 
 
 `execution_intents` records pending open/manage/close work and lifecycle-start state. The `execution_lifecycle_start` job starts deterministic Temporal trade/close workflows for pending intents, marks claimed intents with workflow metadata, and appends engine events. The `worker-temporal` process runs the trade/close workflows and broker activities. Broker activities prepare or reuse existing attempts, submit pending attempts to Alpaca through `alpaca_direct`, refresh/cancel broker state, persist attempt/order/fill rows, sync linked intents, and append engine events. Close workflows continue refreshing broker state on Temporal timers until the attempt is terminal or stale-policy handling cancels, fails closed, leaves working, or creates a deterministic replacement close intent.
 
-`TradingOpsState.details.engine` exposes lifecycle event health from `engine_events` and `engine_outbox`, including workflow event counts, recent engine events, pending outbox count, and retrying outbox count. Retired lifecycle dispatch/submit job types are filtered from current job health summaries so historical runs do not look like active operator work.
+`TradingOpsState.details.engine` exposes lifecycle event health from `engine_events` and `engine_outbox`, including workflow event counts, recent engine events, pending outbox count, and retrying outbox count. The scheduled `engine_outbox_publish` job drains pending outbox rows into the `spreads_engine_lifecycle` JetStream stream for projection consumers. Retired lifecycle dispatch/submit job types are filtered from current job health summaries so historical runs do not look like active operator work.
 
 `services/execution/` records immutable broker-facing facts in:
 

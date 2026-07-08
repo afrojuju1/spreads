@@ -10,7 +10,7 @@ DEFAULT_TEMPORAL_ADDRESS = "localhost:7233"
 DEFAULT_TEMPORAL_NAMESPACE = "default"
 DEFAULT_TEMPORAL_TASK_QUEUE = "spreads-trading-lifecycle"
 DEFAULT_NATS_URL = "nats://localhost:4222"
-DEFAULT_NATS_ENGINE_STREAM = "spreads.engine.lifecycle"
+DEFAULT_NATS_ENGINE_STREAM = "spreads_engine_lifecycle"
 DEFAULT_BACKTEST_ARTIFACT_ROOT = "outputs/backtest_runs"
 
 

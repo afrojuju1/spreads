@@ -4,10 +4,28 @@ import json
 from typing import Any
 
 import nats
+from nats.js.api import RetentionPolicy, StorageType, StreamConfig
+from nats.js.errors import NotFoundError
 
+from core.engine.events import ENGINE_EVENT_SUBJECT_PREFIX
 from core.runtime.config import default_nats_url
 from core.storage.engine_event_repository import EngineEventRepository
 from core.storage.factory import build_engine_event_repository
+
+
+async def _ensure_engine_stream(jetstream: Any, *, stream: str) -> None:
+    try:
+        await jetstream.stream_info(stream)
+    except NotFoundError:
+        await jetstream.add_stream(
+            StreamConfig(
+                name=stream,
+                subjects=[f"{ENGINE_EVENT_SUBJECT_PREFIX}.>"],
+                retention=RetentionPolicy.LIMITS,
+                storage=StorageType.FILE,
+                duplicate_window=120,
+            )
+        )
 
 
 async def publish_pending_engine_outbox(
@@ -25,11 +43,16 @@ async def publish_pending_engine_outbox(
     client = await nats.connect(nats_url or default_nats_url())
     try:
         jetstream = client.jetstream()
+        ensured_streams: set[str] = set()
         for row in pending:
             outbox_id = str(row["engine_outbox_id"])
+            stream = str(row.get("stream") or "")
             try:
+                if stream and stream not in ensured_streams:
+                    await _ensure_engine_stream(jetstream, stream=stream)
+                    ensured_streams.add(stream)
                 payload = json.dumps(row["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-                await jetstream.publish(str(row["subject"]), payload, headers=dict(row.get("headers") or {}))
+                await jetstream.publish(str(row["subject"]), payload, stream=stream or None, headers=dict(row.get("headers") or {}))
                 store.mark_outbox_published(outbox_id)
                 summary["published"] = int(summary["published"]) + 1
             except Exception as exc:

@@ -25,6 +25,7 @@ from .tasks import (
     run_company_valuation_bootstrap_job,
     run_company_valuation_resolve_unresolved_job,
     run_company_valuation_screen_materialize_job,
+    run_engine_outbox_publish_job,
     run_execution_lifecycle_start_job,
     run_ticker_source_job,
     run_tradingagents_scan_job,
@@ -39,6 +40,7 @@ class RuntimeWorkerSettings:
         run_trading_strategy_entry_job,
         run_trading_strategy_manage_job,
         run_execution_lifecycle_start_job,
+        run_engine_outbox_publish_job,
         run_alert_delivery_job,
         run_alert_reconcile_job,
     ]
@@ -112,6 +114,7 @@ __all__ = [
     "run_company_valuation_bootstrap_job",
     "run_company_valuation_resolve_unresolved_job",
     "run_company_valuation_screen_materialize_job",
+    "run_engine_outbox_publish_job",
     "run_execution_lifecycle_start_job",
     "run_ticker_source_job",
     "run_tradingagents_scan_job",

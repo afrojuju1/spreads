@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import asyncio
 from typing import Any
 
+from core.engine.outbox_publisher import publish_pending_engine_outbox
 from core.jobs.registry import (
     ALERT_DELIVERY_JOB_TYPE,
     ALERT_RECONCILE_JOB_TYPE,
@@ -11,6 +13,7 @@ from core.jobs.registry import (
     COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
     COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
+    ENGINE_OUTBOX_PUBLISH_JOB_TYPE,
     EXECUTION_LIFECYCLE_START_JOB_TYPE,
     TICKER_SOURCE_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
@@ -236,6 +239,36 @@ async def run_execution_lifecycle_start_job(
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = EXECUTION_LIFECYCLE_START_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=render_value,
+    )
+
+
+async def run_engine_outbox_publish_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return asyncio.run(
+            publish_pending_engine_outbox(
+                repository=ctx["storage"].engine_events,
+                nats_url=payload.get("nats_url"),
+                limit=int(payload.get("limit", 100) or 100),
+            )
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = ENGINE_OUTBOX_PUBLISH_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,
