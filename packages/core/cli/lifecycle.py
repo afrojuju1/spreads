@@ -88,9 +88,9 @@ def _render_smoke_payload(payload: dict[str, Any], *, json_output: bool, no_colo
             typer.echo(f"target: {symbol}")
         if request.get("limit_price") is not None:
             typer.echo(f"limit_price: {request.get('limit_price')}")
-    dispatch = payload.get("dispatch") if isinstance(payload.get("dispatch"), dict) else None
-    if dispatch:
-        typer.echo(f"dispatch: {dispatch.get('status')} {dispatch.get('job_run_id', '')}".rstrip())
+    lifecycle_start = payload.get("lifecycle_start") if isinstance(payload.get("lifecycle_start"), dict) else None
+    if lifecycle_start:
+        typer.echo(f"lifecycle_start: {lifecycle_start.get('status')} {lifecycle_start.get('job_run_id', '')}".rstrip())
     if no_color:
         return
 
@@ -126,7 +126,7 @@ def observe_strategy_command(
 
 @paper_smoke_app.command("open", help="Preview or create a synthetic paper open lifecycle run.")
 def paper_smoke_open_command(
-    execute: bool = typer.Option(False, "--execute", help="Create the intent and request dispatch. Defaults to preview."),
+    execute: bool = typer.Option(False, "--execute", help="Create the intent and request lifecycle start. Defaults to preview."),
     auto_select: bool = typer.Option(False, "--auto-select", help="Select a quoted allowed contract under the debit cap."),
     underlying_symbol: str | None = typer.Option(None, "--underlying-symbol", help="Underlying symbol for the option contract."),
     contract_symbol: str | None = typer.Option(None, "--contract-symbol", help="Exact option contract symbol."),
@@ -141,7 +141,11 @@ def paper_smoke_open_command(
     allow_contract: list[str] | None = typer.Option(None, "--allow-contract", help="Allowed exact contract symbol. Repeatable or comma-separated."),
     auto_select_min_dte: int = typer.Option(DEFAULT_AUTO_SELECT_MIN_DTE, "--auto-select-min-dte", help="Auto-select minimum DTE."),
     auto_select_max_dte: int = typer.Option(DEFAULT_AUTO_SELECT_MAX_DTE, "--auto-select-max-dte", help="Auto-select maximum DTE."),
-    request_dispatch: bool = typer.Option(True, "--request-dispatch/--no-request-dispatch", help="Queue dispatch after creating the intent."),
+    request_lifecycle_start: bool = typer.Option(
+        True,
+        "--request-lifecycle-start/--no-request-lifecycle-start",
+        help="Queue lifecycle start after creating the intent.",
+    ),
     calendar_name: str = typer.Option("NYSE", "--calendar", help="Market calendar for market-hours guard."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
@@ -165,7 +169,7 @@ def paper_smoke_open_command(
         calendar_name=calendar_name,
         auto_select_min_dte=auto_select_min_dte,
         auto_select_max_dte=auto_select_max_dte,
-        request_dispatch=request_dispatch,
+        request_lifecycle_start=request_lifecycle_start,
     )
     _render_smoke_payload(payload, json_output=json_output, no_color=no_color)
     _exit_if_blocked(payload)
@@ -174,10 +178,14 @@ def paper_smoke_open_command(
 @paper_smoke_app.command("close", help="Preview or create a synthetic paper close lifecycle run.")
 def paper_smoke_close_command(
     position_id: str = typer.Argument(..., help="Synthetic_validation position id to close."),
-    execute: bool = typer.Option(False, "--execute", help="Create the close intent and request dispatch. Defaults to preview."),
+    execute: bool = typer.Option(False, "--execute", help="Create the close intent and request lifecycle start. Defaults to preview."),
     limit_price: float | None = typer.Option(None, "--limit-price", help="Optional close limit price."),
     ttl_minutes: int = typer.Option(DEFAULT_TTL_MINUTES, "--ttl-minutes", help="Intent TTL in minutes."),
-    request_dispatch: bool = typer.Option(True, "--request-dispatch/--no-request-dispatch", help="Queue dispatch after creating the intent."),
+    request_lifecycle_start: bool = typer.Option(
+        True,
+        "--request-lifecycle-start/--no-request-lifecycle-start",
+        help="Queue lifecycle start after creating the intent.",
+    ),
     calendar_name: str = typer.Option("NYSE", "--calendar", help="Market calendar for market-hours guard."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
@@ -190,7 +198,7 @@ def paper_smoke_close_command(
         limit_price=limit_price,
         ttl_minutes=ttl_minutes,
         calendar_name=calendar_name,
-        request_dispatch=request_dispatch,
+        request_lifecycle_start=request_lifecycle_start,
     )
     _render_smoke_payload(payload, json_output=json_output, no_color=no_color)
     _exit_if_blocked(payload)

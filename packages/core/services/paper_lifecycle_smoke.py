@@ -16,7 +16,7 @@ from core.services.deployment_policy import DEPLOYMENT_MODE_PAPER_AUTO
 from core.services.execution.attempts import _get_attempt_payload
 from core.services.execution.runtimes import ALPACA_DIRECT_RUNTIME
 from core.services.execution.shared import OPEN_STATUSES
-from core.services.execution_intents import request_execution_intent_dispatch
+from core.services.execution_intents import request_execution_lifecycle_start
 from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
     issue_pending_execution_intent,
@@ -364,7 +364,7 @@ def create_synthetic_paper_open_smoke(
     calendar_name: str = "NYSE",
     auto_select_min_dte: int = DEFAULT_AUTO_SELECT_MIN_DTE,
     auto_select_max_dte: int = DEFAULT_AUTO_SELECT_MAX_DTE,
-    request_dispatch: bool = True,
+    request_lifecycle_start: bool = True,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     normalized_quantity = max(int(quantity), 1)
@@ -543,8 +543,8 @@ def create_synthetic_paper_open_smoke(
             "run_id": run_id,
         },
     )
-    dispatch = (
-        request_execution_intent_dispatch(
+    lifecycle_start = (
+        request_execution_lifecycle_start(
             job_store=storage.jobs,
             limit=5,
             requested_by={
@@ -552,7 +552,7 @@ def create_synthetic_paper_open_smoke(
                 "run_id": run_id,
             },
         )
-        if request_dispatch
+        if request_lifecycle_start
         else None
     )
     return {
@@ -561,7 +561,7 @@ def create_synthetic_paper_open_smoke(
         "created": True,
         "blockers": [],
         "execution_intent": dict(intent),
-        "dispatch": dispatch,
+        "lifecycle_start": lifecycle_start,
     }
 
 
@@ -583,7 +583,7 @@ def create_synthetic_paper_close_smoke(
     limit_price: float | None = None,
     ttl_minutes: int = DEFAULT_TTL_MINUTES,
     calendar_name: str = "NYSE",
-    request_dispatch: bool = True,
+    request_lifecycle_start: bool = True,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     safety, blockers, _client = _base_safety_snapshot(
@@ -692,8 +692,8 @@ def create_synthetic_paper_close_smoke(
             "run_id": run_id,
         },
     )
-    dispatch = (
-        request_execution_intent_dispatch(
+    lifecycle_start = (
+        request_execution_lifecycle_start(
             job_store=storage.jobs,
             limit=5,
             requested_by={
@@ -701,7 +701,7 @@ def create_synthetic_paper_close_smoke(
                 "run_id": run_id,
             },
         )
-        if request_dispatch
+        if request_lifecycle_start
         else None
     )
     return {
@@ -710,7 +710,7 @@ def create_synthetic_paper_close_smoke(
         "created": True,
         "blockers": [],
         "execution_intent": dict(intent),
-        "dispatch": dispatch,
+        "lifecycle_start": lifecycle_start,
     }
 
 

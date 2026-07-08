@@ -7,6 +7,7 @@ from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.context import StorageContext
+from core.storage.engine_event_repository import EngineEventRepository
 from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
@@ -89,6 +90,13 @@ def build_engine_fact_repository(path_or_url: str | None = None, *, context: Sto
         return context.engine_facts
     value = _resolve_postgres_url(path_or_url)
     return EngineFactRepository(value)
+
+
+def build_engine_event_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.engine_events
+    value = _resolve_postgres_url(path_or_url)
+    return EngineEventRepository(value)
 
 
 def build_signal_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

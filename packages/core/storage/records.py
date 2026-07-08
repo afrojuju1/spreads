@@ -36,6 +36,8 @@ ExecutionIntentEventRecord = StorageRow
 ExecutionAttemptRecord = StorageRow
 ExecutionOrderRecord = StorageRow
 ExecutionFillRecord = StorageRow
+EngineEventRecord = StorageRow
+EngineOutboxRecord = StorageRow
 PortfolioPositionRecord = StorageRow
 PositionCloseRecord = StorageRow
 CaptureTargetRecord = StorageRow
@@ -75,6 +77,8 @@ __all__ = [
     "ExecutionAttemptRecord",
     "ExecutionOrderRecord",
     "ExecutionFillRecord",
+    "EngineEventRecord",
+    "EngineOutboxRecord",
     "PortfolioPositionRecord",
     "PositionCloseRecord",
     "CaptureTargetRecord",

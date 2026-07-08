@@ -1,10 +1,9 @@
-job_key: execution_intent_dispatch:global
-job_type: execution_intent_dispatch
+job_key: execution_lifecycle_start:global
+job_type: execution_lifecycle_start
 enabled: true
 schedule:
   type: interval_minutes
   minutes: 1
 payload:
   limit: 25
-  allow_off_hours: false
 singleton_scope: global

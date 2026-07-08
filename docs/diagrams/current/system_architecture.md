@@ -143,8 +143,8 @@ Authored strategy config
             |
             v
 +-----------------------+       +-----------------------+
-| execution_intent_     | ----> | execution_submit      |
-| dispatch:global       |       | alpaca_direct         |
+| execution_lifecycle_  | ----> | execution_submit      |
+| start:global          |       | alpaca_direct         |
 +-----------+-----------+       +-----------+-----------+
             |                               |
             v                               v

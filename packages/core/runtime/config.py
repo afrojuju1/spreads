@@ -6,6 +6,11 @@ import os
 DEFAULT_POSTGRES_URL = "postgresql://spreads:spreads@localhost:55432/spreads"
 DEFAULT_REDIS_URL = "redis://localhost:56379/0"
 DEFAULT_CLICKHOUSE_URL = "http://spreads:spreads@localhost:58123/spreads"
+DEFAULT_TEMPORAL_ADDRESS = "localhost:7233"
+DEFAULT_TEMPORAL_NAMESPACE = "default"
+DEFAULT_TEMPORAL_TASK_QUEUE = "spreads-trading-lifecycle"
+DEFAULT_NATS_URL = "nats://localhost:4222"
+DEFAULT_NATS_ENGINE_STREAM = "spreads.engine.lifecycle"
 DEFAULT_BACKTEST_ARTIFACT_ROOT = "outputs/backtest_runs"
 
 
@@ -29,6 +34,26 @@ def default_redis_url() -> str:
 
 def default_clickhouse_url() -> str:
     return os.environ.get("SPREADS_CLICKHOUSE_URL") or os.environ.get("CLICKHOUSE_URL") or DEFAULT_CLICKHOUSE_URL
+
+
+def default_temporal_address() -> str:
+    return os.environ.get("SPREADS_TEMPORAL_ADDRESS") or os.environ.get("TEMPORAL_ADDRESS") or DEFAULT_TEMPORAL_ADDRESS
+
+
+def default_temporal_namespace() -> str:
+    return os.environ.get("SPREADS_TEMPORAL_NAMESPACE") or os.environ.get("TEMPORAL_NAMESPACE") or DEFAULT_TEMPORAL_NAMESPACE
+
+
+def default_temporal_task_queue() -> str:
+    return os.environ.get("SPREADS_TEMPORAL_TASK_QUEUE") or DEFAULT_TEMPORAL_TASK_QUEUE
+
+
+def default_nats_url() -> str:
+    return os.environ.get("SPREADS_NATS_URL") or os.environ.get("NATS_URL") or DEFAULT_NATS_URL
+
+
+def default_nats_engine_stream() -> str:
+    return os.environ.get("SPREADS_NATS_ENGINE_STREAM") or DEFAULT_NATS_ENGINE_STREAM
 
 
 def default_backtest_artifact_root() -> str:

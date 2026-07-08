@@ -11,7 +11,7 @@ from core.jobs.registry import (
     COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
     COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
-    EXECUTION_INTENT_DISPATCH_JOB_TYPE,
+    EXECUTION_LIFECYCLE_START_JOB_TYPE,
     EXECUTION_SUBMIT_JOB_TYPE,
     TICKER_SOURCE_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
@@ -37,7 +37,7 @@ from core.services.company_valuation.unresolved import (
     resolve_unresolved_institutional_positions,
 )
 from core.services.execution.submit import run_execution_submit
-from core.services.execution_intents import dispatch_pending_execution_intents
+from core.services.execution_intents import start_pending_execution_lifecycle_workflows
 from core.services.exit_manager import run_trading_strategy_manage
 from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source
 from core.services.trading_engine.strategy_runtime import run_trading_strategy_entry
@@ -250,7 +250,7 @@ async def run_trading_strategy_manage_job(
     )
 
 
-async def run_execution_intent_dispatch_job(
+async def run_execution_lifecycle_start_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -261,13 +261,13 @@ async def run_execution_intent_dispatch_job(
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return dispatch_pending_execution_intents(
+        return start_pending_execution_lifecycle_workflows(
             db_target=database_url,
             limit=int(payload.get("limit", 25) or 25),
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = EXECUTION_INTENT_DISPATCH_JOB_TYPE
+    enriched_payload["job_type"] = EXECUTION_LIFECYCLE_START_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

@@ -142,7 +142,7 @@ def plan_runtime_entry_selected_alert(
     execution_mode: str | None,
     approval_mode: str | None,
     planner_job_run_id: str | None = None,
-    dispatch_job_run_id: str | None = None,
+    lifecycle_start_job_run_id: str | None = None,
 ) -> dict[str, Any] | None:
     if alert_store is None or job_store is None:
         return None
@@ -168,7 +168,7 @@ def plan_runtime_entry_selected_alert(
         "trade_decision_id": _as_text(decision.get("trade_decision_id")),
         "trade_signal_id": trade_signal_id,
         "execution_intent_id": execution_intent_id,
-        "dispatch_job_run_id": dispatch_job_run_id,
+        "lifecycle_start_job_run_id": lifecycle_start_job_run_id,
         "score": score,
         "rank": decision.get("rank"),
         "reason_codes": reason_codes,

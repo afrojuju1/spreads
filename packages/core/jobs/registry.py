@@ -9,6 +9,7 @@ RESEARCH_QUEUE_NAME = "arq:queue:research"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
+EXECUTION_LIFECYCLE_START_JOB_TYPE = "execution_lifecycle_start"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 TICKER_SOURCE_JOB_TYPE = "ticker_source"
@@ -16,15 +17,14 @@ CALENDAR_EVENT_REFRESH_JOB_TYPE = "calendar_event_refresh"
 TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
 TRADING_STRATEGY_ENTRY_JOB_TYPE = "trading_strategy_entry"
 TRADING_STRATEGY_MANAGE_JOB_TYPE = "trading_strategy_manage"
-EXECUTION_INTENT_DISPATCH_JOB_TYPE = "execution_intent_dispatch"
 COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE = "company_valuation_bootstrap"
 COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE = "company_valuation_screen_materialize"
 COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE = "company_valuation_resolve_unresolved"
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
+EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY = "execution_lifecycle_start:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
 ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
-EXECUTION_INTENT_DISPATCH_ADHOC_JOB_KEY = "execution_intent_dispatch:adhoc"
 COMPANY_VALUATION_BOOTSTRAP_ADHOC_JOB_KEY = "company_valuation_bootstrap:adhoc"
 COMPANY_VALUATION_SCREEN_MATERIALIZE_ADHOC_JOB_KEY = "company_valuation_screen_materialize:adhoc"
 COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_KEY = "company_valuation_resolve_unresolved:global"
@@ -94,8 +94,8 @@ JOB_SPECS = {
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=EXECUTION_INTENT_DISPATCH_JOB_TYPE,
-            task_name="run_execution_intent_dispatch_job",
+            job_type=EXECUTION_LIFECYCLE_START_JOB_TYPE,
+            task_name="run_execution_lifecycle_start_job",
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
@@ -127,7 +127,7 @@ WORKER_LANES = (
             JOB_SPECS[ALERT_RECONCILE_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_ENTRY_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_MANAGE_JOB_TYPE].task_name,
-            JOB_SPECS[EXECUTION_INTENT_DISPATCH_JOB_TYPE].task_name,
+            JOB_SPECS[EXECUTION_LIFECYCLE_START_JOB_TYPE].task_name,
         ),
         max_jobs=4,
     ),

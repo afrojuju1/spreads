@@ -7,7 +7,7 @@ from core.alerts.runtime import plan_runtime_entry_selected_alert
 from core.db.decorators import with_storage
 from core.services.admission_lifecycle import admission_allows_attempt, normalize_lifecycle_admission
 from core.services.entry_planner import plan_entry_selection
-from core.services.execution_intents import request_execution_intent_dispatch
+from core.services.execution_intents import request_execution_lifecycle_start
 from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
 )
@@ -705,7 +705,7 @@ def _run_trading_strategy_entry(
     selected_decision: dict[str, Any] | None = None
     selected_signal: dict[str, Any] | None = None
     selected_execution_admission: dict[str, Any] | None = None
-    dispatch_job_run_id: str | None = None
+    lifecycle_start_job_run_id: str | None = None
     for decision_plan, signal in zip(plan["decisions"], signals, strict=False):
         candidate = candidate_payload(signal)
         candidate_identity = str(
@@ -890,7 +890,7 @@ def _run_trading_strategy_entry(
         selected_decision = decision
         selected_signal = signal
     if selected_intent is not None:
-        dispatch_request = request_execution_intent_dispatch(
+        lifecycle_start_request = request_execution_lifecycle_start(
             job_store=job_store,
             requested_by={
                 "reason": "entry_intent_created",
@@ -898,17 +898,19 @@ def _run_trading_strategy_entry(
                 "trading_strategy_id": runtime.trading_strategy_id,
             },
         )
-        if dispatch_request is not None:
-            dispatch_job_run_id = None if dispatch_request.get("job_run_id") in (None, "") else str(dispatch_request["job_run_id"])
+        if lifecycle_start_request is not None:
+            lifecycle_start_job_run_id = (
+                None if lifecycle_start_request.get("job_run_id") in (None, "") else str(lifecycle_start_request["job_run_id"])
+            )
             execution_store.append_execution_intent_event(
                 execution_intent_id=str(selected_intent["execution_intent_id"]),
-                event_type=("dispatch_requested" if str(dispatch_request.get("status") or "") == "queued" else "dispatch_request_failed"),
+                event_type=("lifecycle_start_requested" if str(lifecycle_start_request.get("status") or "") == "queued" else "lifecycle_start_failed"),
                 event_at=_utc_now(),
                 payload={
-                    "job_run_id": dispatch_job_run_id,
-                    "job_key": dispatch_request.get("job_key"),
-                    "status": dispatch_request.get("status"),
-                    "error": dispatch_request.get("error"),
+                    "job_run_id": lifecycle_start_job_run_id,
+                    "job_key": lifecycle_start_request.get("job_key"),
+                    "status": lifecycle_start_request.get("status"),
+                    "error": lifecycle_start_request.get("error"),
                 },
             )
 
@@ -927,7 +929,7 @@ def _run_trading_strategy_entry(
                 execution_mode=runtime.strategy.execution.mode,
                 approval_mode=runtime.strategy.execution.approval,
                 planner_job_run_id=planner_job_run_id,
-                dispatch_job_run_id=dispatch_job_run_id,
+                lifecycle_start_job_run_id=lifecycle_start_job_run_id,
             )
         except Exception as exc:
             runtime_alert = {"status": "failed", "error": str(exc)}
@@ -953,7 +955,7 @@ def _run_trading_strategy_entry(
         "execution_intent_id": None if selected_intent is None else str(selected_intent.get("execution_intent_id")),
         "execution_admission": selected_execution_admission,
         "admission_decision_id": None if not admissions else admissions[-1].get("admission_decision_id"),
-        "dispatch_job_run_id": dispatch_job_run_id,
+        "lifecycle_start_job_run_id": lifecycle_start_job_run_id,
         "runtime_alert": runtime_alert,
         "candidate_generation": candidate_generation,
     }
