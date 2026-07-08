@@ -83,7 +83,7 @@ ENTRY_CAPACITY_ADMISSION_BOUNDARY = "entry_capacity_precheck"
 ALLOCATION_PLAN_BOUNDARY = "allocation_plan"
 PROTECTION_ADMISSION_BOUNDARY = "protection_admission"
 PORTFOLIO_ADMISSION_BOUNDARY = "portfolio_admission"
-DEFERRED_EXECUTION_READINESS_REASON = "deferred_to_execution_submit"
+DEFERRED_EXECUTION_READINESS_REASON = "deferred_to_broker_activity"
 ALLOCATION_DECISION_LIMIT = 200
 MARKET_CONTEXT_FILTER_ID = "market_context_regime_fit"
 BROAD_INDEX_CORRELATION_SYMBOLS = {"SPY", "QQQ", "DIA", "IWM"}
@@ -2534,7 +2534,7 @@ def _deferred_execution_readiness_payload() -> dict[str, Any]:
         "status": "not_evaluated",
         "reason": DEFERRED_EXECUTION_READINESS_REASON,
         "message": "Final quote, broker, and order-submit readiness is evaluated by the execution submit path.",
-        "evaluated_by": "execution_submit",
+        "evaluated_by": "broker_activity",
     }
 
 

@@ -43,6 +43,7 @@ async def _start_temporal_lifecycle_workflow(
     *,
     client: Client,
     intent: dict[str, Any],
+    database_url: str,
     workflow_kind: str,
     workflow_id: str,
     task_queue: str,
@@ -54,6 +55,7 @@ async def _start_temporal_lifecycle_workflow(
         if position_id is None:
             raise ValueError(f"Close lifecycle intent {execution_intent_id} is missing strategy_position_id")
         request = CloseLifecycleWorkflowInput(
+            database_url=database_url,
             position_id=position_id,
             execution_intent_id=execution_intent_id,
             workflow_id=workflow_id,
@@ -71,6 +73,7 @@ async def _start_temporal_lifecycle_workflow(
         )
     else:
         request = TradeLifecycleWorkflowInput(
+            database_url=database_url,
             execution_intent_id=execution_intent_id,
             workflow_id=workflow_id,
             correlation_id=execution_intent_id,
@@ -208,7 +211,7 @@ def start_pending_execution_lifecycle_workflows(
     limit: int = 25,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    _ = db_target
+    database_url = str(getattr(storage, "database_url", db_target))
     execution_store = storage.execution
     if not execution_store.intent_schema_ready():
         return {"status": "skipped", "reason": "execution_intent_schema_unavailable"}
@@ -299,6 +302,7 @@ def start_pending_execution_lifecycle_workflows(
                 _start_temporal_lifecycle_workflow(
                     client=temporal_client,
                     intent=intent,
+                    database_url=database_url,
                     workflow_kind=workflow_kind,
                     workflow_id=workflow_id,
                     task_queue=task_queue,

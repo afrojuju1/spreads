@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.specs import get_declared_job_row
-from core.observability.logging import log_event
 from core.services.candidate_policy import resolve_candidate_profile
 from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_GRACE_SECONDS,
-    PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
     SUBMIT_UNKNOWN_STATUS,
     classify_open_execution_attempt,
     is_terminal_execution_attempt_status,
     resolve_execution_attempt_source_job,
-    resolve_execution_submit_job_run_id,
 )
 from core.services.session_positions import OPEN_TRADE_INTENT
 from core.value_coercion import (
@@ -35,27 +31,6 @@ from .attempts import (
 from .alpaca_adapter import create_alpaca_order_adapter
 from .policy import _attempt_exit_policy, _validate_open_timing_window
 from .shared import OPEN_STATUSES
-
-logger = logging.getLogger(__name__)
-
-
-def _execution_submit_job_run(storage: Any, execution_attempt_id: str) -> Mapping[str, Any] | None:
-    job_store = getattr(storage, "jobs", None)
-    if job_store is None or (hasattr(job_store, "schema_ready") and not job_store.schema_ready()):
-        return None
-    try:
-        return job_store.get_job_run(resolve_execution_submit_job_run_id(execution_attempt_id))
-    except Exception as exc:
-        log_event(
-            logger,
-            logging.WARNING,
-            "execution_guard_submit_job_lookup_failed",
-            exc_info=True,
-            execution_attempt_id=execution_attempt_id,
-            error=str(exc),
-        )
-        return None
-
 
 def _source_job_definition(storage: Any, attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
     source_job = resolve_execution_attempt_source_job(attempt)
@@ -79,10 +54,8 @@ def _evaluate_open_attempt_guard(
     lifecycle = classify_open_execution_attempt(
         attempt,
         now=current_time,
-        submit_job=_execution_submit_job_run(storage, str(attempt.get("execution_attempt_id") or "")),
         source_job_definition=_source_job_definition(storage, attempt),
         submission_grace_seconds=PENDING_SUBMISSION_GRACE_SECONDS,
-        running_submit_stale_after_seconds=PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
     )
     request = _attempt_request(attempt)
     execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), Mapping) else {}
@@ -115,11 +88,7 @@ def _evaluate_open_attempt_guard(
             "stale_after_seconds": lifecycle.get("working_stale_after_seconds"),
         }
 
-    reason = (
-        "stale_auto_open_attempt"
-        if intervention == "cancel_order"
-        else ("submit_outcome_uncertain" if intervention == "mark_submit_unknown" else "stale_pending_submission")
-    )
+    reason = "stale_auto_open_attempt" if intervention == "cancel_order" else "stale_pending_submission"
     return {
         "allowed": False,
         "reason": reason,
@@ -128,7 +97,7 @@ def _evaluate_open_attempt_guard(
         "age_seconds": lifecycle.get("age_seconds"),
         "stale_after_seconds": lifecycle.get("working_stale_after_seconds"),
         "queue_grace_seconds": lifecycle.get("submission_grace_seconds"),
-        "submit_job_status": lifecycle.get("submit_job_status"),
+        "broker_activity_id": lifecycle.get("broker_activity_id"),
         "intervention": intervention,
         "lifecycle": lifecycle,
     }
@@ -229,6 +198,20 @@ def run_open_execution_guard(
         broker_order_id = as_text(attempt.get("broker_order_id"))
         position_id = as_text(attempt.get("position_id"))
         intervention = as_text(guard_decision.get("intervention"))
+        if intervention == "inspect_workflow":
+            skipped += 1
+            decisions.append(
+                {
+                    "execution_attempt_id": execution_attempt_id,
+                    "symbol": str(attempt.get("underlying_symbol") or ""),
+                    "action": "inspect_workflow",
+                    "status": str(attempt.get("status") or ""),
+                    "reason": str(guard_decision["reason"] or ""),
+                    "age_seconds": guard_decision.get("age_seconds"),
+                    "broker_activity_id": guard_decision.get("broker_activity_id"),
+                }
+            )
+            continue
         if intervention == "mark_submit_unknown":
             message = _guard_intervention_message(
                 guard_decision,
@@ -261,7 +244,7 @@ def run_open_execution_guard(
                     "reason": str(guard_decision["reason"] or ""),
                     "age_seconds": guard_decision.get("age_seconds"),
                     "stale_after_seconds": guard_decision.get("stale_after_seconds"),
-                    "submit_job_status": guard_decision.get("submit_job_status"),
+                    "broker_activity_id": guard_decision.get("broker_activity_id"),
                 }
             )
             continue

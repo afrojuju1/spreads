@@ -8,7 +8,6 @@ VALUATION_QUEUE_NAME = "arq:queue:valuation"
 RESEARCH_QUEUE_NAME = "arq:queue:research"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
-EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 EXECUTION_LIFECYCLE_START_JOB_TYPE = "execution_lifecycle_start"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
@@ -21,7 +20,6 @@ COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE = "company_valuation_bootstrap"
 COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE = "company_valuation_screen_materialize"
 COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE = "company_valuation_resolve_unresolved"
 
-EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY = "execution_lifecycle_start:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
 ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
@@ -51,11 +49,6 @@ JOB_SPECS = {
         JobSpec(
             job_type=BROKER_SYNC_JOB_TYPE,
             task_name="run_broker_sync_job",
-            queue_name=RUNTIME_QUEUE_NAME,
-        ),
-        JobSpec(
-            job_type=EXECUTION_SUBMIT_JOB_TYPE,
-            task_name="run_execution_submit_job",
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
@@ -122,7 +115,6 @@ WORKER_LANES = (
         queue_name=RUNTIME_QUEUE_NAME,
         task_names=(
             JOB_SPECS[BROKER_SYNC_JOB_TYPE].task_name,
-            JOB_SPECS[EXECUTION_SUBMIT_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_DELIVERY_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_RECONCILE_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_ENTRY_JOB_TYPE].task_name,

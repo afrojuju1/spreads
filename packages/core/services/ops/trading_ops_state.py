@@ -24,7 +24,6 @@ from core.services.execution_lifecycle import (
     is_open_execution_attempt_status,
     project_execution_attempt_lifecycle,
     resolve_execution_attempt_source_job,
-    resolve_execution_submit_job_run_id,
 )
 from core.services.option_structures import position_legs, unique_leg_symbols
 from core.services.trading_engine.exit_runtime import describe_position_exit_state
@@ -404,46 +403,34 @@ def _broker_exposure_state(
     }
 
 
-def _load_execution_attempt_job_context(
+def _load_execution_attempt_activity_context(
     *,
     job_store: Any,
     attempts: list[Mapping[str, Any]],
-) -> tuple[dict[str, Mapping[str, Any] | None], dict[str, Mapping[str, Any] | None]]:
-    submit_jobs: dict[str, Mapping[str, Any] | None] = {}
+) -> dict[str, Mapping[str, Any] | None]:
     source_definitions: dict[str, Mapping[str, Any] | None] = {}
     if job_store is None or (hasattr(job_store, "schema_ready") and not job_store.schema_ready()):
-        return submit_jobs, source_definitions
+        return source_definitions
 
     for attempt in attempts:
-        execution_attempt_id = as_text(attempt.get("execution_attempt_id"))
-        if execution_attempt_id is None:
-            continue
-        try:
-            submit_jobs[execution_attempt_id] = job_store.get_job_run(resolve_execution_submit_job_run_id(execution_attempt_id))
-        except Exception:
-            submit_jobs[execution_attempt_id] = None
-
         source_job = resolve_execution_attempt_source_job(attempt)
         source_job_key = as_text(source_job.get("job_key"))
         if source_job_key is None or source_job_key in source_definitions:
             continue
         source_definitions[source_job_key] = get_declared_job_row(source_job_key)
-    return submit_jobs, source_definitions
+    return source_definitions
 
 
 def _execution_attempt_lifecycle(
     *,
     attempt: Mapping[str, Any],
     now: datetime,
-    submit_jobs: Mapping[str, Mapping[str, Any] | None],
     source_definitions: Mapping[str, Mapping[str, Any] | None],
 ) -> dict[str, Any]:
     if not is_open_execution_attempt_status(attempt.get("status")):
         return {}
-    execution_attempt_id = as_text(attempt.get("execution_attempt_id")) or ""
     source_job = resolve_execution_attempt_source_job(attempt)
     source_job_key = as_text(source_job.get("job_key"))
-    submit_job = submit_jobs.get(execution_attempt_id)
     source_definition = None if source_job_key is None else source_definitions.get(source_job_key)
     attached_lifecycle = attempt.get("execution_attempt_lifecycle")
     if isinstance(attached_lifecycle, Mapping):
@@ -451,7 +438,6 @@ def _execution_attempt_lifecycle(
     return project_execution_attempt_lifecycle(
         attempt,
         now=now,
-        submit_job=submit_job,
         source_job_definition=source_definition,
     )
 
@@ -484,9 +470,7 @@ def _summarize_execution_attempt(
         "queue_age_seconds": lifecycle_payload.get("queue_age_seconds"),
         "stale_after_seconds": lifecycle_payload.get("working_stale_after_seconds"),
         "submission_grace_seconds": lifecycle_payload.get("submission_grace_seconds"),
-        "submit_job_status": lifecycle_payload.get("submit_job_status"),
-        "submit_job_age_seconds": lifecycle_payload.get("submit_job_age_seconds"),
-        "submit_job_heartbeat_age_seconds": lifecycle_payload.get("submit_job_heartbeat_age_seconds"),
+        "broker_activity_id": lifecycle_payload.get("broker_activity_id"),
         "stale": bool(lifecycle_payload.get("stale")),
         "next_action": lifecycle_payload.get("next_action"),
         "blocks_capacity": bool(lifecycle_payload.get("blocks_capacity")),
@@ -2598,7 +2582,7 @@ def _project_execution(
             )
         )
 
-    submit_jobs, source_definitions = _load_execution_attempt_job_context(
+    source_definitions = _load_execution_attempt_activity_context(
         job_store=job_store,
         attempts=open_execution_attempts,
     )
@@ -2608,7 +2592,6 @@ def _project_execution(
             lifecycle=_execution_attempt_lifecycle(
                 attempt=row,
                 now=now,
-                submit_jobs=submit_jobs,
                 source_definitions=source_definitions,
             ),
         )
@@ -2658,8 +2641,8 @@ def _project_execution(
         attention.append(
             _attention(
                 severity="high",
-                code="execution_submit_unknown",
-                message=f"{submit_unknown_execution_count} open execution attempt(s) have uncertain submit outcomes and still block capacity.",
+                code="broker_submission_unknown",
+                message=f"{submit_unknown_execution_count} open execution attempt(s) have uncertain broker submission outcomes and still block capacity.",
             )
         )
     elif stale_open_execution_count:

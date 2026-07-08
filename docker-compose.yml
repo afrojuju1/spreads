@@ -47,6 +47,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: spreads
+      POSTGRES_PWD: spreads
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
+    ports:
+      - "57233:7233"
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:53000,http://localhost:58080
+    ports:
+      - "58088:8080"
   runtime-init:
     build:
       context: .
@@ -122,6 +148,26 @@ services:
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
+    volumes:
+      - .:/app
+  worker-temporal:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      runtime-init:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
+      REDIS_URL: redis://redis:6379/0
+      SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker"]
     volumes:
       - .:/app
   worker-data:

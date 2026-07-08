@@ -50,7 +50,7 @@ from .order_requests import (
 
 
 @with_storage()
-def run_execution_submit(
+def submit_execution_attempt_to_broker(
     *,
     db_target: str,
     execution_attempt_id: str,

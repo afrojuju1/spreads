@@ -12,7 +12,6 @@ from core.jobs.registry import (
     COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
     EXECUTION_LIFECYCLE_START_JOB_TYPE,
-    EXECUTION_SUBMIT_JOB_TYPE,
     TICKER_SOURCE_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
     TRADING_STRATEGY_ENTRY_JOB_TYPE,
@@ -36,7 +35,6 @@ from core.services.company_valuation.unresolved import (
     ResolveUnresolvedInstitutionalPositionsRequest,
     resolve_unresolved_institutional_positions,
 )
-from core.services.execution.submit import run_execution_submit
 from core.services.execution_intents import start_pending_execution_lifecycle_workflows
 from core.services.exit_manager import run_trading_strategy_manage
 from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source
@@ -148,36 +146,6 @@ async def run_broker_sync_job(
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = BROKER_SYNC_JOB_TYPE
-    return await _execute_managed_job(
-        ctx,
-        job_key=job_key,
-        job_run_id=job_run_id,
-        arq_job_id=arq_job_id,
-        payload=enriched_payload,
-        runner=runner,
-        compact_result=render_value,
-    )
-
-
-async def run_execution_submit_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    database_url = ctx["database_url"]
-
-    def runner(heartbeat: Any) -> dict[str, Any]:
-        heartbeat()
-        return run_execution_submit(
-            db_target=database_url,
-            execution_attempt_id=str(payload["execution_attempt_id"]),
-            heartbeat=heartbeat,
-        )
-
-    enriched_payload = dict(payload)
-    enriched_payload["job_type"] = EXECUTION_SUBMIT_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

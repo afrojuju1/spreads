@@ -8,11 +8,6 @@ from typing import Any
 from core.db.decorators import with_storage
 from core.events.bus import publish_global_event_sync
 from core.integrations.alpaca.client import AlpacaClient, AlpacaRequestError
-from core.jobs.adhoc import enqueue_ad_hoc_job
-from core.jobs.registry import (
-    EXECUTION_SUBMIT_ADHOC_JOB_KEY,
-    EXECUTION_SUBMIT_JOB_TYPE,
-)
 from core.observability.logging import log_event
 from core.services.session_positions import (
     CLOSE_TRADE_INTENT,
@@ -22,7 +17,6 @@ from core.services.session_positions import (
 from core.services.execution_lifecycle import (
     is_terminal_execution_attempt_status,
     project_execution_attempt_lifecycle,
-    resolve_execution_submit_job_run_id,
 )
 from core.value_coercion import (
     as_text,
@@ -472,77 +466,8 @@ def _queue_execution_attempt(
     execution_store: Any,
     attempt: dict[str, Any],
 ) -> dict[str, Any]:
+    _ = job_store
     execution_attempt_id = str(attempt["execution_attempt_id"])
-    job_run_id = resolve_execution_submit_job_run_id(execution_attempt_id)
-    scheduled_for = datetime.now(UTC)
-    payload = {
-        "execution_attempt_id": execution_attempt_id,
-        "session_id": str(attempt["session_id"]),
-        "trade_intent": str(attempt["trade_intent"]),
-        "job_key": EXECUTION_SUBMIT_ADHOC_JOB_KEY,
-        "job_type": EXECUTION_SUBMIT_JOB_TYPE,
-        "scheduled_for": scheduled_for.isoformat().replace("+00:00", "Z"),
-    }
-    job_run, _ = job_store.create_job_run(
-        job_run_id=job_run_id,
-        job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
-        arq_job_id=job_run_id,
-        job_type=EXECUTION_SUBMIT_JOB_TYPE,
-        status="queued",
-        scheduled_for=scheduled_for,
-        session_id=str(attempt["session_id"]),
-        payload=payload,
-    )
-    try:
-        enqueued = enqueue_ad_hoc_job(
-            job_type=EXECUTION_SUBMIT_JOB_TYPE,
-            job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
-            job_run_id=job_run_id,
-            arq_job_id=job_run_id,
-            payload=payload,
-        )
-    except Exception as exc:
-        job_store.update_job_run_status(
-            job_run_id=job_run_id,
-            status="failed",
-            expected_arq_job_id=job_run_id,
-            finished_at=datetime.now(UTC),
-            error_text=str(exc),
-        )
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            completed_at=utc_now_iso(),
-            error_text=str(exc),
-            position_id=as_text(attempt.get("position_id")),
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Execution queueing failed before submission: {exc}",
-        )
-        raise RuntimeError(f"Execution queueing failed: {exc}") from exc
-    if enqueued is None:
-        job_store.update_job_run_status(
-            job_run_id=job_run_id,
-            status="failed",
-            expected_arq_job_id=job_run_id,
-            finished_at=datetime.now(UTC),
-            error_text="Execution submit job was not enqueued.",
-        )
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            completed_at=utc_now_iso(),
-            error_text="Execution submit job was not enqueued.",
-            position_id=as_text(attempt.get("position_id")),
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message="Execution queueing failed before submission: job was not enqueued.",
-        )
-        raise RuntimeError("Execution queueing failed: job was not enqueued.")
     queued_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
     _publish_execution_attempt_event(
         queued_attempt,

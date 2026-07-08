@@ -271,3 +271,14 @@ def market_recorder_command(ctx: typer.Context) -> None:
     from core.services.market_recorder import main as market_recorder_main
 
     run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
+
+
+@runtime_app.command(
+    "temporal-worker",
+    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
+    help="Run the Temporal lifecycle worker.",
+)
+def temporal_worker_command(ctx: typer.Context) -> None:
+    from core.workflows.worker import main as temporal_worker_main
+
+    run_passthrough(ctx=ctx, entrypoint=temporal_worker_main)

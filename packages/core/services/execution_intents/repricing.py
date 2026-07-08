@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
+from core.db.decorators import with_storage
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.execution.sync import refresh_execution_attempt
+from core.services.execution.attempts import _get_attempt_payload
 from core.value_coercion import as_text, coerce_int, utc_now_iso
 
 from .maintenance import _position_is_active_for_intent
@@ -23,8 +24,8 @@ from .shared import (
 )
 
 
-def _replacement_intent_id() -> str:
-    return f"execution_intent:{uuid4().hex}"
+def _replacement_intent_id(*, execution_intent_id: str, reprice_count: int) -> str:
+    return f"{execution_intent_id}:reprice:{reprice_count}"
 
 
 def _create_replacement_intent(
@@ -50,8 +51,15 @@ def _create_replacement_intent(
         )
         return updated
     now = utc_now_iso()
-    replacement_id = _replacement_intent_id()
     payload = _intent_payload(intent)
+    existing_replacement_id = as_text(intent.get("superseded_by_id")) or as_text(payload.get("replacement_execution_intent_id"))
+    replacement_id = existing_replacement_id or _replacement_intent_id(
+        execution_intent_id=str(intent["execution_intent_id"]),
+        reprice_count=_reprice_count(intent) + 1,
+    )
+    existing_replacement = execution_store.get_execution_intent(replacement_id)
+    if existing_replacement is not None:
+        return dict(existing_replacement)
     original_limit_price = payload.get("original_limit_price")
     if original_limit_price in (None, ""):
         original_limit_price = attempt.get("requested_limit_price") or attempt.get("limit_price")
@@ -111,6 +119,63 @@ def _create_replacement_intent(
         },
     )
     return updated
+
+
+@with_storage()
+def create_repriced_execution_intent(
+    *,
+    db_target: str,
+    execution_intent_id: str,
+    execution_attempt_id: str,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    _ = db_target
+    execution_store = storage.execution
+    if not execution_store.intent_schema_ready() or not execution_store.schema_ready():
+        raise RuntimeError("Execution intent and attempt schema are required for close repricing.")
+    intent = execution_store.get_execution_intent(execution_intent_id)
+    if intent is None:
+        raise ValueError(f"Unknown execution_intent_id: {execution_intent_id}")
+    payload = _intent_payload(dict(intent))
+    replacement_id = as_text(intent.get("superseded_by_id")) or as_text(payload.get("replacement_execution_intent_id"))
+    if replacement_id is not None:
+        replacement = execution_store.get_execution_intent(replacement_id)
+        if replacement is not None:
+            return {
+                "status": "exists",
+                "changed": False,
+                "execution_intent_id": execution_intent_id,
+                "replacement_execution_intent_id": replacement_id,
+                "replacement_intent": dict(replacement),
+            }
+    attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+    replacement = _create_replacement_intent(
+        execution_store,
+        intent=dict(intent),
+        attempt=attempt,
+    )
+    if replacement is None:
+        return {
+            "status": "reprice_exhausted",
+            "changed": True,
+            "execution_intent_id": execution_intent_id,
+            "execution_attempt_id": execution_attempt_id,
+            "replacement_execution_intent_id": None,
+        }
+    replacement_id = as_text(replacement.get("superseded_by_id")) or as_text(
+        _intent_payload(dict(replacement)).get("replacement_execution_intent_id")
+    )
+    if replacement_id is None and as_text(replacement.get("execution_intent_id")) != execution_intent_id:
+        replacement_id = as_text(replacement.get("execution_intent_id"))
+    replacement_intent = execution_store.get_execution_intent(replacement_id) if replacement_id is not None else None
+    return {
+        "status": "replacement_created",
+        "changed": True,
+        "execution_intent_id": execution_intent_id,
+        "execution_attempt_id": execution_attempt_id,
+        "replacement_execution_intent_id": replacement_id,
+        "replacement_intent": None if replacement_intent is None else dict(replacement_intent),
+    }
 
 
 def _stale_after_seconds(

@@ -9,6 +9,7 @@ from core.model_contracts import DomainModel
 
 
 class TradeLifecycleWorkflowInput(DomainModel):
+    database_url: str
     execution_intent_id: str
     workflow_id: str
     correlation_id: str
@@ -17,6 +18,7 @@ class TradeLifecycleWorkflowInput(DomainModel):
 
 
 class CloseLifecycleWorkflowInput(DomainModel):
+    database_url: str
     position_id: str
     execution_intent_id: str | None = None
     workflow_id: str

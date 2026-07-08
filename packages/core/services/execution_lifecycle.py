@@ -115,10 +115,6 @@ def resolve_execution_attempt_source_job(attempt: Mapping[str, Any]) -> dict[str
     return dict(payload) if isinstance(payload, Mapping) else {}
 
 
-def resolve_execution_submit_job_run_id(execution_attempt_id: str) -> str:
-    return f"execution_submit:{execution_attempt_id}"
-
-
 def resolve_execution_attempt_primary_order(
     attempt: Mapping[str, Any],
 ) -> Mapping[str, Any] | None:
@@ -241,10 +237,8 @@ def classify_open_execution_attempt(
     attempt: Mapping[str, Any],
     *,
     now: datetime,
-    submit_job: Mapping[str, Any] | None = None,
     source_job_definition: Mapping[str, Any] | None = None,
     submission_grace_seconds: int = PENDING_SUBMISSION_GRACE_SECONDS,
-    running_submit_stale_after_seconds: int = PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
 ) -> dict[str, Any]:
     status = normalize_execution_attempt_status(attempt.get("status"))
     broker_order_id = as_text(attempt.get("broker_order_id"))
@@ -255,22 +249,9 @@ def classify_open_execution_attempt(
     pending_quantity = max(requested_quantity - min(filled_quantity, requested_quantity), 0.0)
     linked_position_id = as_text(attempt.get("position_id"))
     occupies_position_slot = linked_position_id is None and filled_quantity <= 0
-    submit_job_status = normalize_execution_attempt_status(None if not isinstance(submit_job, Mapping) else submit_job.get("status"))
     queue_age_seconds = _seconds_since(attempt.get("requested_at"), now=now)
     submitted_age_seconds = _seconds_since(
         as_text(attempt.get("submitted_at")) or as_text(attempt.get("requested_at")),
-        now=now,
-    )
-    submit_job_age_seconds = _seconds_since(
-        None if not isinstance(submit_job, Mapping) else submit_job.get("scheduled_for"),
-        now=now,
-    )
-    submit_job_heartbeat_age_seconds = _seconds_since(
-        (
-            None
-            if not isinstance(submit_job, Mapping)
-            else (submit_job.get("heartbeat_at") or submit_job.get("started_at") or submit_job.get("scheduled_for"))
-        ),
         now=now,
     )
     working_stale_after_seconds = resolve_open_attempt_working_stale_after_seconds(
@@ -284,10 +265,7 @@ def classify_open_execution_attempt(
         "status": status,
         "age_seconds": submitted_age_seconds,
         "queue_age_seconds": queue_age_seconds,
-        "submit_job_run_id": resolve_execution_submit_job_run_id(str(attempt.get("execution_attempt_id") or "")),
-        "submit_job_status": submit_job_status if submit_job_status else None,
-        "submit_job_age_seconds": submit_job_age_seconds,
-        "submit_job_heartbeat_age_seconds": submit_job_heartbeat_age_seconds,
+        "broker_activity_id": f"broker_submit:{attempt.get('execution_attempt_id') or ''}",
         "submission_grace_seconds": int(max(submission_grace_seconds, 1)),
         "working_stale_after_seconds": working_stale_after_seconds,
         "stale": False,
@@ -303,49 +281,15 @@ def classify_open_execution_attempt(
     if status == PENDING_SUBMISSION_STATUS and broker_order_id is None:
         lifecycle["phase"] = "queued_local"
         lifecycle["age_seconds"] = queue_age_seconds
-        lifecycle["note"] = "Execution is queued locally for broker submission."
-        lifecycle["next_action"] = "wait_for_submit_job"
+        lifecycle["note"] = "Execution is waiting for its broker workflow activity."
+        lifecycle["next_action"] = "wait_for_broker_activity"
         grace_seconds = float(max(submission_grace_seconds, 1))
         if queue_age_seconds is None or queue_age_seconds <= grace_seconds:
             return lifecycle
-        if submit_job_status in {"failed", "skipped"} or submit_job is None:
-            lifecycle["stale"] = True
-            lifecycle["next_action"] = "fail_unsubmitted"
-            lifecycle["intervention"] = "fail_unsubmitted"
-            lifecycle["note"] = (
-                "Execution remained queued locally past the submission grace window " "and the submit job did not complete successfully."
-            )
-            return lifecycle
-        if submit_job_status == "queued":
-            lifecycle["stale"] = True
-            lifecycle["next_action"] = "fail_unsubmitted"
-            lifecycle["intervention"] = "fail_unsubmitted"
-            lifecycle["note"] = "Execution remained queued locally past the submission grace window " "without reaching a worker."
-            return lifecycle
-        if submit_job_status == "running":
-            heartbeat_stale_after = float(max(running_submit_stale_after_seconds, 1))
-            if submit_job_heartbeat_age_seconds is not None and submit_job_heartbeat_age_seconds > heartbeat_stale_after:
-                lifecycle["phase"] = "submit_unknown"
-                lifecycle["stale"] = True
-                lifecycle["next_action"] = "reconcile_broker"
-                lifecycle["intervention"] = "mark_submit_unknown"
-                lifecycle["note"] = (
-                    "Execution submit outcome is uncertain because the submit job heartbeat " "is stale and broker submission may have happened."
-                )
-            return lifecycle
-        if submit_job_status == "succeeded":
-            lifecycle["phase"] = "submit_unknown"
-            lifecycle["stale"] = True
-            lifecycle["next_action"] = "reconcile_broker"
-            lifecycle["intervention"] = "mark_submit_unknown"
-            lifecycle["note"] = (
-                "Execution submit outcome is uncertain because the submit job completed " "without a reconciled broker order on the attempt."
-            )
-            return lifecycle
         lifecycle["stale"] = True
-        lifecycle["next_action"] = "fail_unsubmitted"
-        lifecycle["intervention"] = "fail_unsubmitted"
-        lifecycle["note"] = "Execution remained queued locally past the submission grace window " "and requires cleanup."
+        lifecycle["next_action"] = "inspect_workflow"
+        lifecycle["intervention"] = "inspect_workflow"
+        lifecycle["note"] = "Execution stayed queued past the submission grace window; inspect the Temporal workflow activity."
         return lifecycle
 
     if status == SUBMIT_UNKNOWN_STATUS:
@@ -427,12 +371,12 @@ def _next_action_for_lifecycle_state(
         if state == ExecutionAttemptState.SUBMIT_UNKNOWN.value:
             return "reconcile_broker"
         if state == ExecutionAttemptState.PENDING_SUBMISSION.value:
-            return "fail_unsubmitted"
+            return "inspect_workflow"
         if state == ExecutionAttemptState.WORKING.value:
             return "refresh_or_cancel"
         return "operator_review"
     if state == ExecutionAttemptState.PENDING_SUBMISSION.value:
-        return "wait_for_submit_job"
+        return "wait_for_broker_activity"
     if state == ExecutionAttemptState.SUBMIT_UNKNOWN.value:
         return "reconcile_broker"
     if state == ExecutionAttemptState.CANCELING.value:
@@ -448,7 +392,6 @@ def project_execution_attempt_lifecycle(
     attempt: Mapping[str, Any],
     *,
     now: datetime,
-    submit_job: Mapping[str, Any] | None = None,
     source_job_definition: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     status = normalize_execution_attempt_status(attempt.get("status"))
@@ -506,7 +449,6 @@ def project_execution_attempt_lifecycle(
         open_lifecycle = classify_open_execution_attempt(
             attempt,
             now=now,
-            submit_job=submit_job,
             source_job_definition=source_job_definition,
         )
         lifecycle.update(open_lifecycle)
@@ -548,7 +490,6 @@ __all__ = [
     "normalize_execution_attempt_lifecycle_state",
     "normalize_broker_order_lifecycle_state",
     "project_execution_attempt_lifecycle",
-    "resolve_execution_submit_job_run_id",
     "resolve_execution_attempt_filled_quantity",
     "resolve_execution_attempt_primary_order",
     "resolve_execution_attempt_requested_quantity",
