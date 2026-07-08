@@ -49,6 +49,12 @@ from .shared import (
 )
 
 _JOB_TYPE_BY_TASK_NAME = {spec.task_name: job_type for job_type, spec in JOB_SPECS.items()}
+RETIRED_LIFECYCLE_JOB_TYPES = frozenset(
+    {
+        "execution_intent" + "_dispatch",
+        "execution" + "_submit",
+    }
+)
 TRADING_STRATEGY_MANAGE_BROKER_SYNC_SKIP_REASONS = {
     "broker_sync_in_flight",
     "broker_sync_missing",
@@ -289,9 +295,8 @@ def _filter_excluded_job_runs(
     *,
     excluded_job_types: set[str],
 ) -> list[dict[str, Any]]:
-    if not excluded_job_types:
-        return rows
-    return [dict(row) for row in rows if str(row.get("job_type") or "").strip() not in excluded_job_types]
+    excluded = set(excluded_job_types).union(RETIRED_LIFECYCLE_JOB_TYPES)
+    return [dict(row) for row in rows if str(row.get("job_type") or "").strip() not in excluded]
 
 
 def _job_run_operator_status(
@@ -749,7 +754,7 @@ def build_jobs_overview(
 ) -> dict[str, Any]:
     now = utc_now()
     generated_at = utc_iso(now) or utc_now_iso()
-    excluded_job_types = excluded_declared_job_types()
+    excluded_job_types = excluded_declared_job_types().union(RETIRED_LIFECYCLE_JOB_TYPES)
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)]
     disabled_lane_rows = _disabled_worker_lane_rows(excluded_job_types=excluded_job_types)
@@ -962,7 +967,7 @@ def build_jobs_compact_state(
 ) -> dict[str, Any]:
     now = utc_now()
     generated_at = utc_iso(now) or utc_now_iso()
-    excluded_job_types = excluded_declared_job_types()
+    excluded_job_types = excluded_declared_job_types().union(RETIRED_LIFECYCLE_JOB_TYPES)
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=None)]
     disabled_lane_rows = _disabled_worker_lane_rows(excluded_job_types=excluded_job_types)

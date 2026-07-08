@@ -371,6 +371,8 @@ Dynamic-source and static-source strategies both flow through the same strategy 
 
 `execution_intents` records pending open/manage/close work and lifecycle-start state. The `execution_lifecycle_start` job starts deterministic Temporal trade/close workflows for pending intents, marks claimed intents with workflow metadata, and appends engine events. The `worker-temporal` process runs the trade/close workflows and broker activities. Broker activities prepare or reuse existing attempts, submit pending attempts to Alpaca through `alpaca_direct`, refresh/cancel broker state, persist attempt/order/fill rows, sync linked intents, and append engine events. Close workflows continue refreshing broker state on Temporal timers until the attempt is terminal or stale-policy handling cancels, fails closed, leaves working, or creates a deterministic replacement close intent.
 
+`TradingOpsState.details.engine` exposes lifecycle event health from `engine_events` and `engine_outbox`, including workflow event counts, recent engine events, pending outbox count, and retrying outbox count. Retired lifecycle dispatch/submit job types are filtered from current job health summaries so historical runs do not look like active operator work.
+
 `services/execution/` records immutable broker-facing facts in:
 
 - `execution_attempts`

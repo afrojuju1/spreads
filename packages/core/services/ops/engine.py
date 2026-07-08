@@ -18,6 +18,7 @@ from core.storage.engine_models import (
     TickerSourceStateModel,
     TradeCandidateModel,
 )
+from core.storage.engine_event_models import EngineEventModel, EngineOutboxModel
 from core.storage.lifecycle_models import TradeDecisionModel, TradeSignalModel
 from core.storage.serializers import parse_date, parse_datetime
 
@@ -347,6 +348,108 @@ def _execution_summary(*, execution_store: Any, market_date: str) -> dict[str, A
     return summary
 
 
+def _engine_event_row(row: EngineEventModel) -> dict[str, Any]:
+    return {
+        "engine_event_id": row.engine_event_id,
+        "sequence": row.sequence,
+        "event_type": row.event_type,
+        "aggregate_type": row.aggregate_type,
+        "aggregate_id": row.aggregate_id,
+        "lifecycle_object": row.lifecycle_object,
+        "from_state": row.from_state,
+        "to_state": row.to_state,
+        "workflow_id": row.workflow_id,
+        "workflow_run_id": row.workflow_run_id,
+        "execution_intent_id": row.execution_intent_id,
+        "execution_attempt_id": row.execution_attempt_id,
+        "broker_order_id": row.broker_order_id,
+        "position_id": row.position_id,
+        "correlation_id": row.correlation_id,
+        "occurred_at": utc_iso(row.occurred_at),
+        "recorded_at": utc_iso(row.recorded_at),
+    }
+
+
+def _engine_event_summary(*, engine_events: Any, market_date: str) -> dict[str, Any]:
+    if not engine_events.schema_ready():
+        return {
+            "status": "blocked",
+            "reason": "engine_event_schema_unavailable",
+            "engine_event_count": 0,
+            "workflow_event_count": 0,
+            "pending_outbox_count": 0,
+            "retrying_outbox_count": 0,
+            "published_outbox_count": 0,
+            "event_type_counts": {},
+            "aggregate_type_counts": {},
+            "recent_events": [],
+        }
+
+    start, end = _window(market_date)
+    with engine_events.session_factory() as session:
+        event_type_counts = dict(
+            session.execute(
+                select(EngineEventModel.event_type, func.count())
+                .where(EngineEventModel.occurred_at >= start)
+                .where(EngineEventModel.occurred_at < end)
+                .group_by(EngineEventModel.event_type)
+            ).all()
+        )
+        aggregate_type_counts = dict(
+            session.execute(
+                select(EngineEventModel.aggregate_type, func.count())
+                .where(EngineEventModel.occurred_at >= start)
+                .where(EngineEventModel.occurred_at < end)
+                .group_by(EngineEventModel.aggregate_type)
+            ).all()
+        )
+        workflow_event_count = (
+            session.scalar(
+                select(func.count())
+                .select_from(EngineEventModel)
+                .where(EngineEventModel.occurred_at >= start)
+                .where(EngineEventModel.occurred_at < end)
+                .where(EngineEventModel.workflow_id.is_not(None))
+            )
+            or 0
+        )
+        outbox_state_counts = dict(
+            session.execute(
+                select(EngineOutboxModel.publish_state, func.count()).group_by(EngineOutboxModel.publish_state)
+            ).all()
+        )
+        retrying_outbox_count = (
+            session.scalar(
+                select(func.count())
+                .select_from(EngineOutboxModel)
+                .where(EngineOutboxModel.publish_state == "pending")
+                .where(EngineOutboxModel.error_text.is_not(None))
+            )
+            or 0
+        )
+        recent_events = session.scalars(
+            select(EngineEventModel)
+            .order_by(EngineEventModel.sequence.desc())
+            .limit(ENGINE_RECENT_ROW_LIMIT)
+        ).all()
+
+    event_count = int(sum(event_type_counts.values()))
+    retrying_count = int(retrying_outbox_count)
+    pending_count = int(outbox_state_counts.get("pending", 0) or 0)
+    return {
+        "status": "degraded" if retrying_count else "healthy",
+        "engine_event_count": event_count,
+        "workflow_event_count": int(workflow_event_count),
+        "pending_outbox_count": pending_count,
+        "retrying_outbox_count": retrying_count,
+        "published_outbox_count": int(outbox_state_counts.get("published", 0) or 0),
+        "event_type_counts": dict(sorted((str(key), int(value)) for key, value in event_type_counts.items())),
+        "aggregate_type_counts": dict(sorted((str(key), int(value)) for key, value in aggregate_type_counts.items())),
+        "outbox_state_counts": dict(sorted((str(key), int(value)) for key, value in outbox_state_counts.items())),
+        "recent_events": [_engine_event_row(row) for row in recent_events],
+    }
+
+
 def _capture_summary(*, capture_store: Any, now: datetime) -> dict[str, Any]:
     if not capture_store.target_schema_ready():
         return {
@@ -392,6 +495,10 @@ def build_engine_ops_state(
         execution_store=storage.execution,
         market_date=market_date,
     )
+    event_summary = _engine_event_summary(
+        engine_events=storage.engine_events,
+        market_date=market_date,
+    )
     capture_summary = _capture_summary(
         capture_store=storage.capture,
         now=now,
@@ -399,6 +506,7 @@ def build_engine_ops_state(
     status = _combine_statuses(
         str(fact_summary.get("status") or "unknown"),
         str(execution_summary.get("status") or "unknown"),
+        str(event_summary.get("status") or "unknown"),
         str(capture_summary.get("status") or "unknown"),
     )
     summary = {
@@ -419,6 +527,12 @@ def build_engine_ops_state(
         "entry_intent_state_counts": execution_summary.get("entry_intent_state_counts"),
         "management_intent_count": execution_summary.get("management_intent_count"),
         "management_intent_state_counts": execution_summary.get("management_intent_state_counts"),
+        "engine_event_count": event_summary.get("engine_event_count"),
+        "engine_workflow_event_count": event_summary.get("workflow_event_count"),
+        "engine_event_type_counts": event_summary.get("event_type_counts"),
+        "engine_outbox_pending_count": event_summary.get("pending_outbox_count"),
+        "engine_outbox_retrying_count": event_summary.get("retrying_outbox_count"),
+        "engine_outbox_published_count": event_summary.get("published_outbox_count"),
         "open_position_count": execution_summary.get("open_position_count"),
         "open_position_symbols": execution_summary.get("open_position_symbols"),
         "capture_active_target_count": capture_summary.get("active_target_count"),
@@ -437,6 +551,7 @@ def build_engine_ops_state(
             "candidate_runs": fact_summary.get("candidate_runs"),
             "trade_signals": fact_summary.get("trade_signals"),
             "selected_decisions": fact_summary.get("selected_decisions"),
+            "engine_events": event_summary,
             "capture": capture_summary,
             "execution": execution_summary,
         },
