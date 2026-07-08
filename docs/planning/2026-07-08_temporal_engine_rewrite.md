@@ -26,11 +26,11 @@ The new ownership model is:
 ## Cut order
 
 1. Land the engine event/outbox schema, repository, command/event contracts, runtime configuration, and empty workflow entry points.
-2. Move pending execution-intent dispatch into a Temporal workflow starter. This is the first deletion point for the global dispatch loop.
+2. Move pending execution-intent startup into a Temporal workflow starter. Done in `spr-w3r.1`: pending intents now start deterministic workflows through `execution_lifecycle_start`.
 3. Convert broker submit, refresh, cancel, and order/fill sync into idempotent activities. Activities update existing attempt/order/fill tables and append engine events in the same Postgres transaction where possible. Done in `spr-w3r.2`: the old broker-submit worker path is removed.
 4. Move close lifecycle orchestration into Temporal. Delete close-specific queued dispatch once close workflows own submit and reconciliation. Done in `spr-w3r.3`: close workflows now submit, refresh on Temporal timers, cancel stale attempts, and create deterministic replacement close intents for cancel-and-reprice policy.
 5. Update `TradingOpsState` to prefer engine events/workflow fields for lifecycle health while preserving existing position and attempt read models.
-6. Remove stale scheduler docs, job definitions, and worker registrations for lifecycle dispatch/submit after live validation proves there is no dual-submit path.
+6. Remove stale scheduler docs, job definitions, and worker registrations for retired lifecycle jobs after validation proves there is only one broker-submission owner.
 
 ## First validation gate
 
