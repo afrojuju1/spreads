@@ -241,11 +241,6 @@ def company_valuation_bootstrap_command(
         "--db",
         help="Database URL override.",
     ),
-    redis_url: str | None = typer.Option(
-        None,
-        "--redis-url",
-        help="Redis URL override.",
-    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     _run_company_payload_command(
@@ -259,7 +254,6 @@ def company_valuation_bootstrap_command(
                 config_root=config_root,
             ),
             db_target=db,
-            redis_url=redis_url,
         ).to_payload(),
         renderer=_render_job_payload,
         json_output=json_output,
@@ -311,11 +305,6 @@ def company_valuation_screen_refresh_command(
         "--db",
         help="Database URL override.",
     ),
-    redis_url: str | None = typer.Option(
-        None,
-        "--redis-url",
-        help="Redis URL override.",
-    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     def render(payload: dict[str, Any]) -> None:
@@ -335,7 +324,6 @@ def company_valuation_screen_refresh_command(
                 config_root=config_root,
             ),
             db_target=db,
-            redis_url=redis_url,
         ).to_payload(),
         renderer=render,
         json_output=json_output,
@@ -437,11 +425,6 @@ def company_valuation_resolve_unresolved_command(
         "--db",
         help="Database URL override.",
     ),
-    redis_url: str | None = typer.Option(
-        None,
-        "--redis-url",
-        help="Redis URL override.",
-    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     _run_company_payload_command(
@@ -453,7 +436,6 @@ def company_valuation_resolve_unresolved_command(
                 max_attempts=max_attempts,
             ),
             db_target=db,
-            redis_url=redis_url,
         ).to_payload(),
         renderer=_render_job_payload,
         json_output=json_output,

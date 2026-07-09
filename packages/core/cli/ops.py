@@ -10,15 +10,15 @@ from core.cli.command_harness import (
     validate_positive_limit,
 )
 from core.cli.ops_render import (
-    render_job_lanes_view,
+    render_job_task_queues_view,
     render_jobs_view,
     render_storage_ops_state,
     render_trading_ops_state,
 )
 from core.services.ops import (
     OpsLookupError,
-    build_job_lanes_overview,
     build_job_run_view,
+    build_job_task_queues_overview,
     build_jobs_overview,
     build_strategy_evidence_ledger,
     build_storage_ops_state,
@@ -341,16 +341,16 @@ def jobs_run_command(
     )
 
 
-@jobs_app.command("lanes", help="Inspect worker lanes.")
-def jobs_lanes_command(
+@jobs_app.command("task-queues", help="Inspect Temporal task queues.")
+def jobs_task_queues_command(
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     _run_ops_visibility_command(
-        builder=lambda: build_job_lanes_overview(db_target=db),
-        renderer=render_job_lanes_view,
+        builder=lambda: build_job_task_queues_overview(db_target=db),
+        renderer=render_job_task_queues_view,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,

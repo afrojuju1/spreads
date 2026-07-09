@@ -93,7 +93,6 @@ def _queue_job(
     job_key: str,
     payload: dict[str, Any],
     db_target: str | None,
-    redis_url: str | None,
 ) -> QueuedCompanyValuationJob:
     database_url = db_target or default_database_url()
     job_store = build_job_repository(database_url)
@@ -162,7 +161,6 @@ def enqueue_company_valuation_bootstrap_job(
     request: CompanyValuationBootstrapRequest,
     *,
     db_target: str | None = None,
-    redis_url: str | None = None,
 ) -> QueuedCompanyValuationJob:
     tickers = _normalized_tickers(request.tickers)
     if not tickers:
@@ -204,7 +202,6 @@ def enqueue_company_valuation_bootstrap_job(
         job_key=job_key,
         payload=payload,
         db_target=db_target,
-        redis_url=redis_url,
     )
 
 
@@ -212,7 +209,6 @@ def enqueue_company_valuation_screen_materialize_job(
     request: CompanyValuationScreenRefreshRequest,
     *,
     db_target: str | None = None,
-    redis_url: str | None = None,
 ) -> QueuedCompanyValuationJob:
     tickers = _normalized_tickers(request.tickers)
     scope = {
@@ -240,7 +236,6 @@ def enqueue_company_valuation_screen_materialize_job(
         job_key=job_key,
         payload=payload,
         db_target=db_target,
-        redis_url=redis_url,
     )
 
 
@@ -248,7 +243,6 @@ def enqueue_company_valuation_resolve_unresolved_job(
     request: ResolveUnresolvedInstitutionalPositionsRequest,
     *,
     db_target: str | None = None,
-    redis_url: str | None = None,
 ) -> QueuedCompanyValuationJob:
     resolved_report_period = _parse_day(request.report_period)
     scope = {
@@ -284,7 +278,6 @@ def enqueue_company_valuation_resolve_unresolved_job(
         job_key=job_key,
         payload=payload,
         db_target=db_target,
-        redis_url=redis_url,
     )
 
 

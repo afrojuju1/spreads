@@ -885,7 +885,7 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
     _render_jobs_list(console, payload)
 
 
-def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
+def render_job_task_queues_view(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
     schedules = dict(details.get("schedules") or {})

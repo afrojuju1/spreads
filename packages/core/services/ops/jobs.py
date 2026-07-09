@@ -1043,7 +1043,7 @@ def build_jobs_compact_state(
 
 
 @with_storage()
-def build_job_lanes_overview(
+def build_job_task_queues_overview(
     *,
     db_target: str | None = None,
     storage: Any | None = None,
@@ -1057,7 +1057,7 @@ def build_job_lanes_overview(
         "status": payload.get("status"),
         "generated_at": payload.get("generated_at"),
         "summary": {
-            "view": "lanes",
+            "view": "task_queues",
             "task_queue_count": len(task_queue_rows),
             "disabled_task_queue_count": len(disabled_task_queue_rows),
             "running_job_count": sum(int(row.get("running_job_count") or 0) for row in task_queue_rows),
@@ -1066,7 +1066,7 @@ def build_job_lanes_overview(
         },
         "attention": list(payload.get("attention") or []),
         "details": {
-            "view": "lanes",
+            "view": "task_queues",
             "schedules": details.get("schedules"),
             "task_queues": task_queue_rows,
             "disabled_task_queues": disabled_task_queue_rows,
