@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.services.risk_manager import (
+from core.services.risk.admission import (
     build_allocation_plan_snapshot,
     build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,

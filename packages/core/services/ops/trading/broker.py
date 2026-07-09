@@ -6,7 +6,7 @@ from typing import Any
 
 from core.value_coercion import coerce_int
 
-from .shared import _seconds_since
+from core.services.ops.shared import _seconds_since
 
 BROKER_SYNC_STALE_AFTER_SECONDS = 15 * 60
 

@@ -6,7 +6,14 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Protocol, TypeAlias
 
-from .kernel import EngineEvidence, EngineMetadata, EnginePayload, EnginePolicy, EngineRunRef, EngineSummary
+from core.services.trading_engine.kernel import (
+    EngineEvidence,
+    EngineMetadata,
+    EnginePayload,
+    EnginePolicy,
+    EngineRunRef,
+    EngineSummary,
+)
 
 EntryQualityStatus: TypeAlias = Literal["pass", "watch", "block"]
 

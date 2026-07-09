@@ -17,7 +17,7 @@ from core.services.runtime_identity import (
     build_live_run_scope_id,
     resolve_runtime_policy_fields,
 )
-from core.services.risk_manager import (
+from core.services.risk.admission import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
 )

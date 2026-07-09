@@ -28,9 +28,7 @@ from core.value_coercion import (
     utc_now_iso,
 )
 
-from .broker_sync import broker_sync_payload as _broker_sync_payload
-from .market_session import market_session_context as _market_session_context
-from .shared import (
+from core.services.ops.shared import (
     JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS,
     JOB_RUN_QUEUE_STALE_AFTER_SECONDS,
     OpsLookupError,
@@ -44,6 +42,8 @@ from .shared import (
     _stream_quote_ticks_saved,
     _stream_trade_ticks_saved,
 )
+from core.services.ops.trading.broker import broker_sync_payload as _broker_sync_payload
+from core.services.ops.trading.market import market_session_context as _market_session_context
 
 _JOB_TYPE_BY_TASK_NAME = {spec.task_name: job_type for job_type, spec in JOB_SPECS.items()}
 RETIRED_LIFECYCLE_JOB_TYPES = frozenset(

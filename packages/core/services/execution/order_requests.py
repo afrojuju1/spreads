@@ -6,7 +6,7 @@ from typing import Any
 
 from core.common import clamp
 from core.money import option_limit_price
-from core.services.account_capacity import estimate_buying_power_requirement
+from core.services.risk.buying_power import estimate_buying_power_requirement
 from core.services.candidate_policy import resolve_candidate_profile, resolve_deployment_quality_thresholds
 from core.services.execution_portfolio import build_structure_quote_snapshot
 from core.services.option_structures import (

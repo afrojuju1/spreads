@@ -14,7 +14,7 @@ from core.services.option_structures import (
     unique_leg_symbols,
 )
 from core.services.positions import enrich_position_row
-from core.services.risk_manager import assess_position_risk
+from core.services.risk.admission import assess_position_risk
 from core.services.runtime_identity import parse_live_run_scope_id
 from core.value_coercion import as_text, coerce_float, coerce_utc_datetime, utc_iso, utc_now_iso
 from core.domain.models import LiveOptionQuote

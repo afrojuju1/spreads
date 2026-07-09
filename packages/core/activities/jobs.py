@@ -44,7 +44,7 @@ from core.services.company_valuation.unresolved import (
 )
 from core.services.execution_intents import start_pending_execution_lifecycle_workflows
 from core.services.exit_manager import run_trading_strategy_manage
-from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source
+from core.services.sources.dispatch import persist_ticker_source_result, run_ticker_source
 from core.services.trading_engine.strategy_runtime import run_trading_strategy_entry
 from core.services.tradingagents_scan import run_tradingagents_scan
 from core.storage.company_valuation_repository import CompanyValuationRepository

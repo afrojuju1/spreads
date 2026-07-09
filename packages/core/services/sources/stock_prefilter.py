@@ -7,7 +7,7 @@ from typing import Any
 from core.common import parse_float, parse_int
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.ticker_sources import (
+from core.services.sources.dispatch import (
     StockPrefilterRecipeArgs,
     _iso_now,
     _looks_like_leveraged_or_inverse_etf,

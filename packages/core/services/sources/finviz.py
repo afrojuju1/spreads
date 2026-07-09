@@ -13,7 +13,7 @@ from core.common import parse_int, pick
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.integrations.http_client import VendorHttpClient
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.ticker_sources import (
+from core.services.sources.dispatch import (
     FinvizScreenerRecipeArgs,
     _iso_now,
     _rank_score,

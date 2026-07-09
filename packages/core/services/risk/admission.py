@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from core.money import money_float, money_scaled_float, money_sum_float, option_contract_notional
 from core.model_contracts import DomainModel
-from core.services.account_capacity import (
+from core.services.risk.buying_power import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
 )

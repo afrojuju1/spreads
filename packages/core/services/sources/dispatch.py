@@ -452,7 +452,7 @@ def build_ticker_source_symbols(
             or []
         )
     if normalized_recipe == "finviz_screener":
-        from core.services.ticker_sources_finviz import _run_finviz_screener_feed
+        from core.services.sources.finviz import _run_finviz_screener_feed
 
         return tuple(
             _run_finviz_screener_feed(
@@ -463,7 +463,7 @@ def build_ticker_source_symbols(
             or []
         )
     if normalized_recipe == "stock_prefilter":
-        from core.services.ticker_sources_stock import _run_stock_prefilter_feed
+        from core.services.sources.stock_prefilter import _run_stock_prefilter_feed
 
         return tuple(
             _run_stock_prefilter_feed(
@@ -474,7 +474,7 @@ def build_ticker_source_symbols(
             or []
         )
     if normalized_recipe == "earnings_event_window":
-        from core.services.ticker_sources_earnings import _run_earnings_event_window_feed
+        from core.services.sources.earnings import _run_earnings_event_window_feed
 
         return tuple(
             _run_earnings_event_window_feed(
@@ -504,7 +504,7 @@ def run_ticker_source(
             config_root=config_root,
         )
     if normalized_recipe == "finviz_screener":
-        from core.services.ticker_sources_finviz import _run_finviz_screener_feed
+        from core.services.sources.finviz import _run_finviz_screener_feed
 
         return _run_finviz_screener_feed(
             source_id=source_id,
@@ -512,7 +512,7 @@ def run_ticker_source(
             recipe_args=normalized_args,
         )
     if normalized_recipe == "stock_prefilter":
-        from core.services.ticker_sources_stock import _run_stock_prefilter_feed
+        from core.services.sources.stock_prefilter import _run_stock_prefilter_feed
 
         return _run_stock_prefilter_feed(
             source_id=source_id,
@@ -520,7 +520,7 @@ def run_ticker_source(
             recipe_args=normalized_args,
         )
     if normalized_recipe == "earnings_event_window":
-        from core.services.ticker_sources_earnings import _run_earnings_event_window_feed
+        from core.services.sources.earnings import _run_earnings_event_window_feed
 
         return _run_earnings_event_window_feed(
             source_id=source_id,

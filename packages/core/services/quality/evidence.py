@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
-from core.services.trading_engine.entry_quality import EntryQualityContext, EntryQualityWaterfall, FeatureSnapshot
-from core.services.trading_engine.entry_quality_pipeline import PRE_SELECTION_ENTRY_QUALITY_STAGES, evaluate_entry_quality_snapshot
+from core.services.quality.models import EntryQualityContext, EntryQualityWaterfall, FeatureSnapshot
+from core.services.quality.pipeline import PRE_SELECTION_ENTRY_QUALITY_STAGES, evaluate_entry_quality_snapshot
 from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 
 if TYPE_CHECKING:

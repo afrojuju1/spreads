@@ -17,7 +17,7 @@ from core.services.payload_validation import (
     normalize_required_text,
     validate_payload_model,
 )
-from core.services.ticker_sources import VALID_TICKER_SOURCE_RECIPES
+from core.services.sources.dispatch import VALID_TICKER_SOURCE_RECIPES
 from core.services.trading_strategies import (
     default_config_root,
     load_active_trading_strategies,

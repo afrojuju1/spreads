@@ -256,7 +256,7 @@ class EntryRuntime:
         configured = None if self.strategy.entry is None else self.strategy.entry.quality.profile_id
         if configured is None:
             return None
-        from core.services.trading_engine.entry_quality import resolve_entry_quality_profile
+        from core.services.quality.models import resolve_entry_quality_profile
 
         resolve_entry_quality_profile(configured)
         return configured

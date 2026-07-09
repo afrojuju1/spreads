@@ -10,7 +10,7 @@ from core.storage.factory import build_market_data_store, build_storage_context
 from core.storage.serializers import render_value
 from core.value_coercion import utc_iso
 
-from .shared import _attention, _combine_statuses
+from core.services.ops.shared import _attention, _combine_statuses
 
 
 def _table_storage_stats(session: Any, table_name: str) -> dict[str, Any]:

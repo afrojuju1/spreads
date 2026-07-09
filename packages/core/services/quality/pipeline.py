@@ -6,7 +6,7 @@ from typing import Any
 from core.services.option_structures import net_premium_kind, normalize_strategy_family
 from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, unique_text_list
 
-from .entry_quality import (
+from .models import (
     EntryFilterRef,
     EntryQualityContext,
     EntryQualityProfile,

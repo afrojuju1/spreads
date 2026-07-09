@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from core.services.alert_delivery import plan_alert_delivery
-from core.services.ticker_sources import get_latest_ticker_source_snapshot
+from core.services.sources.dispatch import get_latest_ticker_source_snapshot
 from core.value_coercion import (
     as_text as _as_text,
     coerce_bool,

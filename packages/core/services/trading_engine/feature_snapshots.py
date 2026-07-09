@@ -19,7 +19,7 @@ from core.services.option_structures import (
 from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, coerce_utc_datetime, unique_text_list
 
 from .data import CandidateBuildResult, ResolvedTickerSet
-from .entry_quality import FeatureSnapshot
+from core.services.quality.models import FeatureSnapshot
 
 _CHAIN_COUNT_FIELDS = (
     "expiration_count",

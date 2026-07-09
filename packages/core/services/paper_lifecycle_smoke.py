@@ -23,7 +23,7 @@ from core.services.execution_intents.shared import (
 )
 from core.services.market_dates import NEW_YORK
 from core.services.option_symbols import parse_occ_option_symbol
-from core.services.ops.market_session import market_session_context
+from core.services.ops.trading.market import market_session_context
 from core.services.session_positions import CLOSE_TRADE_INTENT, OPEN_TRADE_INTENT
 from core.value_coercion import (
     as_text,

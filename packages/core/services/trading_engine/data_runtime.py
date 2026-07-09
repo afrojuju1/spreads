@@ -14,7 +14,7 @@ from core.services.strategy_builders import (
 )
 from core.services.strategy_candidate_builders.market_data import AlpacaMarketSliceProvider
 from core.services.strategy_candidate_builders.settings import CandidateBuildParameters
-from core.services.ticker_sources import resolve_ticker_source_symbols
+from core.services.sources.dispatch import resolve_ticker_source_symbols
 from core.services.trading_engine.data import (
     CaptureTargetDeclaration,
     CaptureTargetRequest,
@@ -24,7 +24,7 @@ from core.services.trading_engine.data import (
     TickerSourceFallback,
     TickerSourceSpec,
 )
-from core.services.trading_engine.entry_quality import FeatureSnapshot
+from core.services.quality.models import FeatureSnapshot
 from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 from core.services.trading_engine.kernel import EngineContext
 from core.services.trading_engine.market_context import MarketContextSnapshot

@@ -22,7 +22,7 @@ from core.storage.engine_event_models import EngineEventModel, EngineOutboxModel
 from core.storage.lifecycle_models import TradeDecisionModel, TradeSignalModel
 from core.storage.serializers import parse_date, parse_datetime
 
-from .shared import _combine_statuses
+from core.services.ops.shared import _combine_statuses
 
 OPEN_POSITION_STATUSES = ("open", "partial_close")
 ENGINE_RECENT_ROW_LIMIT = 12

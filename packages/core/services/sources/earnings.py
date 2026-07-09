@@ -10,7 +10,7 @@ from core.integrations.calendar_events.store import CalendarEventStore
 from core.runtime.config import default_database_url
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.market_dates import NEW_YORK
-from core.services.ticker_sources import (
+from core.services.sources.dispatch import (
     EarningsEventWindowRecipeArgs,
     _iso_now,
     _stock_snapshot_daily_percent_change,

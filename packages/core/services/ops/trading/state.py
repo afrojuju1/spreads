@@ -27,7 +27,7 @@ from core.services.execution_lifecycle import (
 )
 from core.services.option_structures import position_legs, unique_leg_symbols
 from core.services.trading_engine.exit_runtime import describe_position_exit_state
-from core.services.risk_manager import assess_position_risk
+from core.services.risk.admission import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, load_trading_strategies, routine_should_run_now
 from core.storage.engine_models import (
     CandidateRunModel,
@@ -49,17 +49,18 @@ from core.value_coercion import (
     utc_now_iso,
 )
 
-from .broker_sync import broker_sync_payload as _broker_sync_payload
-from .engine import build_engine_ops_state
-from .jobs import build_jobs_compact_state
-from .market_session import market_session_context as _market_session_context
-from .shared import (
+from core.services.ops.jobs.state import build_jobs_compact_state
+from core.services.ops.shared import (
     _attention,
     _combine_statuses,
     _control_status,
     _seconds_since,
     _sorted_by_activity,
 )
+
+from .broker import broker_sync_payload as _broker_sync_payload
+from .engine import build_engine_ops_state
+from .market import market_session_context as _market_session_context
 
 OPEN_POSITION_STATUSES = sorted(OPEN_POSITION_STATES)
 MARK_STALE_AFTER_SECONDS = 15 * 60

@@ -9,7 +9,7 @@ from sqlalchemy import and_, or_, select
 
 from core.db.decorators import with_storage
 from core.money import money_float, money_sum_float
-from core.services.ops.strategy_evidence_ledger import build_strategy_evidence_ledger
+from core.services.ops.trading.strategy_ledger import build_strategy_evidence_ledger
 from core.services.backtest.strategy_scope import load_backtest_strategy_scope, strategy_profile
 from core.services.backtest.windows import BacktestWindow, normalize_backtest_window
 from core.services.trading_strategy_runtime_models import TradingStrategyConfig

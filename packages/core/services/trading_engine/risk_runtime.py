@@ -7,7 +7,7 @@ from typing import Any
 from core.money import option_contract_notional
 from core.services.admission_lifecycle import normalize_lifecycle_admission
 from core.services.execution_lifecycle import OPEN_ATTEMPT_STATUS_LIST
-from core.services.risk_manager import (
+from core.services.risk.admission import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
 )

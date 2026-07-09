@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.money import money_float, option_contract_notional
-from core.services.account_capacity import (
+from core.services.risk.buying_power import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
 )
@@ -17,7 +17,7 @@ from core.services.execution_lifecycle import (
     OPEN_ATTEMPT_STATUS_LIST,
     resolve_execution_attempt_filled_quantity,
 )
-from core.services.risk_manager import (
+from core.services.risk.admission import (
     resolve_position_size_policy,
 )
 from core.services.session_positions import (
