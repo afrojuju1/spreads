@@ -62,36 +62,6 @@ def _require_position_schema(execution_store: Any) -> None:
         raise RuntimeError(EXECUTION_SCHEMA_MESSAGE)
 
 
-def _attach_attempt_details(
-    *,
-    execution_store: Any,
-    attempts: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not attempts:
-        return []
-    attempt_ids = [str(item["execution_attempt_id"]) for item in attempts]
-    orders = execution_store.list_orders(execution_attempt_ids=attempt_ids)
-    fills = execution_store.list_fills(execution_attempt_ids=attempt_ids)
-    orders_by_attempt: dict[str, list[dict[str, Any]]] = {}
-    fills_by_attempt: dict[str, list[dict[str, Any]]] = {}
-
-    for order in orders:
-        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(dict(order))
-    for fill in fills:
-        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(dict(fill))
-
-    now = datetime.now(UTC)
-    payloads: list[dict[str, Any]] = []
-    for attempt in attempts:
-        attempt_payload = {
-            **attempt,
-            "orders": orders_by_attempt.get(str(attempt["execution_attempt_id"]), []),
-            "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
-        }
-        payloads.append(_attempt_payload_with_lifecycle(attempt_payload, now=now))
-    return payloads
-
-
 def _attempt_payload_with_lifecycle(
     attempt_payload: dict[str, Any],
     *,
@@ -131,8 +101,9 @@ def list_session_execution_attempts(
     resolved_execution_store = execution_store if execution_store is not None else storage.execution
     if not resolved_execution_store.schema_ready():
         return []
-    attempts = list(resolved_execution_store.list_attempts(session_id=session_id, limit=limit))
-    return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
+    activities = resolved_execution_store.list_attempt_activities(session_id=session_id, limit=limit)
+    now = datetime.now(UTC)
+    return [_attempt_payload_with_lifecycle(activity.to_payload(), now=now) for activity in activities]
 
 
 def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any]:

@@ -14,7 +14,7 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.storage.db import Base
 
@@ -119,6 +119,19 @@ class ExecutionAttemptModel(Base):
     order_payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     economics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    orders: Mapped[list["ExecutionOrderModel"]] = relationship(
+        "ExecutionOrderModel",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by=lambda: (ExecutionOrderModel.updated_at.desc(), ExecutionOrderModel.execution_order_id.desc()),
+    )
+    fills: Mapped[list["ExecutionFillModel"]] = relationship(
+        "ExecutionFillModel",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by=lambda: (ExecutionFillModel.filled_at.desc(), ExecutionFillModel.execution_fill_id.desc()),
+    )
 
 
 class ExecutionIntentModel(Base):

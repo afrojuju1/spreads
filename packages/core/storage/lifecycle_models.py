@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.storage.db import Base
 
@@ -210,6 +210,15 @@ class TradeAdmissionModel(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     execution_attempt_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    trade_intent: Mapped[TradeExecutionIntentModel] = relationship(
+        "TradeExecutionIntentModel",
+        foreign_keys=[execution_intent_id],
+    )
+    decision: Mapped[TradeDecisionModel | None] = relationship(
+        "TradeDecisionModel",
+        foreign_keys=[trade_decision_id],
+    )
 
 
 class TradeExecutionAttemptModel(Base):
