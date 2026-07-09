@@ -8,8 +8,10 @@ from core.money import option_contract_notional
 from core.services.admission_lifecycle import normalize_lifecycle_admission
 from core.services.execution_lifecycle import OPEN_ATTEMPT_STATUS_LIST
 from core.services.risk.admission import (
-    CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
+)
+from core.services.risk.policy import (
+    CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
 )
 from core.value_coercion import as_text, coerce_float
 from core.storage.serializers import parse_datetime

@@ -3,11 +3,17 @@ from __future__ import annotations
 from typing import Any
 
 from core.services.risk.admission import (
-    build_allocation_plan_snapshot,
     build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,
+)
+from core.services.risk.portfolio import (
+    build_allocation_plan_snapshot,
     build_portfolio_admission_snapshot,
+)
+from core.services.risk.protection import (
     build_protection_admission_snapshot,
+)
+from core.services.risk.sizing import (
     resolve_position_size_policy,
 )
 from core.services.trading_strategies import load_active_trading_strategies

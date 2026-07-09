@@ -17,7 +17,7 @@ from core.services.execution_lifecycle import (
     OPEN_ATTEMPT_STATUS_LIST,
     resolve_execution_attempt_filled_quantity,
 )
-from core.services.risk.admission import (
+from core.services.risk.sizing import (
     resolve_position_size_policy,
 )
 from core.services.session_positions import (

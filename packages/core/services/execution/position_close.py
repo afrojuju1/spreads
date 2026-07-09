@@ -18,8 +18,10 @@ from core.services.runtime_identity import (
     resolve_runtime_policy_fields,
 )
 from core.services.risk.admission import (
-    CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
+)
+from core.services.risk.policy import (
+    CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
 )
 from core.services.session_positions import (
     CLOSE_TRADE_INTENT,

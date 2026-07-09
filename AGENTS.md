@@ -34,7 +34,7 @@
   - `MarketContextEngine` owns shared `MarketContextSnapshot` / `RegimeSnapshot` facts; strategies declare context policy and consume context, but must not recompute broad-market regime locally
   - execution admission is a separate execution/risk concern
   - alerts are downstream job-backed projections, not source-of-truth state
-- Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, execution intent handoff, execution admission, and deterministic broker-reject handling under `services/risk/buying_power.py`, `services/risk/admission.py`, `services/execution_intents/`, and `services/execution/`, not back into the account snapshot layer.
+- Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, risk policy, sizing, portfolio/protection admission, execution intent handoff, execution admission, and deterministic broker-reject handling under `services/risk/`, `services/execution_intents/`, and `services/execution/`, not back into the account snapshot layer.
 - If the current architecture is weak, call it out explicitly and propose the better approach before proceeding. Weigh:
   - current callers
   - migration cost

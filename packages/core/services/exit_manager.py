@@ -28,7 +28,7 @@ from core.services.trading_engine.risk_runtime import (
 )
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
-from core.services.risk.admission import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
+from core.services.risk.policy import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
 from core.value_coercion import as_text, utc_iso, utc_now_iso
 from core.storage.serializers import parse_datetime
 
