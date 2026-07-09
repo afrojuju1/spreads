@@ -39,7 +39,7 @@ class JobSpec:
 
 @dataclass(frozen=True)
 class TemporalTaskQueueSpec:
-    lane_name: str
+    worker: str
     task_queue_name: str
     task_names: tuple[str, ...]
     max_jobs: int = 1
@@ -118,7 +118,7 @@ JOB_SPECS = {
 
 TEMPORAL_TASK_QUEUES = (
     TemporalTaskQueueSpec(
-        lane_name="runtime",
+        worker="runtime",
         task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         task_names=(
             JOB_SPECS[BROKER_SYNC_JOB_TYPE].task_name,
@@ -132,7 +132,7 @@ TEMPORAL_TASK_QUEUES = (
         max_jobs=4,
     ),
     TemporalTaskQueueSpec(
-        lane_name="data",
+        worker="data",
         task_queue_name=DATA_TASK_QUEUE_NAME,
         task_names=(
             JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,
@@ -140,7 +140,7 @@ TEMPORAL_TASK_QUEUES = (
         ),
     ),
     TemporalTaskQueueSpec(
-        lane_name="valuation",
+        worker="valuation",
         task_queue_name=VALUATION_TASK_QUEUE_NAME,
         task_names=(
             JOB_SPECS[COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE].task_name,
@@ -149,7 +149,7 @@ TEMPORAL_TASK_QUEUES = (
         ),
     ),
     TemporalTaskQueueSpec(
-        lane_name="research",
+        worker="research",
         task_queue_name=RESEARCH_TASK_QUEUE_NAME,
         task_names=(JOB_SPECS[TRADINGAGENTS_SCAN_JOB_TYPE].task_name,),
     ),

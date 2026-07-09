@@ -9,7 +9,6 @@ from core.services.control_plane import (
 from .jobs import (
     build_jobs_compact_state,
     build_job_run_view,
-    build_job_task_queues_overview,
     build_jobs_overview,
 )
 from .engine import build_engine_ops_state
@@ -23,7 +22,6 @@ __all__ = [
     "build_engine_ops_state",
     "build_jobs_compact_state",
     "build_job_run_view",
-    "build_job_task_queues_overview",
     "build_jobs_overview",
     "build_strategy_evidence_ledger",
     "build_storage_ops_state",

@@ -370,7 +370,7 @@ export function OpsPageContent() {
             {taskQueues.map((row) => (
               <div key={readString(row.task_queue)} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="truncate font-medium">{humanizeToken(row.lane)}</span>
+                  <span className="truncate font-medium">{humanizeToken(row.worker)}</span>
                   <RuntimeStatusBadge value={row.status ?? "unknown"} />
                 </div>
                 <div className="mt-1 truncate text-xs text-muted-foreground">

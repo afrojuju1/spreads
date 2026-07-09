@@ -484,26 +484,26 @@ def _task_queue_rows(
     running_by_task_queue = Counter(get_task_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in running_jobs)
 
     rows: list[dict[str, Any]] = []
-    for lane in TEMPORAL_TASK_QUEUES:
-        task_names = [task_name for task_name in lane.task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") not in excluded]
+    for spec in TEMPORAL_TASK_QUEUES:
+        task_names = [task_name for task_name in spec.task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") not in excluded]
         if not task_names:
             continue
         enabled_task_names = [task_name for task_name in task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") in enabled_job_types]
-        queued_job_count = int(queued_by_task_queue.get(str(lane.task_queue_name), 0))
-        running_job_count = int(running_by_task_queue.get(str(lane.task_queue_name), 0))
+        queued_job_count = int(queued_by_task_queue.get(str(spec.task_queue_name), 0))
+        running_job_count = int(running_by_task_queue.get(str(spec.task_queue_name), 0))
         if not enabled_task_names:
             status = "degraded" if queued_job_count > 0 or running_job_count > 0 else "idle"
         else:
             status = "healthy"
         rows.append(
             {
-                "lane": lane.lane_name,
-                "task_queue": lane.task_queue_name,
+                "worker": spec.worker,
+                "task_queue": spec.task_queue_name,
                 "task_names": task_names,
                 "task_count": len(task_names),
                 "enabled_task_names": enabled_task_names,
                 "enabled_task_count": len(enabled_task_names),
-                "max_jobs": lane.max_jobs,
+                "max_jobs": spec.max_jobs,
                 "queued_job_count": queued_job_count,
                 "running_job_count": running_job_count,
                 "status": status,
@@ -518,11 +518,11 @@ def _disabled_task_queue_rows(
 ) -> list[dict[str, Any]]:
     excluded = {str(value).strip() for value in excluded_job_types if str(value).strip()}
     rows: list[dict[str, Any]] = []
-    for lane in TEMPORAL_TASK_QUEUES:
+    for spec in TEMPORAL_TASK_QUEUES:
         disabled_task_names = []
         disabled_job_types = []
         active_task_names = []
-        for task_name in lane.task_names:
+        for task_name in spec.task_names:
             job_type = _JOB_TYPE_BY_TASK_NAME.get(task_name, "")
             if job_type in excluded:
                 disabled_task_names.append(task_name)
@@ -533,8 +533,8 @@ def _disabled_task_queue_rows(
             continue
         rows.append(
             {
-                "lane": lane.lane_name,
-                "task_queue": lane.task_queue_name,
+                "worker": spec.worker,
+                "task_queue": spec.task_queue_name,
                 "task_names": disabled_task_names,
                 "task_count": len(disabled_task_names),
                 "enabled_task_names": [],
@@ -1038,39 +1038,6 @@ def build_jobs_compact_state(
             "queued_jobs": active_queued_runs,
             "stale_queued_job_runs": stale_queued_runs,
             "job_runs": recent_runs,
-        },
-    }
-
-
-@with_storage()
-def build_job_task_queues_overview(
-    *,
-    db_target: str | None = None,
-    storage: Any | None = None,
-) -> dict[str, Any]:
-    payload = build_jobs_overview(db_target=db_target, storage=storage)
-    details = dict(payload.get("details") or {})
-    task_queue_rows = list(details.get("task_queues") or [])
-    disabled_task_queue_rows = list(details.get("disabled_task_queues") or [])
-    summary = dict(payload.get("summary") or {})
-    return {
-        "status": payload.get("status"),
-        "generated_at": payload.get("generated_at"),
-        "summary": {
-            "view": "task_queues",
-            "task_queue_count": len(task_queue_rows),
-            "disabled_task_queue_count": len(disabled_task_queue_rows),
-            "running_job_count": sum(int(row.get("running_job_count") or 0) for row in task_queue_rows),
-            "queued_job_count": sum(int(row.get("queued_job_count") or 0) for row in task_queue_rows),
-            "singleton_lease_count": summary.get("singleton_lease_count"),
-        },
-        "attention": list(payload.get("attention") or []),
-        "details": {
-            "view": "task_queues",
-            "schedules": details.get("schedules"),
-            "task_queues": task_queue_rows,
-            "disabled_task_queues": disabled_task_queue_rows,
-            "singleton_leases": details.get("singleton_leases"),
         },
     }
 

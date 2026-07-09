@@ -64,7 +64,6 @@
   - `uv run spreads ops state`
   - `uv run spreads ops storage`
   - `uv run spreads jobs`
-  - `uv run spreads jobs task-queues`
   - `docker compose logs --tail=200 <service>`
   - `uv run spreads execution positions --date <YYYY-MM-DD> --json`
   - `uv run spreads execution list --date <YYYY-MM-DD>`
