@@ -31,7 +31,7 @@ from core.services.strategy_builders import (
     build_symbol_market_slice_parameters,
     runtime_owner_key,
 )
-from core.services.trading_engine.candidate_identity import resolve_candidate_identity
+from core.services.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet
 from core.services.trading_engine.data_runtime import (
     entry_candidate_build_parameters,

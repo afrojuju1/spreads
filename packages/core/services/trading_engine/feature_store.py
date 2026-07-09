@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import Field, field_validator
 
 from core.model_contracts import DomainModel
-from core.services.trading_engine.candidate_identity import resolve_candidate_identity
+from core.services.candidate_identity import resolve_candidate_identity
 from core.services.quality.models import EntryQualityWaterfall, FeatureSnapshot
 from core.services.quality.evidence import EntryQualityAnalysis, quality_key_for_snapshot
 from core.storage.serializers import parse_date, parse_datetime

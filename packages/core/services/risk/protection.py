@@ -38,11 +38,8 @@ from core.services.risk.policy import (
     PROTECTION_ADMISSION_BOUNDARY,
     ProtectionRuleConfig,
 )
-from core.services.risk.portfolio import (
-    _allocation_plan_admission_evidence,
-    _open_portfolio_exposures,
-    _portfolio_schema_ready,
-)
+from core.services.risk.allocation import _allocation_plan_admission_evidence
+from core.services.risk.exposures import _open_portfolio_exposures, _portfolio_schema_ready
 
 def _protection_activity_at(row: Mapping[str, Any]) -> datetime | None:
     for key in ("closed_at", "opened_at", "updated_at", "created_at", "requested_at"):

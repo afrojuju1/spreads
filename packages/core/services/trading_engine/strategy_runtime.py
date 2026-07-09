@@ -22,7 +22,7 @@ from core.services.trading_engine.data_runtime import (
     ticker_source_spec_from_strategy_source,
 )
 from core.services.trading_engine.entry_admission import build_selected_entry_admission_snapshot
-from core.services.trading_engine.candidate_identity import resolve_candidate_identity
+from core.services.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.entry_selection import EntrySelectionEngine, candidate_result_summary
 from core.services.trading_engine.entry_signals import (
     ENTRY_MONITOR_LIMIT,
@@ -230,7 +230,7 @@ def _persist_trade_admission_handoff(
             },
         }
     handoff = execution_store.upsert_admission_intent_handoff(
-        legacy_intent={
+        trade_intent={
             "execution_intent_id": execution_intent_id,
             "intent_kind": "open",
             "source_object_type": "trade_decision",

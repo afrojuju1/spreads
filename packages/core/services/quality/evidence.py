@@ -5,13 +5,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from core.services.trading_engine.candidate_identity import resolve_candidate_identity
-from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
+from core.services.candidate_identity import resolve_candidate_identity
 from core.services.quality.models import EntryQualityContext, EntryQualityWaterfall, FeatureSnapshot
 from core.services.quality.pipeline import PRE_SELECTION_ENTRY_QUALITY_STAGES, evaluate_entry_quality_snapshot
-from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 
 if TYPE_CHECKING:
+    from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
     from core.services.trading_strategy_runtime_models import EntryRuntime
 
 
@@ -189,6 +188,8 @@ def build_entry_quality_analysis(
             snapshots_by_candidate={},
             summary={**quality_summary(profile_id, ()), **_market_context_summary(context.metadata.get("market_context") or {})},
         )
+
+    from core.services.trading_engine.feature_snapshots import build_feature_snapshots_for_strategy
 
     snapshots = build_feature_snapshots_for_strategy(
         trade_structure=runtime.trade_structure,

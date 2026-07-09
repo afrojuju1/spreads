@@ -6,10 +6,8 @@ from core.services.risk.admission import (
     build_entry_capacity_admission_payload,
     build_execution_admission_snapshot,
 )
-from core.services.risk.portfolio import (
-    build_allocation_plan_snapshot,
-    build_portfolio_admission_snapshot,
-)
+from core.services.risk.allocation import build_allocation_plan_snapshot
+from core.services.risk.portfolio import build_portfolio_admission_snapshot
 from core.services.risk.protection import (
     build_protection_admission_snapshot,
 )

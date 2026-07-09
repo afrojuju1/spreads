@@ -45,7 +45,7 @@ from core.services.risk.policy import (
     PROTECTION_ADMISSION_BOUNDARY,
     normalize_risk_policy,
 )
-from core.services.risk.portfolio import (
+from core.services.risk.exposures import (
     _open_attempts,
     _open_positions,
     _pending_open_attempt_exposures,

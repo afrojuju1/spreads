@@ -4,16 +4,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
-from core.services.trading_engine.kernel import (
-    EngineEvidence,
-    EngineMetadata,
-    EnginePayload,
-    EnginePolicy,
-    EngineRunRef,
-    EngineSummary,
-)
+if TYPE_CHECKING:
+    from core.services.trading_engine.kernel import EngineRunRef
+
+EngineMetadata: TypeAlias = Mapping[str, Any]
+EngineEvidence: TypeAlias = Mapping[str, Any]
+EnginePolicy: TypeAlias = Mapping[str, Any]
+EnginePayload: TypeAlias = Mapping[str, Any]
+EngineSummary: TypeAlias = Mapping[str, Any]
 
 EntryQualityStatus: TypeAlias = Literal["pass", "watch", "block"]
 

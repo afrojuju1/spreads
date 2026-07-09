@@ -19,7 +19,7 @@ from core.value_coercion import (
 
 from core.services.risk.candidates import _candidate_entry_notional, _candidate_max_loss, _candidate_payload
 from core.services.risk.policy import POSITION_SIZING_STRATEGIES, normalize_risk_policy
-from core.services.risk.portfolio import (
+from core.services.risk.exposures import (
     _open_attempts,
     _open_positions,
     _pending_open_attempt_exposures,

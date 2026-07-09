@@ -28,7 +28,8 @@ from core.services.ops.trading.execution_contract import (
     _normalize_broker_environment,
     _project_execution_contract,
 )
-from core.services.ops.trading.flows import _project_flows, _strategy_no_entry_summary
+from core.services.ops.trading.flow_posture import _strategy_no_entry_summary
+from core.services.ops.trading.flows import _project_flows
 from core.services.ops.trading.market_context import _project_market_context
 from core.services.ops.trading.positions import _project_positions
 from core.services.ops.trading.runtime import (

@@ -8,7 +8,7 @@ from typing import Any
 
 from core.services.option_structures import candidate_legs
 from core.services.candidate_fields import candidate_economics, risk_hints
-from core.services.trading_engine.candidate_identity import resolve_candidate_identity
+from core.services.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.quality.evidence import EntryQualityAnalysis, quality_key
 from core.services.trading_engine.feature_store import build_trading_feature_snapshot_records

@@ -20,7 +20,7 @@ from core.services.ops.trading.models import (
     _StrategyBreadthProjection,
 )
 from core.services.ops.trading.execution_contract import _strategy_execution_contract
-from core.services.ops.trading.flows import _candidate_state, _latest_flow_facts
+from core.services.ops.trading.flow_facts import _candidate_state, _latest_flow_facts
 
 def _strategy_not_active_reasons(strategy: Any, *, active: bool) -> list[str]:
     if active:

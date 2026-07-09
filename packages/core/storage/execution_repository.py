@@ -363,18 +363,18 @@ class ExecutionRepository(RepositoryBase):
     def upsert_admission_intent_handoff(
         self,
         *,
-        legacy_intent: dict[str, Any],
+        trade_intent: dict[str, Any],
         admission: dict[str, Any],
         execution_intent: dict[str, Any] | None = None,
         created_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        legacy_created_at = parse_datetime(legacy_intent.get("created_at"))
-        legacy_updated_at = parse_datetime(legacy_intent.get("updated_at"))
-        legacy_claimed_at = parse_datetime(legacy_intent.get("claimed_at"))
-        legacy_expires_at = parse_datetime(legacy_intent.get("expires_at"))
+        trade_intent_created_at = parse_datetime(trade_intent.get("created_at"))
+        trade_intent_updated_at = parse_datetime(trade_intent.get("updated_at"))
+        trade_intent_claimed_at = parse_datetime(trade_intent.get("claimed_at"))
+        trade_intent_expires_at = parse_datetime(trade_intent.get("expires_at"))
         admission_decided_at = parse_datetime(admission.get("decided_at"))
-        if legacy_created_at is None or legacy_updated_at is None:
-            raise ValueError("legacy intent created_at and updated_at are required")
+        if trade_intent_created_at is None or trade_intent_updated_at is None:
+            raise ValueError("trade intent created_at and updated_at are required")
         if admission_decided_at is None:
             raise ValueError("admission decided_at is required")
 
@@ -401,58 +401,58 @@ class ExecutionRepository(RepositoryBase):
                 raise ValueError("created event event_type must be created")
 
         with self.session_scope() as session:
-            legacy_row = session.get(TradeExecutionIntentModel, str(legacy_intent["execution_intent_id"]))
-            if legacy_row is None:
-                legacy_row = TradeExecutionIntentModel(
-                    execution_intent_id=str(legacy_intent["execution_intent_id"]),
-                    created_at=legacy_created_at,
-                    intent_kind=str(legacy_intent["intent_kind"]),
-                    source_object_type=str(legacy_intent["source_object_type"]),
-                    source_object_id=str(legacy_intent["source_object_id"]),
-                    trade_signal_id=legacy_intent.get("trade_signal_id"),
-                    trade_decision_id=legacy_intent.get("trade_decision_id"),
-                    position_id=legacy_intent.get("position_id"),
-                    trading_strategy_id=legacy_intent.get("trading_strategy_id"),
-                    trade_structure=legacy_intent.get("trade_structure"),
-                    routine=legacy_intent.get("routine"),
-                    account_id=legacy_intent.get("account_id"),
-                    slot_key=str(legacy_intent["slot_key"]),
-                    idempotency_key=str(legacy_intent["idempotency_key"]),
-                    intent_state=str(legacy_intent["intent_state"]),
-                    claim_token=legacy_intent.get("claim_token"),
-                    claimed_at=legacy_claimed_at,
-                    expires_at=legacy_expires_at,
-                    supersedes_intent_id=legacy_intent.get("supersedes_intent_id"),
-                    superseded_by_intent_id=legacy_intent.get("superseded_by_intent_id"),
-                    payload_json=render_value(dict(legacy_intent.get("payload") or {})),
-                    policy_snapshot_json=render_value(dict(legacy_intent.get("policy_snapshot") or {})),
-                    config_hash=legacy_intent.get("config_hash"),
-                    updated_at=legacy_updated_at,
+            trade_intent_row = session.get(TradeExecutionIntentModel, str(trade_intent["execution_intent_id"]))
+            if trade_intent_row is None:
+                trade_intent_row = TradeExecutionIntentModel(
+                    execution_intent_id=str(trade_intent["execution_intent_id"]),
+                    created_at=trade_intent_created_at,
+                    intent_kind=str(trade_intent["intent_kind"]),
+                    source_object_type=str(trade_intent["source_object_type"]),
+                    source_object_id=str(trade_intent["source_object_id"]),
+                    trade_signal_id=trade_intent.get("trade_signal_id"),
+                    trade_decision_id=trade_intent.get("trade_decision_id"),
+                    position_id=trade_intent.get("position_id"),
+                    trading_strategy_id=trade_intent.get("trading_strategy_id"),
+                    trade_structure=trade_intent.get("trade_structure"),
+                    routine=trade_intent.get("routine"),
+                    account_id=trade_intent.get("account_id"),
+                    slot_key=str(trade_intent["slot_key"]),
+                    idempotency_key=str(trade_intent["idempotency_key"]),
+                    intent_state=str(trade_intent["intent_state"]),
+                    claim_token=trade_intent.get("claim_token"),
+                    claimed_at=trade_intent_claimed_at,
+                    expires_at=trade_intent_expires_at,
+                    supersedes_intent_id=trade_intent.get("supersedes_intent_id"),
+                    superseded_by_intent_id=trade_intent.get("superseded_by_intent_id"),
+                    payload_json=render_value(dict(trade_intent.get("payload") or {})),
+                    policy_snapshot_json=render_value(dict(trade_intent.get("policy_snapshot") or {})),
+                    config_hash=trade_intent.get("config_hash"),
+                    updated_at=trade_intent_updated_at,
                 )
-                session.add(legacy_row)
+                session.add(trade_intent_row)
             else:
-                legacy_row.intent_kind = str(legacy_intent["intent_kind"])
-                legacy_row.source_object_type = str(legacy_intent["source_object_type"])
-                legacy_row.source_object_id = str(legacy_intent["source_object_id"])
-                legacy_row.trade_signal_id = legacy_intent.get("trade_signal_id")
-                legacy_row.trade_decision_id = legacy_intent.get("trade_decision_id")
-                legacy_row.position_id = legacy_intent.get("position_id")
-                legacy_row.trading_strategy_id = legacy_intent.get("trading_strategy_id")
-                legacy_row.trade_structure = legacy_intent.get("trade_structure")
-                legacy_row.routine = legacy_intent.get("routine")
-                legacy_row.account_id = legacy_intent.get("account_id")
-                legacy_row.slot_key = str(legacy_intent["slot_key"])
-                legacy_row.idempotency_key = str(legacy_intent["idempotency_key"])
-                legacy_row.intent_state = str(legacy_intent["intent_state"])
-                legacy_row.claim_token = legacy_intent.get("claim_token")
-                legacy_row.claimed_at = legacy_claimed_at
-                legacy_row.expires_at = legacy_expires_at
-                legacy_row.supersedes_intent_id = legacy_intent.get("supersedes_intent_id")
-                legacy_row.superseded_by_intent_id = legacy_intent.get("superseded_by_intent_id")
-                legacy_row.payload_json = render_value(dict(legacy_intent.get("payload") or {}))
-                legacy_row.policy_snapshot_json = render_value(dict(legacy_intent.get("policy_snapshot") or {}))
-                legacy_row.config_hash = legacy_intent.get("config_hash")
-                legacy_row.updated_at = legacy_updated_at
+                trade_intent_row.intent_kind = str(trade_intent["intent_kind"])
+                trade_intent_row.source_object_type = str(trade_intent["source_object_type"])
+                trade_intent_row.source_object_id = str(trade_intent["source_object_id"])
+                trade_intent_row.trade_signal_id = trade_intent.get("trade_signal_id")
+                trade_intent_row.trade_decision_id = trade_intent.get("trade_decision_id")
+                trade_intent_row.position_id = trade_intent.get("position_id")
+                trade_intent_row.trading_strategy_id = trade_intent.get("trading_strategy_id")
+                trade_intent_row.trade_structure = trade_intent.get("trade_structure")
+                trade_intent_row.routine = trade_intent.get("routine")
+                trade_intent_row.account_id = trade_intent.get("account_id")
+                trade_intent_row.slot_key = str(trade_intent["slot_key"])
+                trade_intent_row.idempotency_key = str(trade_intent["idempotency_key"])
+                trade_intent_row.intent_state = str(trade_intent["intent_state"])
+                trade_intent_row.claim_token = trade_intent.get("claim_token")
+                trade_intent_row.claimed_at = trade_intent_claimed_at
+                trade_intent_row.expires_at = trade_intent_expires_at
+                trade_intent_row.supersedes_intent_id = trade_intent.get("supersedes_intent_id")
+                trade_intent_row.superseded_by_intent_id = trade_intent.get("superseded_by_intent_id")
+                trade_intent_row.payload_json = render_value(dict(trade_intent.get("payload") or {}))
+                trade_intent_row.policy_snapshot_json = render_value(dict(trade_intent.get("policy_snapshot") or {}))
+                trade_intent_row.config_hash = trade_intent.get("config_hash")
+                trade_intent_row.updated_at = trade_intent_updated_at
 
             session.flush()
 
@@ -534,11 +534,11 @@ class ExecutionRepository(RepositoryBase):
                         )
                         session.add(event_row)
             session.flush()
-            for row in (legacy_row, admission_row, execution_row, event_row):
+            for row in (trade_intent_row, admission_row, execution_row, event_row):
                 if row is not None:
                     session.refresh(row)
             return {
-                "legacy_intent": self.row(legacy_row),
+                "trade_intent": self.row(trade_intent_row),
                 "admission": self.row(admission_row),
                 "execution_intent": None if execution_row is None else self.row(execution_row),
                 "created_event": None if event_row is None else self.row(event_row),
@@ -806,9 +806,9 @@ class ExecutionRepository(RepositoryBase):
             {
                 "admission": self.row(admission),
                 "decision": None if decision is None else self.row(decision),
-                "legacy_intent": None if legacy_intent is None else self.row(legacy_intent),
+                "trade_intent": None if trade_intent is None else self.row(trade_intent),
             }
-            for admission, decision, legacy_intent in rows
+            for admission, decision, trade_intent in rows
         ]
 
     def append_execution_intent_event(

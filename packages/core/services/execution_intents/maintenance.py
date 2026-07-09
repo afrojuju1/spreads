@@ -204,19 +204,19 @@ def _repair_missing_approved_admission_intents(
     for row in rows:
         admission = dict(row.get("admission") or {})
         decision = dict(row.get("decision") or {})
-        legacy_intent = dict(row.get("legacy_intent") or {})
+        trade_intent = dict(row.get("trade_intent") or {})
         admission_evidence = dict(admission.get("evidence") or {})
-        legacy_payload = dict(legacy_intent.get("payload") or {})
+        trade_intent_payload = dict(trade_intent.get("payload") or {})
         execution_intent_id = as_text(admission.get("execution_intent_id")) or as_text(
             admission_evidence.get("execution_intent_id")
         )
         trading_strategy_id = (
             as_text(decision.get("trading_strategy_id"))
-            or as_text(legacy_intent.get("trading_strategy_id"))
+            or as_text(trade_intent.get("trading_strategy_id"))
             or as_text(admission_evidence.get("trading_strategy_id"))
         )
         slot_key = (
-            as_text(legacy_intent.get("slot_key"))
+            as_text(trade_intent.get("slot_key"))
             or as_text(admission_evidence.get("slot_key"))
             or (
                 f"entry:{trading_strategy_id}:{as_text(admission_evidence.get('underlying_symbol'))}"
@@ -239,8 +239,8 @@ def _repair_missing_approved_admission_intents(
         now = utc_iso(now_dt)
         if now is None:
             raise RuntimeError("Unable to render current UTC timestamp")
-        created_at = as_text(legacy_intent.get("created_at")) or as_text(admission.get("decided_at")) or now
-        original_expires_at = as_text(legacy_intent.get("expires_at"))
+        created_at = as_text(trade_intent.get("created_at")) or as_text(admission.get("decided_at")) or now
+        original_expires_at = as_text(trade_intent.get("expires_at"))
         original_expires_at_dt = parse_datetime(original_expires_at)
         expires_at = original_expires_at
         terminal_state = (
@@ -248,13 +248,13 @@ def _repair_missing_approved_admission_intents(
             if original_expires_at_dt is not None and original_expires_at_dt <= now_dt
             else "failed"
         )
-        policy_ref = dict(legacy_intent.get("policy_snapshot") or admission.get("policy_snapshot") or {})
+        policy_ref = dict(trade_intent.get("policy_snapshot") or admission.get("policy_snapshot") or {})
         if not policy_ref and isinstance(decision.get("evidence"), dict):
             policy_ref = dict(decision["evidence"].get("policy_ref") or {})
         if terminal_state == "failed":
             expires_at = original_expires_at
         payload = {
-            **legacy_payload,
+            **trade_intent_payload,
             "dispatch_status": terminal_state,
             "terminal_reason": reason,
             "repair_reason": reason,
@@ -262,11 +262,11 @@ def _repair_missing_approved_admission_intents(
             "admission_decision_id": admission.get("admission_decision_id"),
             "trade_signal_id": admission.get("trade_signal_id") or decision.get("trade_signal_id"),
             "trade_decision_id": admission.get("trade_decision_id") or decision.get("trade_decision_id"),
-            "underlying_symbol": admission_evidence.get("underlying_symbol") or legacy_payload.get("underlying_symbol"),
-            "candidate_identity": admission_evidence.get("candidate_identity") or legacy_payload.get("candidate_identity"),
+            "underlying_symbol": admission_evidence.get("underlying_symbol") or trade_intent_payload.get("underlying_symbol"),
+            "candidate_identity": admission_evidence.get("candidate_identity") or trade_intent_payload.get("candidate_identity"),
             "execution_admission": admission,
-            "original_legacy_intent_state": legacy_intent.get("intent_state"),
-            "original_legacy_expires_at": original_expires_at,
+            "original_trade_intent_state": trade_intent.get("intent_state"),
+            "original_trade_intent_expires_at": original_expires_at,
         }
         repair = execution_store.create_terminal_repair_execution_intent_if_missing(
             execution_intent={
@@ -276,11 +276,11 @@ def _repair_missing_approved_admission_intents(
                 "trade_decision_id": as_text(admission.get("trade_decision_id") or decision.get("trade_decision_id")),
                 "strategy_position_id": None,
                 "execution_attempt_id": None,
-                "action_type": as_text(legacy_intent.get("intent_kind")) or "open",
+                "action_type": as_text(trade_intent.get("intent_kind")) or "open",
                 "slot_key": slot_key,
                 "claim_token": None,
                 "policy_ref": policy_ref,
-                "config_hash": as_text(decision.get("config_hash")) or as_text(legacy_intent.get("config_hash")) or "",
+                "config_hash": as_text(decision.get("config_hash")) or as_text(trade_intent.get("config_hash")) or "",
                 "state": "pending",
                 "expires_at": expires_at,
                 "superseded_by_id": None,

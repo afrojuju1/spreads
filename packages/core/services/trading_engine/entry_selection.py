@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core.services.live_selection import select_live_signals
-from core.services.trading_engine.candidate_identity import resolve_candidate_identity
+from core.services.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data import CandidateBuildResult, ResolvedTickerSet
 from core.services.quality.evidence import EntryQualityAnalysis, build_entry_quality_analysis
 from core.services.trading_strategy_runtime_models import EntryRuntime
