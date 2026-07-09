@@ -11,7 +11,7 @@ from core.services.candidate_fields import (
     risk_hints,
 )
 from core.services.option_structures import candidate_legs
-from core.services.runtime_policy import resolve_runtime_policy_fields
+from core.services.runtime_identity import resolve_runtime_policy_fields
 from core.services.trading_engine.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.data_runtime import entry_engine_label
 from core.services.trading_strategy_runtime_models import EntryRuntime

@@ -11,7 +11,7 @@ from core.services.execution_intents import request_execution_lifecycle_start
 from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
 )
-from core.services.runtime_policy import build_runtime_policy_ref
+from core.services.runtime_identity import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
 from core.services.trading_engine.data import CandidateBuildRequest, ResolvedTickerSet
 from core.services.trading_engine.data_runtime import (

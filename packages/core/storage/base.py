@@ -3,22 +3,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-from sqlalchemy.inspection import inspect as sqlalchemy_inspect
 from sqlalchemy.orm import Session
 
 from core.storage.capabilities import StorageCapabilities
 from core.storage.db import build_session_factory
-from core.storage.records import StorageRow, make_storage_row
-from core.storage.serializers import render_value
-
-
-def _copy_value(value: Any) -> Any:
-    rendered = render_value(value)
-    if isinstance(rendered, dict):
-        return dict(rendered)
-    if isinstance(rendered, list):
-        return list(rendered)
-    return rendered
+from core.storage.records import StorageRow
+from core.storage.row_serialization import to_storage_row, to_storage_rows
 
 
 class RepositoryBase:
@@ -62,20 +52,7 @@ class RepositoryBase:
         exclude: set[str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> StorageRow:
-        mapper = sqlalchemy_inspect(model.__class__)
-        payload: dict[str, Any] = {}
-        for column in mapper.columns:
-            source_key = str(column.key)
-            if exclude and source_key in exclude:
-                continue
-            target_key = None if aliases is None else aliases.get(source_key)
-            if target_key is None:
-                target_key = source_key.removesuffix("_json") if source_key.endswith("_json") else source_key
-            payload[target_key] = _copy_value(getattr(model, source_key))
-        if extra:
-            for key, value in extra.items():
-                payload[key] = _copy_value(value)
-        return make_storage_row(payload)
+        return to_storage_row(model, aliases=aliases, exclude=exclude, extra=extra)
 
     def rows(
         self,
@@ -84,7 +61,7 @@ class RepositoryBase:
         aliases: dict[str, str] | None = None,
         exclude: set[str] | None = None,
     ) -> list[StorageRow]:
-        return [self.row(model, aliases=aliases, exclude=exclude) for model in models]
+        return to_storage_rows(models, aliases=aliases, exclude=exclude)
 
     def close(self) -> None:
         # Engines/sessionmakers are shared and cached in storage.db.
