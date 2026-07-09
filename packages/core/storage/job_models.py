@@ -21,7 +21,7 @@ class JobRunModel(Base):
 
     job_run_id: Mapped[str] = mapped_column(Text, primary_key=True)
     job_key: Mapped[str] = mapped_column(Text, nullable=False)
-    arq_job_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    orchestration_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -10,7 +10,7 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from core.db.decorators import with_storage
 from core.engine import EngineAggregateType, EngineEvent, EngineEventType, close_lifecycle_workflow_id, trade_lifecycle_workflow_id
-from core.jobs.adhoc import enqueue_ad_hoc_job
+from core.jobs.adhoc import start_ad_hoc_job_workflow
 from core.jobs.registry import EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY, EXECUTION_LIFECYCLE_START_JOB_TYPE
 from core.runtime.config import default_temporal_address, default_temporal_namespace, default_temporal_task_queue
 from core.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
@@ -164,41 +164,41 @@ def request_execution_lifecycle_start(
     job_run, _ = job_store.create_job_run(
         job_run_id=job_run_id,
         job_key=EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY,
-        arq_job_id=job_run_id,
+        orchestration_id=job_run_id,
         job_type=EXECUTION_LIFECYCLE_START_JOB_TYPE,
         status="queued",
         scheduled_for=scheduled_for,
         payload=payload,
     )
     try:
-        enqueued = enqueue_ad_hoc_job(
+        started = start_ad_hoc_job_workflow(
             job_type=EXECUTION_LIFECYCLE_START_JOB_TYPE,
             job_key=EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY,
             job_run_id=job_run_id,
-            arq_job_id=job_run_id,
+            orchestration_id=job_run_id,
             payload=payload,
         )
     except Exception as exc:
         job_store.update_job_run_status(
             job_run_id=job_run_id,
             status="failed",
-            expected_arq_job_id=job_run_id,
+            expected_orchestration_id=job_run_id,
             finished_at=scheduled_for,
             error_text=str(exc),
         )
         return {"status": "failed", "job_run_id": job_run_id, "error": str(exc)}
-    if enqueued is None:
-        message = "Execution lifecycle start job was not enqueued."
+    if started is None:
+        message = "Execution lifecycle start workflow was not started."
         job_store.update_job_run_status(
             job_run_id=job_run_id,
             status="failed",
-            expected_arq_job_id=job_run_id,
+            expected_orchestration_id=job_run_id,
             finished_at=scheduled_for,
             error_text=message,
         )
         return {"status": "failed", "job_run_id": job_run_id, "error": message}
     return {
-        "status": "queued",
+        "status": "started",
         "job_run_id": str(job_run["job_run_id"]),
         "job_key": EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY,
     }

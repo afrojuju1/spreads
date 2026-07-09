@@ -70,14 +70,14 @@ uv run spreads ops storage --json
 uv run spreads jobs --json
 ```
 
-ARQ orchestration defaults:
+Temporal orchestration defaults:
 
 ```bash
-uv run spreads runtime scheduler
-uv run arq core.jobs.worker.RuntimeWorkerSettings
-uv run arq core.jobs.worker.DataWorkerSettings
-uv run arq core.jobs.worker.ValuationWorkerSettings
-uv run arq core.jobs.worker.ResearchWorkerSettings
+uv run spreads runtime temporal-schedules
+uv run spreads runtime temporal-worker --task-queue spreads-runtime-jobs --kind jobs
+uv run spreads runtime temporal-worker --task-queue spreads-data-jobs --kind jobs
+uv run spreads runtime temporal-worker --task-queue spreads-valuation-jobs --kind jobs
+uv run spreads runtime temporal-worker --task-queue spreads-research-jobs --kind jobs
 ```
 
 Redis default connection URL:
@@ -115,9 +115,9 @@ The FastAPI app is DB-backed. Useful active endpoints include:
 
 ## Notes
 
-- Docker Compose can run `postgres`, `redis`, `api`, `worker`, and `scheduler`.
+- Docker Compose can run `postgres`, `redis`, `temporal`, `api`, `worker-*`, `temporal-schedules`, and `market-recorder`.
 - Alembic owns app-schema changes.
 - The runtime stores are SQLAlchemy ORM on Postgres.
 - Ticker source facts, strategy facts, execution facts, capture targets, and capture summaries use the Postgres database and session pattern.
 - High-volume option quote/trade ticks and compact quote snapshots live in ClickHouse through `storage/market_data_store.py`; they are not Postgres ORM tables.
-- Redis is transport/runtime only for ARQ; Postgres remains the source of truth for job state.
+- Temporal owns scheduled job orchestration; Postgres remains the source of truth for job state.

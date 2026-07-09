@@ -48,8 +48,8 @@
 ## Rollout Checklist
 
 - After schema changes, run `uv run alembic upgrade head`.
-- If declared job YAML, ticker-source config, or strategy config changed, restart the scheduler and affected workers so they reload config.
-- After changing code imported by `worker-runtime`, `worker-data`, or `scheduler`, restart those containers before trusting runtime behavior.
+- If declared job YAML, ticker-source config, or strategy config changed, reconcile Temporal schedules and restart affected workers so they reload config.
+- After changing code imported by `worker-runtime`, `worker-data`, `worker-temporal`, or `temporal-schedules`, restart those containers before trusting runtime behavior.
 - Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
 - Restart `api` only when the changed runtime surface requires it or when explicitly requested.
-- When the live target is already deployed on `ade-nucbox-k8-plus`, avoid bringing local scheduler/workers/recorder back up unless the user explicitly wants dual-host validation. The NUC is the live owner.
+- When the live target is already deployed on `ade-nucbox-k8-plus`, avoid bringing local Temporal schedules/workers/recorder back up unless the user explicitly wants dual-host validation. The NUC is the live owner.

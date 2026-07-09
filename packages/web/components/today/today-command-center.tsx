@@ -248,9 +248,9 @@ export function TodayCommandCenter() {
               Live Gates
             </div>
             <StatusLine
-              label="Scheduler"
-              value={summary.scheduler_status ?? (loading ? "loading" : "idle")}
-              note={`${formatNumberMetric(summary.worker_lane_count, pendingLabel)} worker lanes`}
+              label="Schedules"
+              value={summary.temporal_schedule_status ?? (loading ? "loading" : "idle")}
+              note={`${formatNumberMetric(summary.task_queue_count, pendingLabel)} task queues`}
             />
             <StatusLine
               label="Broker Sync"

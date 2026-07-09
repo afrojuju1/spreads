@@ -413,20 +413,20 @@ def _render_attention(console: Console, payload: dict[str, Any]) -> None:
     console.print(table)
 
 
-def _render_disabled_lanes(console: Console, rows: list[Any]) -> None:
-    disabled_lanes = [dict(row) for row in rows if isinstance(row, dict)]
-    if not disabled_lanes:
+def _render_disabled_task_queues(console: Console, rows: list[Any]) -> None:
+    disabled_task_queues = [dict(row) for row in rows if isinstance(row, dict)]
+    if not disabled_task_queues:
         return
-    table = Table(title="Disabled Lanes", header_style="bold")
+    table = Table(title="Disabled Task Queues", header_style="bold")
     table.add_column("Lane")
-    table.add_column("Queue")
+    table.add_column("Task Queue")
     table.add_column("Status")
     table.add_column("Job Types")
     table.add_column("Note")
-    for row in disabled_lanes:
+    for row in disabled_task_queues:
         table.add_row(
-            str(row.get("lane") or row.get("settings_name") or "-"),
-            str(row.get("queue_name") or "-"),
+            str(row.get("lane") or "-"),
+            str(row.get("task_queue") or "-"),
             _status_text(row.get("status")),
             _render_count_map({str(value): 1 for value in list(row.get("disabled_job_types") or [])}, limit=6, item_length=72),
             str(row.get("operator_note") or "-"),
@@ -444,7 +444,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     account_snapshot = dict(details.get("account_snapshot") or {})
     account = dict(account_snapshot.get("account") or {})
     pnl = dict(account_snapshot.get("pnl") or {})
-    scheduler = dict(details.get("scheduler") or {})
+    schedules = dict(details.get("schedules") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     broker_exposure = dict(details.get("broker_exposure") or {})
     market_context = dict(details.get("market_context") or {})
@@ -523,16 +523,20 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         ),
     )
     overview.add_row(
-        "Scheduler",
-        f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
+        "Schedules",
+        (
+            f"{_render_value(schedules.get('status'))} | "
+            f"enabled {_render_value(schedules.get('enabled_schedule_count'))}/"
+            f"{_render_value(schedules.get('declared_schedule_count'))}"
+        ),
     )
     overview.add_row(
-        "Workers",
+        "Task Queues",
         (
-            f"lanes {_render_value(summary.get('worker_lane_count'))} | "
-            f"disabled {_render_value(summary.get('disabled_worker_lane_count'))} | "
-            f"blocked {_render_value(summary.get('blocked_worker_lane_count'))} | "
-            f"idle {_render_value(summary.get('idle_worker_lane_count'))}"
+            f"configured {_render_value(summary.get('task_queue_count'))} | "
+            f"disabled {_render_value(summary.get('disabled_task_queue_count'))} | "
+            f"blocked {_render_value(summary.get('blocked_task_queue_count'))} | "
+            f"idle {_render_value(summary.get('idle_task_queue_count'))}"
         ),
     )
     overview.add_row(
@@ -884,19 +888,22 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
 def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
-    scheduler = dict(details.get("scheduler") or {})
-    lane_rows = list(details.get("worker_lanes") or [])
+    schedules = dict(details.get("schedules") or {})
+    task_queue_rows = list(details.get("task_queues") or [])
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
     overview.add_row(
-        "Scheduler",
-        f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
+        "Schedules",
+        (
+            f"{_render_value(schedules.get('status'))} | "
+            f"enabled {_render_value(schedules.get('enabled_schedule_count'))}/"
+            f"{_render_value(schedules.get('declared_schedule_count'))}"
+        ),
     )
-    overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
-    overview.add_row("Disabled Lanes", _render_value(summary.get("disabled_worker_lane_count")))
-    overview.add_row("Workers", _render_value(summary.get("active_worker_count")))
+    overview.add_row("Task Queues", _render_value(summary.get("task_queue_count")))
+    overview.add_row("Disabled Task Queues", _render_value(summary.get("disabled_task_queue_count")))
     overview.add_row(
         "Jobs",
         f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
@@ -904,29 +911,27 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
     console.print(
         Panel(
             overview,
-            title="Worker Lanes",
+            title="Temporal Task Queues",
             border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
         )
     )
 
     _render_attention(console, payload)
 
-    if lane_rows:
-        table = Table(title="Lane Summary", header_style="bold")
+    if task_queue_rows:
+        table = Table(title="Task Queue Summary", header_style="bold")
         table.add_column("Lane")
-        table.add_column("Queue")
+        table.add_column("Task Queue")
         table.add_column("Status")
-        table.add_column("Workers", justify="right")
         table.add_column("Running", justify="right")
         table.add_column("Queued", justify="right")
         table.add_column("Tasks", justify="right")
         table.add_column("Max Jobs", justify="right")
-        for row in lane_rows:
+        for row in task_queue_rows:
             table.add_row(
-                str(row.get("lane") or row.get("settings_name") or "-"),
-                str(row.get("queue_name") or "-"),
+                str(row.get("lane") or "-"),
+                str(row.get("task_queue") or "-"),
                 _status_text(row.get("status")),
-                _render_value(row.get("active_worker_count")),
                 _render_value(row.get("running_job_count")),
                 _render_value(row.get("queued_job_count")),
                 _render_value(row.get("task_count")),
@@ -934,26 +939,7 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
 
-    _render_disabled_lanes(console, list(details.get("disabled_worker_lanes") or []))
-
-    workers = list(details.get("workers") or [])
-    if workers:
-        table = Table(title="Active Workers", header_style="bold")
-        table.add_column("Owner")
-        table.add_column("Lane")
-        table.add_column("Queue")
-        table.add_column("Settings")
-        table.add_column("Expires")
-        for row in workers:
-            lease_state = row.get("lease_state") if isinstance(row.get("lease_state"), dict) else {}
-            table.add_row(
-                str(row.get("owner") or "-"),
-                _render_value(lease_state.get("lane")),
-                _render_value(lease_state.get("queue_name")),
-                _render_value(lease_state.get("settings_name")),
-                _render_value(row.get("expires_at")),
-            )
-        console.print(table)
+    _render_disabled_task_queues(console, list(details.get("disabled_task_queues") or []))
 
 
 def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
@@ -1034,7 +1020,7 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
 def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
-    scheduler = dict(details.get("scheduler") or {})
+    schedules = dict(details.get("schedules") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -1045,13 +1031,16 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Enabled", _render_value(summary.get("enabled_definition_count")))
     overview.add_row("Recent Runs", _render_value(summary.get("run_count")))
     overview.add_row(
-        "Scheduler",
-        f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
+        "Schedules",
+        (
+            f"{_render_value(schedules.get('status'))} | "
+            f"enabled {_render_value(schedules.get('enabled_schedule_count'))}/"
+            f"{_render_value(schedules.get('declared_schedule_count'))}"
+        ),
     )
-    overview.add_row("Workers", _render_value(len(list(details.get("workers") or []))))
     overview.add_row("Singleton Leases", _render_value(summary.get("singleton_lease_count")))
-    overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
-    overview.add_row("Disabled Lanes", _render_value(summary.get("disabled_worker_lane_count")))
+    overview.add_row("Task Queues", _render_value(summary.get("task_queue_count")))
+    overview.add_row("Disabled Task Queues", _render_value(summary.get("disabled_task_queue_count")))
     if summary.get("excluded_job_types"):
         overview.add_row(
             "Excluded Job Types",
@@ -1076,23 +1065,21 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    lane_rows = list(details.get("worker_lanes") or [])
-    if lane_rows:
-        table = Table(title="Worker Lanes", header_style="bold")
+    task_queue_rows = list(details.get("task_queues") or [])
+    if task_queue_rows:
+        table = Table(title="Task Queues", header_style="bold")
         table.add_column("Lane")
-        table.add_column("Queue")
+        table.add_column("Task Queue")
         table.add_column("Status")
-        table.add_column("Workers", justify="right")
         table.add_column("Running", justify="right")
         table.add_column("Queued", justify="right")
         table.add_column("Tasks", justify="right")
         table.add_column("Max Jobs", justify="right")
-        for row in lane_rows:
+        for row in task_queue_rows:
             table.add_row(
-                str(row.get("lane") or row.get("settings_name") or "-"),
-                str(row.get("queue_name") or "-"),
+                str(row.get("lane") or "-"),
+                str(row.get("task_queue") or "-"),
                 _status_text(row.get("status")),
-                _render_value(row.get("active_worker_count")),
                 _render_value(row.get("running_job_count")),
                 _render_value(row.get("queued_job_count")),
                 _render_value(row.get("task_count")),
@@ -1100,7 +1087,7 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
 
-    _render_disabled_lanes(console, list(details.get("disabled_worker_lanes") or []))
+    _render_disabled_task_queues(console, list(details.get("disabled_task_queues") or []))
 
     definition_rows = [] if summary.get("status_filter") else list(details.get("declared_jobs") or [])
     if definition_rows:

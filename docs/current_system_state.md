@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-07-08
+Last updated: 2026-07-09
 
 ## Top-Level Boundaries
 
@@ -12,7 +12,7 @@ Last updated: 2026-07-08
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. Canonical on-box CLI visibility lives under `spreads ops state`, `spreads ops storage`, `spreads jobs`, `spreads execution list`, `spreads execution positions`, and `spreads execution runtimes`. Backend historical evaluation is exposed through the narrow plural `spreads backtests run` adapter over `BacktestEngine`. Remote target reads go through `spreads deploy exec --env <target> -- ...`; command-level `--env` passthrough is intentionally not shipped. On-box logs use Docker Compose directly; remote deployment logs live under `spreads deploy logs`. |
 | Trading strategy config | `packages/config/strategies/catalog.yaml`, `packages/config/strategies/profiles.yaml`, `services/trading_strategies.py`, `services/trade_structure_specs.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. Reusable trade-structure construction lives in code; authored strategy runtime config composes from the catalog and profiles only. |
-| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, execution lifecycle start, and alert jobs; data workers execute ticker sources and calendar event refreshes. Research and valuation workers are optional lanes, disabled by default, and not part of live trading health. |
+| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `core.workflows`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are reconciled into Temporal schedules. Temporal runtime workers execute broker sync, strategy entry/manage, execution lifecycle start, engine outbox publish, and alert jobs; data workers execute ticker sources and calendar event refreshes. Research and valuation workers are optional Temporal task-queue lanes, disabled by default, and not part of live trading health. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls` and filters Finviz rows through the strategy's target-DTE optionability/expected-move requirements before marking symbols selected. `earnings_event_window` reads `earnings_event_consensus`, applies Alpaca tradable/optionable/price/volume/target-DTE/expected-move checks, and persists selected plus filtered earnings-event observations for the earnings-source cutover. Filtered observations remain visible with stable reason codes. |
 | Calendar events and earnings consensus | `integrations/calendar_events`, `storage/calendar_models.py`, `CalendarEventStore` | `calendar_events` stores normalized provider event facts. `provider_fetch_audit` stores bounded provider fetch/cache/error summaries. `earnings_event_consensus` stores derived earnings facts separately from provider rows. `calendar_event_refresh:earnings_30d` is the data-lane provider-fetch entrypoint for yfinance, Alpha Vantage, DoltHub, and sparse Finviz enrichment. Strategy runtime must not call yfinance, Alpha Vantage, DoltHub, or Finviz directly. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py`, `storage/market_data_store.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into ClickHouse option quote/trade ticks plus Postgres `capture_summaries`. |
@@ -25,13 +25,13 @@ Last updated: 2026-07-08
 | Backtest evaluation | `services/backtest/` | Backend-only BacktestEngine primitive exposed by `spreads backtests run`. Shipped modes are `stored_facts`, `strategy_rerun`, `execution_simulation`, `portfolio_simulation`, and `parameter_sweep`. `stored_facts` evaluates bounded date windows over the current ticker-source, candidate, signal, decision, admission, intent, attempt, position, and ClickHouse market-data model. `strategy_rerun` reruns current strategy config through historical source scope, `HistoricalMarketSliceProvider`, candidate builders, entry quality, entry selection, decision planning, and protection/portfolio admission artifacts while deferring broker/allocation capacity to execution simulation. `execution_simulation` composes over strategy reruns to emit isolated simulated intents, attempts, orders, and fills using executor profile TTL/repricing policy, structure validation, and historical quote snapshots/trade ticks with explicit fill-model fidelity. `portfolio_simulation` projects simulated or artifact-shaped stored fills into isolated positions, evaluates current close policy against historical quote marks, computes realized/unrealized PnL with `core.money`, and emits performance metrics with explicit metrics-engine fidelity. `parameter_sweep` expands bounded current-config overlays for profile/source/ranking/exit and related strategy parameters, validates each variant as a `TradingStrategyConfig`, runs a rerun or simulation base mode, ranks variants by the requested metric, and persists per-variant artifacts/results. Backtest persists isolated `backtest_runs`, `backtest_artifacts`, and `backtest_variant_results` rows plus ignored local result artifacts under `outputs/backtest_runs` by default. `HistoricalMarketSliceProvider` is the historical sibling of `AlpacaMarketSliceProvider`; it returns `SymbolMarketSlice` inputs from ClickHouse option quote/trade data plus Postgres source, candidate diagnostic, stored candidate, and earnings consensus facts with explicit fidelity labels. It compares current catalog strategy/profile/source variants from persisted facts and labels source, candidate, decision, execution, fill, position, exit, PnL, metrics, sweep, and market-data fidelity explicitly. It is not an operator app UI and does not revive removed replay/audit/analyze wrappers or the removed historical singular `spreads backtest` command. |
 | Company valuation lane | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Company valuation is an offline research/maintenance lane. It can support future analysis, but live strategy selection, admission, execution, and position management must not depend on it by default. |
 | Research AI lane | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, optional `worker-research`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. This lane is disabled by default and is not a live execution dependency. |
-| Persistence and transport | Postgres, ClickHouse, Redis, Temporal, NATS JetStream | Postgres is source of truth for durable domain and ops state, including engine events/outbox, calendar provider facts, provider fetch audit, and earnings event consensus. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles non-lifecycle queues, leases, pub/sub fanout, and short-lived provider cache/backoff state. Temporal owns execution/close lifecycle orchestration. The `engine_outbox_publish` runtime job publishes pending Postgres outbox rows to NATS JetStream and marks rows published only after JetStream acknowledges them. |
+| Persistence and transport | Postgres, ClickHouse, Redis, Temporal, NATS JetStream | Postgres is source of truth for durable domain and ops state, including job runs, engine events/outbox, calendar provider facts, provider fetch audit, and earnings event consensus. ClickHouse owns high-volume raw market-data ticks and compact quote snapshots. Redis handles singleton leases, pub/sub fanout, and short-lived provider cache/backoff state. Temporal owns scheduled job orchestration plus execution/close lifecycle orchestration. The `engine_outbox_publish` runtime job publishes pending Postgres outbox rows to NATS JetStream and marks rows published only after JetStream acknowledges them. |
 
 ## Non-Negotiable Boundary Rules
 
 - `trading_strategy_id` is the canonical runtime owner for strategy-owned candidates, signals, decisions, intents, attempts, and positions.
 - Authored trading strategy config lives in `packages/config/strategies/catalog.yaml` and `packages/config/strategies/profiles.yaml`. Do not recreate per-strategy runtime YAML, paper-specific config directories, or compatibility wrappers around it.
-- Strategy routines generate jobs named `trading_strategy:<strategy_id>:entry` and `trading_strategy:<strategy_id>:manage`.
+- Strategy routines generate Temporal scheduled jobs named `trading_strategy:<strategy_id>:entry` and `trading_strategy:<strategy_id>:manage`.
 - `execution_lifecycle_start:global` owns pending-intent workflow starts and uses deterministic Temporal workflow IDs.
 - `trade_structure` names reusable option construction behavior, such as `long_call`, `call_credit_spread`, `iron_condor`, or `short_put`.
 - Money, premium, limit-price, notional, exposure, PnL, and repricing tick math belongs in `core.money`. Keep strategy/risk/execution services focused on policy decisions instead of reimplementing rounding and contract-multiplier arithmetic.
@@ -76,7 +76,7 @@ Last updated: 2026-07-08
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`, `broker_sync_state`, `account_snapshots` | Trading decisions or owner attribution. |
 | Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Candidate diagnostics or broker order truth. |
 | Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade tick storage or retention. |
-| Trading ops state | Operator-facing trading health: market, control, scheduler/workers, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
+| Trading ops state | Operator-facing trading health: market, control, Temporal schedules/task queues, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
 | Storage ops state | Operator-facing storage health for ClickHouse market data and Postgres capture summaries. | `services/ops/storage_ops_state.py`, storage ops surfaces | Live trading decisions. |
 | Backtest evaluation | Bounded backtest artifact for current-model historical windows, including request/config snapshots, run state, candidate productivity, selection quality, admission outcomes, execution/fill assumptions, exit-decision outcomes, position/PnL labels, admission risk context, MarketContext references, regime-bucket metrics, reason-code attribution, ClickHouse coverage/fidelity, artifact pointers, and per-strategy current-catalog variant metrics. | `services/backtest/`, `backtest_runs`, `backtest_artifacts`, `backtest_variant_results` | Alternate execution orchestration, broker submission, operator UI, live candidate/decision/execution/position writes, local regime recomputation, or legacy replay/audit/analyze wrappers. |
 | Company valuation | Offline issuer valuation, ownership resolution, and research datasets. | `services/company_valuation/`, `packages/config/company_valuation`, optional `worker-valuation` | Live strategy entry, live execution admission, or position close management. |
@@ -91,13 +91,13 @@ Operator
   |
   +--> `uv run spreads ...` CLI -> services -> Postgres/ClickHouse/Redis/Alpaca
 
-Scheduler
+Temporal schedules
   |
   +--> declared YAML jobs + generated strategy routine jobs
   |
-  +--> Redis queues
+  +--> Temporal task queues
 
-ARQ workers
+Temporal workers
   |
   +--> runtime lane: broker sync, trading strategy entry/manage, execution lifecycle start, alerts
   +--> data lane: ticker sources, calendar event refreshes
@@ -110,8 +110,8 @@ Market recorder
 
 Postgres = domain and ops source of truth
 ClickHouse = high-volume raw market-data ticks and quote snapshots
-Redis = queues, leases, pub/sub, short-lived provider cache/backoff
-Temporal = execution and close lifecycle orchestration
+Redis = singleton leases, pub/sub, short-lived provider cache/backoff
+Temporal = scheduled jobs plus execution and close lifecycle orchestration
 NATS JetStream = event projection fanout from engine_outbox via engine_outbox_publish
 ```
 
@@ -142,8 +142,8 @@ The valuation and research lanes are disabled by default in job config and deplo
 
 Always-on runtime:
 
-- Postgres, ClickHouse, Redis, API, web, scheduler, and the logging/metrics stack stay up so operator reads, dashboards, leases, queues, and market-data storage remain available.
-- Runtime workers stay up for broker/account sync, execution lifecycle start, alert reconciliation, and strategy routines, but market-only jobs are expressed in their job schedules instead of waking and skipping all night.
+- Postgres, ClickHouse, Redis, API, web, Temporal, Temporal workers, and the logging/metrics stack stay up so operator reads, dashboards, leases, schedules, and market-data storage remain available.
+- Runtime workers stay up for broker/account sync, execution lifecycle start, alert reconciliation, engine outbox publishing, and strategy routines, but market-only jobs are expressed in their Temporal schedules instead of waking and skipping all night.
 - `alert_reconcile` is intentionally allowed off-hours so pending notifications can recover without waiting for the next session.
 - `TradingOpsState` keeps broker-sync age and stale position marks visible after market close, but expected off-hours staleness is not degraded when the latest sync was healthy and there are no queued attempts, missing marks, broker quote errors, or reconciliation mismatches.
 
@@ -168,7 +168,7 @@ Trading strategies are authored through a single catalog/profile model under `pa
 - `catalog.yaml` owns strategy identity, activation, execution mode, thesis, archetype, trade structure, structure model reference, portfolio model reference, and thesis-level overrides.
 - `profiles.yaml` owns reusable source models, archetypes, routine profiles, liquidity profiles, structure models, portfolio models, protection models, executor profiles, and exit controllers. Executor profiles own broker-order lifecycle policy; exit controllers own why/when to close.
 
-`services/trading_strategies.py` composes the catalog and profiles into the runtime `TradingStrategyConfig` objects consumed by scheduler-generated strategy routines. There is no per-strategy runtime YAML path and no paper-specific config namespace. `paper`, `shadow`, and `live` are execution posture values under `execution.mode`, not separate files or directories.
+`services/trading_strategies.py` composes the catalog and profiles into the runtime `TradingStrategyConfig` objects consumed by generated Temporal strategy routines. There is no per-strategy runtime YAML path and no paper-specific config namespace. `paper`, `shadow`, and `live` are execution posture values under `execution.mode`, not separate files or directories.
 
 `services/trade_structure_specs.py` owns reusable code-level trade-structure specs for candidate builders. These are not authored strategy configs and must not become a second strategy catalog.
 
@@ -207,9 +207,9 @@ Current default-enabled strategies:
 
 `short_dated_etf_short_put` consumes `liquid_etf_short_puts` and runs the `short_put_v1` quality profile with explicit cash-secured short-put portfolio caps.
 
-There are currently no disabled-by-default authored strategy configs. Disabled strategy configs may still be kept as authored definitions in the future; if disabled, they must not generate scheduler jobs until intentionally re-enabled.
+There are currently no disabled-by-default authored strategy configs. Disabled strategy configs may still be kept as authored definitions in the future; if disabled, they must not generate Temporal scheduled jobs until intentionally re-enabled.
 
-`TradingOpsState.details.strategy_breadth` projects every authored strategy config, including active, disabled paper, or disabled shadow families, as operator-visible breadth. Disabled strategy projection is observation-only: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create scheduler jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface.
+`TradingOpsState.details.strategy_breadth` projects every authored strategy config, including active, disabled paper, or disabled shadow families, as operator-visible breadth. Disabled strategy projection is observation-only: it may show source, trade structure, routine cadence, execution posture, environment compatibility, and the reason the strategy is not active, but it must not create Temporal scheduled jobs, candidate runs, decisions, intents, attempts, or broker submissions. `TradingOpsState.details.trading_flows` remains the active lifecycle-flow surface.
 
 `spreads ops strategy-ledger --date <YYYY-MM-DD>` is the shipped daily evidence ledger. It reports every active strategy's source, candidate, signal, decision, admission, intent, attempt, order/fill, position, close, mark, PnL, blocker, config hash, latest lifecycle ID evidence, and MarketContext snapshot links for one market date. Source evidence includes `source_evidence_state`, so static configured universes, dynamic source runs with symbols, missing recent source runs, and empty source runs are distinct. Candidate evidence includes diagnostic symbol counts, diagnostic status counts, raw/postprocess/runtime/returned candidate totals, persisted trade-candidate count, `candidate_productivity_state`, raw chain rejection counts, data-quality status/reason counts, calendar-policy status/reason counts, ranking-policy status/blocker counts, market-context/regime-fit status/reasons, and market-data coverage totals. Use that split to distinguish no source symbols, no raw candidates, data/chain gaps, shared context mismatch, data-quality filtering, calendar filtering, ranking filtering, and true no-trade market conditions before changing thresholds. Use the ledger as the first tuning surface for catalog/profile changes instead of changing thresholds from vibes.
 
@@ -223,11 +223,11 @@ The long-vol strategy configs run in paper mode by default after the 2026-06-11 
 
 ## Multi-Strategy Activation Contract
 
-Authored strategy breadth is not automatic strategy rotation. Spreads may carry disabled, shadow, paper, or future live strategy definitions, but no inactive strategy may create scheduler jobs, natural candidate runs, selected decisions, intents, attempts, positions, or broker submissions until it is deliberately activated through config and worker rollout.
+Authored strategy breadth is not automatic strategy rotation. Spreads may carry disabled, shadow, paper, or future live strategy definitions, but no inactive strategy may create Temporal scheduled jobs, natural candidate runs, selected decisions, intents, attempts, positions, or broker submissions until it is deliberately activated through config and worker rollout.
 
 Config keeps three concerns separate:
 
-- `activation.state`: whether the strategy is active and allowed to generate scheduler-owned entry/manage jobs. Inactive definitions are visible breadth only.
+- `activation.state`: whether the strategy is active and allowed to generate Temporal-owned entry/manage jobs. Inactive definitions are visible breadth only.
 - `activation.paused`: operator/runtime pause state for an otherwise active strategy.
 - `execution.mode`: `shadow`, `paper`, or `live` execution posture for the canonical lifecycle.
 
@@ -391,7 +391,7 @@ Operators inspect and reconcile individual attempts through `spreads execution i
 Current audit result for the live trading hot path:
 
 - Keep the thin engine contract modules in `services/trading_engine/`. They are ownership boundaries and typed payload shapes, not a second runtime, bus, actor framework, or alternate store.
-- Broker submit, refresh, cancel, and order/fill sync are workflow activities. The old ARQ broker-submit worker registration is removed; do not recreate a parallel submit lane.
+- Broker submit, refresh, cancel, and order/fill sync are workflow activities. The old Temporal broker-submit worker registration is removed; do not recreate a parallel submit lane.
 - Keep candidate-build policy helpers under DataEngine ownership. `services/strategy_candidate_builders/` is the only active candidate-construction package; it must not become an alternate orchestration path, product surface, CLI flow, or persistence owner.
 - Keep `EntrySelectionEngine` as the canonical account-agnostic strategy-selection service. Do not put account capacity, broker submit readiness, or alert delivery back into selection.
 - Merge management scheduling into `trading_strategy_manage` only. There is no standalone position-exit job type; `services/exit_manager.py` exposes the strategy manage adapter that wires PortfolioEngine position projection, ExitEngine close decisions, `risk_runtime.py` close admission, and ExecutionIntent close handoff.
@@ -413,11 +413,11 @@ The dashboard should show strategy-owned runtime state, not recreate old runtime
 
 `spreads execution positions` separates live close work from historical close accounting. `close_lifecycle.live_action_*` and the CLI `Live Close Work` row answer whether a date-scoped or unfiltered position view has actionable pending, active, failed, or anomalous close work. `accounting_*` fields and the CLI `Close Accounting` row can show retained historical close evidence without implying live close work is waiting.
 
-`TradingOpsState.details.strategy_breadth` is the canonical operator inventory for authored strategy breadth. Disabled paper/shadow strategies can appear there as `paper_observation_candidate` or `shadow_observation_candidate`, but their breadth contracts force effective automatic submission off unless the strategy is actually active through the scheduler-owned lifecycle spine.
+`TradingOpsState.details.strategy_breadth` is the canonical operator inventory for authored strategy breadth. Disabled paper/shadow strategies can appear there as `paper_observation_candidate` or `shadow_observation_candidate`, but their breadth contracts force effective automatic submission off unless the strategy is actually active through the Temporal-owned lifecycle spine.
 
 Entry planning treats non-live signal eligibility, including `analysis_only` emitted by shadow-mode strategy runs, as observation evidence rather than selected-entry eligibility. Those rows may be persisted for regime comparison, but they must not create selected entry decisions or execution intents.
 
-Disabled strategy breadth can be run explicitly through `spreads lifecycle observe-strategy <trading_strategy_id>`. Observation runs resolve authored strategy config without enabling scheduler jobs, run the normal ticker-source, candidate-build, entry-quality, signal, and decision persistence spine, force `analysis_only`/`observation_only` provenance, and stop before admission or execution-intent creation. `TradingOpsState.details.strategy_breadth[].latest_observation` exposes the latest observation evidence for each authored strategy.
+Disabled strategy breadth can be run explicitly through `spreads lifecycle observe-strategy <trading_strategy_id>`. Observation runs resolve authored strategy config without enabling Temporal scheduled jobs, run the normal ticker-source, candidate-build, entry-quality, signal, and decision persistence spine, force `analysis_only`/`observation_only` provenance, and stop before admission or execution-intent creation. `TradingOpsState.details.strategy_breadth[].latest_observation` exposes the latest observation evidence for each authored strategy.
 
 `TradingOpsState.details.broker_exposure` classifies the latest broker account snapshot positions by ownership against canonical open Spreads position legs. Broker option legs should be labeled as `spreads_managed`, `spreads_synthetic_validation`, or `external_manual` instead of being hidden behind raw broker account positions.
 
@@ -426,6 +426,6 @@ Disabled strategy breadth can be run explicitly through `spreads lifecycle obser
 ## Rollout Notes
 
 - After schema changes, run `uv run alembic upgrade head`.
-- After declared job YAML or strategy config changes, restart the scheduler and affected workers so they reload config.
-- After code imported by runtime/data workers changes, restart those containers before trusting live behavior.
+- After declared job YAML or strategy config changes, run `uv run spreads runtime temporal-schedules` and restart affected Temporal workers so they reload config.
+- After code imported by runtime/data Temporal workers changes, restart those containers before trusting live behavior.
 - Default validation is live/runtime checks through shipped CLIs and operator reads. Do not add automated tests unless explicitly requested.

@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import Any
 
-from core.jobs.adhoc import enqueue_ad_hoc_job
+from core.jobs.adhoc import start_ad_hoc_job_workflow
 from core.jobs.registry import (
     COMPANY_VALUATION_BOOTSTRAP_ADHOC_JOB_KEY,
     COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
@@ -39,7 +39,7 @@ class QueuedCompanyValuationJob(CompanyValuationContractModel):
     job_run_id: str
     job_key: str
     job_type: str
-    arq_job_id: str
+    orchestration_id: str
     status: str
     scheduled_for: str
     payload: dict[str, Any]
@@ -110,49 +110,48 @@ def _queue_job(
         "scheduled_for": scheduled_for_iso,
     }
     job_run_id = _job_run_id(job_key, scheduled_for)
-    arq_job_id = job_run_id
+    orchestration_id = job_run_id
     job_run, _created = job_store.create_job_run(
         job_run_id=job_run_id,
         job_key=job_key,
-        arq_job_id=arq_job_id,
+        orchestration_id=orchestration_id,
         job_type=job_type,
         status="queued",
         scheduled_for=scheduled_for,
         payload=full_payload,
     )
     try:
-        enqueued = enqueue_ad_hoc_job(
+        started = start_ad_hoc_job_workflow(
             job_type=job_type,
             job_key=job_key,
             job_run_id=job_run_id,
-            arq_job_id=arq_job_id,
+            orchestration_id=orchestration_id,
             payload=full_payload,
-            redis_url=redis_url,
         )
     except Exception as exc:
         job_store.update_job_run_status(
             job_run_id=job_run_id,
             status="failed",
-            expected_arq_job_id=arq_job_id,
+            expected_orchestration_id=orchestration_id,
             finished_at=datetime.now(UTC),
             error_text=str(exc),
         )
         raise RuntimeError(f"Company valuation queueing failed: {exc}") from exc
-    if enqueued is None:
+    if started is None:
         job_store.update_job_run_status(
             job_run_id=job_run_id,
             status="failed",
-            expected_arq_job_id=arq_job_id,
+            expected_orchestration_id=orchestration_id,
             finished_at=datetime.now(UTC),
-            error_text="Company valuation job was not enqueued.",
+            error_text="Company valuation workflow was not started.",
         )
-        raise RuntimeError("Company valuation job was not enqueued.")
+        raise RuntimeError("Company valuation workflow was not started.")
     row = dict(job_store.get_job_run(job_run_id) or job_run)
     return QueuedCompanyValuationJob(
         job_run_id=str(row["job_run_id"]),
         job_key=str(row["job_key"]),
         job_type=str(row["job_type"]),
-        arq_job_id=str(row.get("arq_job_id") or arq_job_id),
+        orchestration_id=str(row.get("orchestration_id") or orchestration_id),
         status=str(row["status"]),
         scheduled_for=scheduled_for_iso,
         payload=full_payload,

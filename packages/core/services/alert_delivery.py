@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from core.alerts.discord import build_discord_payload, send_discord_webhook
 from core.events.bus import publish_global_event_sync
-from core.jobs.adhoc import enqueue_ad_hoc_job
+from core.jobs.adhoc import start_ad_hoc_job_workflow
 from core.jobs.orchestration import build_job_attempt_id
 from core.jobs.registry import (
     ALERT_DELIVERY_ADHOC_JOB_KEY,
@@ -111,7 +111,7 @@ def enqueue_alert_delivery_job(
         job_run, _ = job_store.create_job_run(
             job_run_id=job_run_id,
             job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
-            arq_job_id=job_run_id,
+            orchestration_id=job_run_id,
             job_type=ALERT_DELIVERY_JOB_TYPE,
             status="queued",
             scheduled_for=scheduled_for,
@@ -129,7 +129,7 @@ def enqueue_alert_delivery_job(
         next_retry_count = int(existing.get("retry_count", 0)) + 1
         job_run = job_store.requeue_job_run(
             job_run_id=job_run_id,
-            arq_job_id=build_job_attempt_id(job_run_id, next_retry_count),
+            orchestration_id=build_job_attempt_id(job_run_id, next_retry_count),
             payload=payload,
         )
 
@@ -139,31 +139,31 @@ def enqueue_alert_delivery_job(
         queued_at=scheduled_for,
     )
     try:
-        enqueued = enqueue_ad_hoc_job(
+        started = start_ad_hoc_job_workflow(
             job_type=ALERT_DELIVERY_JOB_TYPE,
             job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
             job_run_id=job_run_id,
-            arq_job_id=str(job_run["arq_job_id"]),
+            orchestration_id=str(job_run["orchestration_id"]),
             payload=payload,
         )
     except Exception as exc:
         job_store.update_job_run_status(
             job_run_id=job_run_id,
             status="failed",
-            expected_arq_job_id=str(job_run["arq_job_id"]),
+            expected_orchestration_id=str(job_run["orchestration_id"]),
             finished_at=_utc_now(),
             error_text=str(exc),
         )
         raise RuntimeError(f"Alert delivery queueing failed: {exc}") from exc
-    if enqueued is None:
+    if started is None:
         job_store.update_job_run_status(
             job_run_id=job_run_id,
             status="failed",
-            expected_arq_job_id=str(job_run["arq_job_id"]),
+            expected_orchestration_id=str(job_run["orchestration_id"]),
             finished_at=_utc_now(),
-            error_text="Alert delivery job was not enqueued.",
+            error_text="Alert delivery workflow was not started.",
         )
-        raise RuntimeError("Alert delivery queueing failed: job was not enqueued.")
+        raise RuntimeError("Alert delivery workflow start failed.")
     return dict(job_store.get_job_run(job_run_id) or job_run)
 
 
@@ -333,7 +333,7 @@ def reconcile_alert_delivery(
     )
 
     reconciled: list[int] = []
-    requeued: list[int] = []
+    restarted: list[int] = []
     skipped: list[int] = []
     failed: list[dict[str, Any]] = []
 
@@ -365,7 +365,7 @@ def reconcile_alert_delivery(
                 session_id=_as_text(current.get("session_id")),
                 force_requeue=force_requeue,
             )
-            requeued.append(int(current["alert_id"]))
+            restarted.append(int(current["alert_id"]))
         except Exception as exc:
             failed.append(
                 {
@@ -378,7 +378,7 @@ def reconcile_alert_delivery(
         "status": "ok",
         "checked": len(due_rows),
         "reclaimed": reconciled,
-        "requeued": requeued,
+        "restarted": restarted,
         "skipped": skipped,
         "failed": failed,
     }

@@ -7,17 +7,8 @@ from core.services.market_dates import market_session_window
 from core.storage.records import RecordMapping
 
 NEW_YORK = ZoneInfo("America/New_York")
-SCHEDULER_RUNTIME_LEASE_KEY = "runtime:scheduler"
-WORKER_RUNTIME_LEASE_PREFIX = "runtime:worker:"
 MARKET_RECORDER_RUNTIME_LEASE_PREFIX = "runtime:market_recorder"
 SINGLETON_LEASE_PREFIX = "singleton:"
-
-
-def scheduler_runtime_lease_key(queue_domain: str | None = None) -> str:
-    normalized = str(queue_domain or "").strip().lower()
-    if not normalized or normalized == "all":
-        return SCHEDULER_RUNTIME_LEASE_KEY
-    return f"{SCHEDULER_RUNTIME_LEASE_KEY}:{normalized}"
 
 
 def utc_now() -> datetime:
@@ -26,10 +17,6 @@ def utc_now() -> datetime:
 
 def singleton_lease_key(job_type: str, scope: str) -> str:
     return f"{SINGLETON_LEASE_PREFIX}{job_type}:{scope}"
-
-
-def worker_runtime_lease_key(worker_name: str) -> str:
-    return f"{WORKER_RUNTIME_LEASE_PREFIX}{worker_name}"
 
 
 def market_recorder_runtime_lease_key(scope: str | None = None) -> str:

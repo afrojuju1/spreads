@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-RUNTIME_QUEUE_NAME = "arq:queue:runtime"
-DATA_QUEUE_NAME = "arq:queue:data"
-VALUATION_QUEUE_NAME = "arq:queue:valuation"
-RESEARCH_QUEUE_NAME = "arq:queue:research"
+RUNTIME_TASK_QUEUE_NAME = "spreads-runtime-jobs"
+DATA_TASK_QUEUE_NAME = "spreads-data-jobs"
+VALUATION_TASK_QUEUE_NAME = "spreads-valuation-jobs"
+RESEARCH_TASK_QUEUE_NAME = "spreads-research-jobs"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
 ENGINE_OUTBOX_PUBLISH_JOB_TYPE = "engine_outbox_publish"
@@ -34,13 +34,13 @@ COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_KEY = "company_valuation_resolve_unreso
 class JobSpec:
     job_type: str
     task_name: str
-    queue_name: str
+    task_queue_name: str
 
 
 @dataclass(frozen=True)
-class WorkerLaneSpec:
-    settings_name: str
-    queue_name: str
+class TemporalTaskQueueSpec:
+    lane_name: str
+    task_queue_name: str
     task_names: tuple[str, ...]
     max_jobs: int = 1
 
@@ -51,75 +51,75 @@ JOB_SPECS = {
         JobSpec(
             job_type=BROKER_SYNC_JOB_TYPE,
             task_name="run_broker_sync_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=ENGINE_OUTBOX_PUBLISH_JOB_TYPE,
             task_name="run_engine_outbox_publish_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=ALERT_DELIVERY_JOB_TYPE,
             task_name="run_alert_delivery_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=ALERT_RECONCILE_JOB_TYPE,
             task_name="run_alert_reconcile_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=TICKER_SOURCE_JOB_TYPE,
             task_name="run_ticker_source_job",
-            queue_name=DATA_QUEUE_NAME,
+            task_queue_name=DATA_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=CALENDAR_EVENT_REFRESH_JOB_TYPE,
             task_name="run_calendar_event_refresh_job",
-            queue_name=DATA_QUEUE_NAME,
+            task_queue_name=DATA_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=TRADINGAGENTS_SCAN_JOB_TYPE,
             task_name="run_tradingagents_scan_job",
-            queue_name=RESEARCH_QUEUE_NAME,
+            task_queue_name=RESEARCH_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=TRADING_STRATEGY_ENTRY_JOB_TYPE,
             task_name="run_trading_strategy_entry_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=TRADING_STRATEGY_MANAGE_JOB_TYPE,
             task_name="run_trading_strategy_manage_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=EXECUTION_LIFECYCLE_START_JOB_TYPE,
             task_name="run_execution_lifecycle_start_job",
-            queue_name=RUNTIME_QUEUE_NAME,
+            task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
             task_name="run_company_valuation_bootstrap_job",
-            queue_name=VALUATION_QUEUE_NAME,
+            task_queue_name=VALUATION_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
             task_name="run_company_valuation_screen_materialize_job",
-            queue_name=VALUATION_QUEUE_NAME,
+            task_queue_name=VALUATION_TASK_QUEUE_NAME,
         ),
         JobSpec(
             job_type=COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
             task_name="run_company_valuation_resolve_unresolved_job",
-            queue_name=VALUATION_QUEUE_NAME,
+            task_queue_name=VALUATION_TASK_QUEUE_NAME,
         ),
     )
 }
 
-WORKER_LANES = (
-    WorkerLaneSpec(
-        settings_name="RuntimeWorkerSettings",
-        queue_name=RUNTIME_QUEUE_NAME,
+TEMPORAL_TASK_QUEUES = (
+    TemporalTaskQueueSpec(
+        lane_name="runtime",
+        task_queue_name=RUNTIME_TASK_QUEUE_NAME,
         task_names=(
             JOB_SPECS[BROKER_SYNC_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_DELIVERY_JOB_TYPE].task_name,
@@ -131,26 +131,26 @@ WORKER_LANES = (
         ),
         max_jobs=4,
     ),
-    WorkerLaneSpec(
-        settings_name="DataWorkerSettings",
-        queue_name=DATA_QUEUE_NAME,
+    TemporalTaskQueueSpec(
+        lane_name="data",
+        task_queue_name=DATA_TASK_QUEUE_NAME,
         task_names=(
             JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,
             JOB_SPECS[CALENDAR_EVENT_REFRESH_JOB_TYPE].task_name,
         ),
     ),
-    WorkerLaneSpec(
-        settings_name="ValuationWorkerSettings",
-        queue_name=VALUATION_QUEUE_NAME,
+    TemporalTaskQueueSpec(
+        lane_name="valuation",
+        task_queue_name=VALUATION_TASK_QUEUE_NAME,
         task_names=(
             JOB_SPECS[COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE].task_name,
             JOB_SPECS[COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE].task_name,
             JOB_SPECS[COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE].task_name,
         ),
     ),
-    WorkerLaneSpec(
-        settings_name="ResearchWorkerSettings",
-        queue_name=RESEARCH_QUEUE_NAME,
+    TemporalTaskQueueSpec(
+        lane_name="research",
+        task_queue_name=RESEARCH_TASK_QUEUE_NAME,
         task_names=(JOB_SPECS[TRADINGAGENTS_SCAN_JOB_TYPE].task_name,),
     ),
 )
@@ -165,6 +165,6 @@ def get_task_name_for_job_type(job_type: str) -> str | None:
     return None if spec is None else spec.task_name
 
 
-def get_queue_name_for_job_type(job_type: str) -> str | None:
+def get_task_queue_name_for_job_type(job_type: str) -> str | None:
     spec = get_job_spec(job_type)
-    return None if spec is None else spec.queue_name
+    return None if spec is None else spec.task_queue_name

@@ -147,8 +147,8 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       nats:
         condition: service_started
     env_file:
@@ -159,7 +159,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       SPREADS_NATS_URL: nats://nats:4222
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-runtime-jobs", "--kind", "jobs"]
     volumes:
       - .:/app
   worker-temporal:
@@ -191,8 +192,8 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
     env_file:
       - .env
     environment:
@@ -200,7 +201,8 @@ services:
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "core.jobs.worker.DataWorkerSettings"]
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-data-jobs", "--kind", "jobs"]
     volumes:
       - .:/app
   worker-valuation:
@@ -212,8 +214,8 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       api:
         condition: service_started
     env_file:
@@ -223,7 +225,8 @@ services:
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "core.jobs.worker.ValuationWorkerSettings"]
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-valuation-jobs", "--kind", "jobs"]
     volumes:
       - .:/app
   worker-research:
@@ -235,8 +238,8 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       api:
         condition: service_started
     env_file:
@@ -246,31 +249,33 @@ services:
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
       SPREADS_TRADINGAGENTS_DIR: /tradingagents
       SPREADS_TRADINGAGENTS_UV_ENVIRONMENT: /app/outputs/tradingagents/.venv
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["uv", "run", "arq", "core.jobs.worker.ResearchWorkerSettings"]
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-research-jobs", "--kind", "jobs"]
     volumes:
       - .:/app
       - /home/ade/Projects/TradingAgents:/tradingagents:ro
-  scheduler:
+  temporal-schedules:
     build:
       context: .
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
     env_file:
       - .env
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
-    command: ["uv", "run", "spreads", "runtime", "scheduler"]
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-schedules"]
     volumes:
       - .:/app
   market-recorder:

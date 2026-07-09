@@ -21,7 +21,7 @@ class JobRepository(RepositoryBase):
         *,
         job_run_id: str,
         job_key: str,
-        arq_job_id: str | None,
+        orchestration_id: str | None,
         job_type: str,
         status: str,
         scheduled_for: str | datetime,
@@ -54,7 +54,7 @@ class JobRepository(RepositoryBase):
             row = JobRunModel(
                 job_run_id=job_run_id,
                 job_key=job_key,
-                arq_job_id=arq_job_id,
+                orchestration_id=orchestration_id,
                 scheduled_for=scheduled_for_dt,
                 session_id=session_id,
                 slot_at=slot_at_dt,
@@ -218,7 +218,7 @@ class JobRepository(RepositoryBase):
         *,
         job_run_id: str,
         status: str,
-        expected_arq_job_id: str | None = None,
+        expected_orchestration_id: str | None = None,
         worker_name: str | None = None,
         started_at: str | datetime | None = None,
         finished_at: str | datetime | None = None,
@@ -230,7 +230,7 @@ class JobRepository(RepositoryBase):
             row = session.get(JobRunModel, job_run_id)
             if row is None:
                 raise ValueError(f"Unknown job_run_id: {job_run_id}")
-            if expected_arq_job_id is not None and row.arq_job_id != expected_arq_job_id:
+            if expected_orchestration_id is not None and row.orchestration_id != expected_orchestration_id:
                 return None
             row.status = status
             if worker_name is not None:
@@ -261,14 +261,14 @@ class JobRepository(RepositoryBase):
         self,
         *,
         job_run_id: str,
-        expected_arq_job_id: str | None = None,
+        expected_orchestration_id: str | None = None,
         heartbeat_at: str | datetime | None = None,
         worker_name: str | None = None,
     ) -> JobRunRecord | None:
         return self.update_job_run_status(
             job_run_id=job_run_id,
             status="running",
-            expected_arq_job_id=expected_arq_job_id,
+            expected_orchestration_id=expected_orchestration_id,
             heartbeat_at=heartbeat_at or datetime.now(UTC),
             worker_name=worker_name,
         )
@@ -277,14 +277,14 @@ class JobRepository(RepositoryBase):
         self,
         *,
         job_run_id: str,
-        arq_job_id: str,
+        orchestration_id: str,
         payload: dict[str, Any] | None = None,
     ) -> JobRunRecord:
         with self.session_scope() as session:
             row = session.get(JobRunModel, job_run_id)
             if row is None:
                 raise ValueError(f"Unknown job_run_id: {job_run_id}")
-            row.arq_job_id = arq_job_id
+            row.orchestration_id = orchestration_id
             row.status = "queued"
             row.retry_count = int(row.retry_count) + 1
             row.started_at = None

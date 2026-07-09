@@ -1963,12 +1963,12 @@ def _strategy_not_active_message(reasons: list[str]) -> str | None:
     if "strategy_disabled" in reasons:
         return (
             "Authored strategy is disabled; listed for strategy-breadth observation only. "
-            "No scheduler jobs, candidates, intents, or broker submission will be created."
+            "No Temporal scheduled jobs, candidates, intents, or broker submission will be created."
         )
     if "strategy_paused" in reasons:
         return (
             "Authored strategy is paused; listed for operator context only. "
-            "No scheduler jobs, candidates, intents, or broker submission will be created."
+            "No Temporal scheduled jobs, candidates, intents, or broker submission will be created."
         )
     return "Strategy is not scheduled; no jobs, candidates, intents, or broker submission will be created."
 
@@ -2097,7 +2097,7 @@ def _strategy_breadth_row(
         **execution_contract,
         "configured_automatic_submission_allowed": configured_automatic_submission_allowed,
         "automatic_submission_allowed": bool(active and configured_automatic_submission_allowed),
-        "scheduler_active": active,
+        "scheduled_active": active,
         "observation_only": not active,
         "rollout_blocker": None if active else reasons[0],
     }
@@ -2114,7 +2114,7 @@ def _strategy_breadth_row(
         "status": "active" if active else ("paused" if "strategy_paused" in reasons else "available"),
         "ops_posture": ops_posture,
         "observation_only": not active,
-        "scheduler_active": active,
+        "scheduled_active": active,
         "not_active_reason": None if active else reasons[0],
         "not_active_reasons": reasons,
         "not_active_message": _strategy_not_active_message(reasons),
@@ -3068,11 +3068,11 @@ def build_trading_ops_state(
         "trading_allowed": trading_allowed,
         **execution_contract.summary,
         "control_mode": market_control.control.get("mode"),
-        "scheduler_status": as_mapping(jobs.details.get("scheduler")).get("status"),
-        "worker_lane_count": jobs.summary.get("worker_lane_count"),
-        "disabled_worker_lane_count": jobs.summary.get("disabled_worker_lane_count"),
-        "blocked_worker_lane_count": sum(1 for row in as_list(jobs.details.get("worker_lanes")) if as_mapping(row).get("status") == "blocked"),
-        "idle_worker_lane_count": sum(1 for row in as_list(jobs.details.get("worker_lanes")) if as_mapping(row).get("status") == "idle"),
+        "temporal_schedule_status": as_mapping(jobs.details.get("schedules")).get("status"),
+        "task_queue_count": jobs.summary.get("task_queue_count"),
+        "disabled_task_queue_count": jobs.summary.get("disabled_task_queue_count"),
+        "blocked_task_queue_count": sum(1 for row in as_list(jobs.details.get("task_queues")) if as_mapping(row).get("status") == "blocked"),
+        "idle_task_queue_count": sum(1 for row in as_list(jobs.details.get("task_queues")) if as_mapping(row).get("status") == "idle"),
         "actionable_failed_job_count": jobs.summary.get("actionable_failed_count"),
         "broker_sync_status": account.broker_sync.get("status"),
         "broker_sync_age_seconds": account.broker_sync.get("age_seconds"),
@@ -3138,9 +3138,9 @@ def build_trading_ops_state(
         "market_session": market_control.market_session,
         "control": market_control.control,
         "jobs": jobs.payload,
-        "scheduler": jobs.details.get("scheduler"),
-        "workers": jobs.details.get("workers"),
-        "worker_lanes": jobs.details.get("worker_lanes"),
+        "schedules": jobs.details.get("schedules"),
+        "task_queues": jobs.details.get("task_queues"),
+        "disabled_task_queues": jobs.details.get("disabled_task_queues"),
         "running_jobs": [dict(row) for row in as_list(jobs.details.get("running_jobs")) if as_mapping(row).get("status") == "running"],
         "queued_jobs": [dict(row) for row in as_list(jobs.details.get("queued_jobs")) if as_mapping(row).get("status") == "queued"],
         "recent_job_runs": jobs.details.get("job_runs"),

@@ -252,14 +252,14 @@ def positions_command(
 
 
 @runtime_app.command(
-    "scheduler",
+    "temporal-schedules",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run the ARQ scheduler loop.",
+    help="Reconcile declared jobs to Temporal schedules.",
 )
-def scheduler_command(ctx: typer.Context) -> None:
-    from core.jobs.scheduler import main as scheduler_main
+def temporal_schedules_command(ctx: typer.Context) -> None:
+    from core.jobs.temporal_schedules import main as temporal_schedules_main
 
-    run_passthrough(ctx=ctx, entrypoint=scheduler_main)
+    run_passthrough(ctx=ctx, entrypoint=temporal_schedules_main)
 
 
 @runtime_app.command(

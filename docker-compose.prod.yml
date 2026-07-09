@@ -61,6 +61,32 @@ services:
       - "${SPREADS_BIND_HOST}:${SPREADS_REDIS_PORT}:6379"
     logging: *default-logging
 
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
+    logging: *default-logging
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:${SPREADS_WEB_PORT},http://localhost:${SPREADS_API_PORT}
+    logging: *default-logging
+
   api:
     build:
       context: .
@@ -95,6 +121,24 @@ services:
       - ${SPREADS_OPS_LOG_DIR}:/app/logs/ops:ro
     logging: *default-logging
 
+  worker-temporal:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      api:
+        condition: service_started
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    environment:
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker"]
+    logging: *default-logging
+
   worker-runtime:
     build:
       context: .
@@ -102,13 +146,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       api:
         condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
+    environment:
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-runtime-jobs", "--kind", "jobs"]
     logging: *default-logging
 
   worker-data:
@@ -118,13 +164,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       api:
         condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "arq", "core.jobs.worker.DataWorkerSettings"]
+    environment:
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-data-jobs", "--kind", "jobs"]
     logging: *default-logging
 
   worker-valuation:
@@ -135,13 +183,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       api:
         condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "arq", "core.jobs.worker.ValuationWorkerSettings"]
+    environment:
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-valuation-jobs", "--kind", "jobs"]
     logging: *default-logging
 
   worker-research:
@@ -152,36 +202,39 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
       api:
         condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
       SPREADS_TRADINGAGENTS_DIR: ${SPREADS_TRADINGAGENTS_DIR}
       SPREADS_TRADINGAGENTS_UV_ENVIRONMENT: ${SPREADS_TRADINGAGENTS_UV_ENVIRONMENT}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["uv", "run", "arq", "core.jobs.worker.ResearchWorkerSettings"]
+    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-research-jobs", "--kind", "jobs"]
     volumes:
       - ${SPREADS_TRADINGAGENTS_HOST_DIR}:${SPREADS_TRADINGAGENTS_DIR}:ro
       - spreads_tradingagents_outputs:/app/outputs/tradingagents
     logging: *default-logging
 
-  scheduler:
+  temporal-schedules:
     build:
       context: .
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      temporal:
+        condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "spreads", "runtime", "scheduler"]
+    environment:
+      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "temporal-schedules"]
     logging: *default-logging
 
   market-recorder:

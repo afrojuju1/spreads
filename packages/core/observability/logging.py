@@ -105,16 +105,16 @@ def configure_logging(
     logging.basicConfig(level=numeric_level, handlers=[handler], force=force)
     logging.captureWarnings(True)
 
-    arq_level = getattr(
+    temporal_level = getattr(
         logging,
-        str(os.environ.get("SPREADS_ARQ_LOG_LEVEL") or "WARNING").upper(),
+        str(os.environ.get("SPREADS_TEMPORAL_LOG_LEVEL") or "WARNING").upper(),
         logging.WARNING,
     )
-    for logger_name in ("arq", "arq.worker"):
-        arq_logger = logging.getLogger(logger_name)
-        arq_logger.handlers.clear()
-        arq_logger.setLevel(arq_level)
-        arq_logger.propagate = True
+    for logger_name in ("temporal", "temporal.worker"):
+        temporal_logger = logging.getLogger(logger_name)
+        temporal_logger.handlers.clear()
+        temporal_logger.setLevel(temporal_level)
+        temporal_logger.propagate = True
 
 
 def log_event(
