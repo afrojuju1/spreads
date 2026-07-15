@@ -28,7 +28,7 @@ class ExecutionRepository(
         return self.schema_has_tables("execution_attempts", "execution_orders", "execution_fills")
 
     def intent_schema_ready(self) -> bool:
-        return self.schema_has_tables("execution_intents", "execution_intent_events", "execution_attempts")
+        return self.schema_has_tables("execution_intents", "engine_events", "engine_outbox", "execution_attempts")
 
     def positions_schema_ready(self) -> bool:
         return self.portfolio_schema_ready()

@@ -231,7 +231,7 @@ def _run_trading_strategy_entry(
             market_date=resolved_market_date,
         )
         execution_intent_id = _intent_id(str(decision["trade_decision_id"]))
-        open_execution_policy = runtime.strategy.execution.execution_policy_for_action("open")
+        open_execution_policy = runtime.strategy.execution.execution_policy_for_intent_kind("open")
         intent_expires_at = utc_expiry_iso(
             minutes=int(open_execution_policy["submit_ttl_minutes"]),
             minimum_seconds=60,
@@ -256,7 +256,7 @@ def _run_trading_strategy_entry(
             if admissible_quantity is None or admissible_quantity <= 0:
                 admissible_quantity = requested_quantity
             intent_quantity = min(requested_quantity, admissible_quantity)
-            open_execution_policy = runtime.strategy.execution.execution_policy_for_action(
+            open_execution_policy = runtime.strategy.execution.execution_policy_for_intent_kind(
                 "open",
                 quantity=intent_quantity,
             )
@@ -334,19 +334,6 @@ def _run_trading_strategy_entry(
         if lifecycle_start_request is not None:
             lifecycle_start_job_run_id = (
                 None if lifecycle_start_request.get("job_run_id") in (None, "") else str(lifecycle_start_request["job_run_id"])
-            )
-            execution_store.append_execution_intent_event(
-                execution_intent_id=str(selected_intent["execution_intent_id"]),
-                event_type=(
-                    "lifecycle_start_requested" if str(lifecycle_start_request.get("status") or "") == "started" else "lifecycle_start_failed"
-                ),
-                event_at=_utc_now(),
-                payload={
-                    "job_run_id": lifecycle_start_job_run_id,
-                    "job_key": lifecycle_start_request.get("job_key"),
-                    "status": lifecycle_start_request.get("status"),
-                    "error": lifecycle_start_request.get("error"),
-                },
             )
 
     runtime_alert: dict[str, Any] | None = None

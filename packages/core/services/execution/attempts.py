@@ -347,10 +347,7 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
 
 
 def _linked_execution_intent_id(attempt: Mapping[str, Any]) -> str | None:
-    request = attempt.get("request")
-    if not isinstance(request, Mapping):
-        return None
-    return as_text(request.get("execution_intent_id"))
+    return as_text(attempt.get("execution_intent_id"))
 
 
 def _intent_state_from_attempt_status(status: str) -> str:
@@ -391,12 +388,15 @@ def _sync_linked_execution_intent(
     if intent is None:
         return
     resolved_state = state or _intent_state_from_attempt_status(str(attempt.get("status") or ""))
+    current_state = str(intent.get("state") or "")
+    if resolved_state == current_state:
+        return
     transition = validate_execution_intent_transition(
-        intent.get("state"),
+        current_state,
         resolved_state,
     )
     if not transition.allowed:
-        resolved_state = str(intent.get("state") or "")
+        return
     lifecycle = attempt.get("execution_attempt_lifecycle")
     if not isinstance(lifecycle, Mapping):
         lifecycle = project_execution_attempt_lifecycle(

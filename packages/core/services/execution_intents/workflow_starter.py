@@ -7,16 +7,16 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from core.db.decorators import with_storage
-from core.engine import EngineAggregateType, EngineEvent, EngineEventType, close_lifecycle_workflow_id, trade_lifecycle_workflow_id
+from core.engine import EngineEventType, close_lifecycle_workflow_id, trade_lifecycle_workflow_id
 from core.jobs.adhoc import start_ad_hoc_job_workflow
 from core.jobs.registry import EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY, EXECUTION_LIFECYCLE_START_JOB_TYPE
 from core.jobs.registry import LIFECYCLE_WORKFLOW_LANE
 from core.runtime.config import default_workflow_address, default_workflow_namespace
 from core.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
 from core.services.execution_intents.maintenance import _auto_execution_gate
-from core.services.execution_intents.shared import _append_event, _intent_action_type, _intent_payload, _update_intent
+from core.services.execution_intents.shared import _intent_kind, _intent_payload, _transition_intent
 from core.storage.serializers import parse_datetime
-from core.value_coercion import as_text, utc_now_iso
+from core.value_coercion import as_text
 from core.workflows.close_lifecycle import CloseLifecycleWorkflow
 from core.workflows.contracts import CloseLifecycleWorkflowInput, TradeLifecycleWorkflowInput
 from core.workflows.trade_lifecycle import TradeLifecycleWorkflow
@@ -26,7 +26,7 @@ PRE_WORKFLOW_START_EXPIRE_REASON = "workflow_start_window_elapsed"
 
 
 def _workflow_kind(intent: dict[str, Any]) -> str:
-    if as_text(intent.get("strategy_position_id")) is not None or _intent_action_type(intent) == "close":
+    if as_text(intent.get("position_id")) is not None or _intent_kind(intent) == "close":
         return "close"
     return "trade"
 
@@ -34,7 +34,7 @@ def _workflow_kind(intent: dict[str, Any]) -> str:
 def _workflow_id(intent: dict[str, Any], *, workflow_kind: str) -> str:
     execution_intent_id = str(intent["execution_intent_id"])
     if workflow_kind == "close":
-        position_id = as_text(intent.get("strategy_position_id")) or as_text(_intent_payload(intent).get("position_id")) or execution_intent_id
+        position_id = as_text(intent.get("position_id")) or as_text(_intent_payload(intent).get("position_id")) or execution_intent_id
         return close_lifecycle_workflow_id(position_id, execution_intent_id)
     return trade_lifecycle_workflow_id(execution_intent_id)
 
@@ -51,9 +51,9 @@ async def _start_lifecycle_workflow(
     execution_intent_id = str(intent["execution_intent_id"])
     requested_at = datetime.now(UTC)
     if workflow_kind == "close":
-        position_id = as_text(intent.get("strategy_position_id")) or as_text(_intent_payload(intent).get("position_id"))
+        position_id = as_text(intent.get("position_id")) or as_text(_intent_payload(intent).get("position_id"))
         if position_id is None:
-            raise ValueError(f"Close lifecycle intent {execution_intent_id} is missing strategy_position_id")
+            raise ValueError(f"Close lifecycle intent {execution_intent_id} is missing position_id")
         request = CloseLifecycleWorkflowInput(
             database_url=database_url,
             position_id=position_id,
@@ -99,41 +99,6 @@ async def _start_lifecycle_workflow(
 
 async def _connect_workflow_provider(*, workflow_address: str, workflow_namespace: str) -> Client:
     return await connect_provider(address=workflow_address, namespace=workflow_namespace)
-
-
-def _append_engine_event(
-    storage: Any,
-    *,
-    intent: dict[str, Any],
-    event_type: str,
-    workflow_id: str,
-    from_state: str | None,
-    to_state: str | None,
-    payload: dict[str, Any],
-) -> None:
-    engine_events = getattr(storage, "engine_events", None)
-    if engine_events is None or not engine_events.schema_ready():
-        return
-    execution_intent_id = str(intent["execution_intent_id"])
-    engine_events.append_engine_event(
-        EngineEvent(
-            event_type=event_type,
-            aggregate_type=EngineAggregateType.EXECUTION_INTENT,
-            aggregate_id=execution_intent_id,
-            lifecycle_object="execution_intent",
-            from_state=from_state,
-            to_state=to_state,
-            trading_strategy_id=as_text(intent.get("trading_strategy_id")),
-            trade_signal_id=as_text(intent.get("trade_signal_id")),
-            trade_decision_id=as_text(intent.get("trade_decision_id")),
-            execution_intent_id=execution_intent_id,
-            workflow_id=workflow_id,
-            correlation_id=execution_intent_id,
-            idempotency_key=f"{event_type}:{execution_intent_id}:{workflow_id}:{to_state or 'event'}",
-            payload=payload,
-            occurred_at=datetime.now(UTC),
-        )
-    )
 
 
 def request_execution_lifecycle_start(
@@ -215,33 +180,15 @@ def start_pending_execution_lifecycle_workflows(
             break
         reviewed += 1
         execution_intent_id = str(intent["execution_intent_id"])
-        current_state = as_text(intent.get("state"))
         expires_at = parse_datetime(as_text(intent.get("expires_at")))
         if expires_at is not None and expires_at <= datetime.now(UTC):
-            updated = _update_intent(
+            updated = _transition_intent(
                 execution_store,
                 intent,
                 state="expired",
-                payload_updates={
-                    "workflow_start_status": "expired",
-                    "expire_reason": PRE_WORKFLOW_START_EXPIRE_REASON,
-                },
-                updated_at=utc_now_iso(),
-            )
-            _append_event(
-                execution_store,
-                execution_intent_id=execution_intent_id,
-                event_type="expired",
-                payload={"reason": PRE_WORKFLOW_START_EXPIRE_REASON},
-            )
-            _append_engine_event(
-                storage,
-                intent=intent,
-                event_type=EngineEventType.STATE_TRANSITIONED,
+                transition_reason=PRE_WORKFLOW_START_EXPIRE_REASON,
                 workflow_id=_workflow_id(intent, workflow_kind=_workflow_kind(intent)),
-                from_state=current_state,
-                to_state="expired",
-                payload={"reason": PRE_WORKFLOW_START_EXPIRE_REASON},
+                event_payload={"reason": PRE_WORKFLOW_START_EXPIRE_REASON},
             )
             expired += 1
             results.append({"execution_intent_id": execution_intent_id, "status": "expired", "intent": updated})
@@ -288,19 +235,6 @@ def start_pending_execution_lifecycle_workflows(
             )
         except Exception as exc:
             failed += 1
-            _append_event(
-                execution_store,
-                execution_intent_id=execution_intent_id,
-                event_type="workflow_start_failed",
-                payload={
-                    "workflow_id": workflow_id,
-                    "workflow_kind": workflow_kind,
-                    "workflow_address": workflow_address,
-                    "workflow_namespace": workflow_namespace,
-                    "workflow_lane": LIFECYCLE_WORKFLOW_LANE,
-                    "error": str(exc),
-                },
-            )
             results.append(
                 {
                     "execution_intent_id": execution_intent_id,
@@ -313,12 +247,17 @@ def start_pending_execution_lifecycle_workflows(
             continue
 
         claim_token = as_text(intent.get("claim_token")) or workflow_id
-        claimed = _update_intent(
+        claimed = _transition_intent(
             execution_store,
             intent,
             state="claimed",
+            transition_reason="workflow_started",
+            engine_event_type=EngineEventType.WORKFLOW_STARTED,
             claim_token=claim_token,
-            payload_updates={
+            claimed_at=start_result["started_at"],
+            workflow_id=workflow_id,
+            workflow_run_id=as_text(start_result.get("workflow_run_id")),
+            event_payload={
                 "workflow_id": workflow_id,
                 "workflow_kind": workflow_kind,
                 "workflow_run_id": start_result.get("workflow_run_id"),
@@ -326,22 +265,6 @@ def start_pending_execution_lifecycle_workflows(
                 "workflow_lane": LIFECYCLE_WORKFLOW_LANE,
                 "workflow_started_at": start_result["started_at"],
             },
-            updated_at=utc_now_iso(),
-        )
-        _append_event(
-            execution_store,
-            execution_intent_id=execution_intent_id,
-            event_type="workflow_started",
-            payload=start_result,
-        )
-        _append_engine_event(
-            storage,
-            intent=claimed,
-            event_type=EngineEventType.WORKFLOW_STARTED,
-            workflow_id=workflow_id,
-            from_state=current_state,
-            to_state="claimed",
-            payload=start_result,
         )
         started += 1
         results.append(

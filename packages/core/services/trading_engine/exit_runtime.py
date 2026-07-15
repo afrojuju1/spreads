@@ -15,7 +15,7 @@ from core.services.trading_strategy_runtime import (
     resolve_management_runtimes,
 )
 from core.storage.serializers import parse_datetime
-from core.value_coercion import as_text, coerce_float, coerce_int, utc_iso
+from core.value_coercion import as_text, coerce_float, utc_iso
 
 from .exit_models import CloseDecisionResult, PositionExitSnapshot
 from .kernel import EngineComponentRole, EngineRunRef
@@ -455,90 +455,27 @@ def persist_close_decision(
     return {"status": "recorded", "close_decision_id": row.get("close_decision_id")}
 
 
-def attach_close_decision_intent(
-    engine_facts: Any,
+def persist_blocked_close_admission(
+    execution_store: Any,
     *,
-    close_decision_id: str,
-    execution_intent_id: str,
-) -> dict[str, Any]:
-    if engine_facts is None or not getattr(engine_facts, "close_lifecycle_schema_ready", lambda: False)():
-        return {"status": "skipped", "reason": "close_lifecycle_schema_unavailable"}
-    row = engine_facts.attach_trade_close_decision_intent(
-        close_decision_id=close_decision_id,
-        execution_intent_id=execution_intent_id,
-    )
-    return {"status": "missing"} if row is None else {"status": "recorded", "close_decision_id": row.get("close_decision_id")}
-
-
-def persist_close_intent_admission(
-    engine_facts: Any,
-    *,
-    intent: Mapping[str, Any],
     close_decision: Mapping[str, Any],
     close_admission: Mapping[str, Any],
-    runtime: Any,
     position: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if engine_facts is None or not getattr(engine_facts, "close_lifecycle_schema_ready", lambda: False)():
-        return {"status": "skipped", "reason": "close_lifecycle_schema_unavailable"}
-    execution_intent_id = str(intent["execution_intent_id"])
-    payload = intent.get("payload") if isinstance(intent.get("payload"), Mapping) else {}
-    policy_ref = intent.get("policy_ref") if isinstance(intent.get("policy_ref"), Mapping) else {}
-    created_at = as_text(intent.get("created_at")) or utc_iso(datetime.now(UTC))
-    updated_at = as_text(intent.get("updated_at")) or created_at
-    engine_facts.upsert_trade_execution_intent(
-        execution_intent_id=execution_intent_id,
-        intent_kind="close",
-        source_object_type="close_decision",
-        source_object_id=str(close_decision["close_decision_id"]),
-        trade_signal_id=None,
-        trade_decision_id=None,
-        position_id=str(position["position_id"]),
-        trading_strategy_id=runtime.trading_strategy_id,
-        trade_structure=runtime.trade_structure,
-        routine="manage",
-        account_id=as_text(position.get("account_id")),
-        slot_key=str(intent["slot_key"]),
-        idempotency_key=execution_intent_id,
-        intent_state=str(intent["state"]),
-        claim_token=as_text(intent.get("claim_token")),
-        claimed_at=as_text(intent.get("claimed_at")),
-        expires_at=as_text(intent.get("expires_at")),
-        supersedes_intent_id=None,
-        superseded_by_intent_id=as_text(intent.get("superseded_by_id")),
-        payload=dict(payload),
-        policy_snapshot=dict(policy_ref),
-        config_hash=runtime.config_hash,
-        created_at=created_at,
-        updated_at=updated_at,
-    )
-    engine_facts.upsert_trade_admission(
-        admission_decision_id=str(close_admission["admission_decision_id"]),
-        execution_intent_id=execution_intent_id,
-        trade_signal_id=None,
-        trade_decision_id=None,
-        position_id=str(position["position_id"]),
-        admission_kind=str(close_admission["admission_kind"]),
-        admission_state=str(close_admission["admission_state"]),
-        account_id=as_text(close_admission.get("account_id")),
-        session_date=as_text(close_admission.get("session_date")) or as_text(position.get("session_date") or position.get("market_date")),
-        requested_quantity=coerce_int(close_admission.get("requested_quantity")),
-        requested_notional=coerce_float(close_admission.get("requested_notional")),
-        max_loss=coerce_float(close_admission.get("max_loss")),
-        policy_snapshot=dict(close_admission.get("policy_snapshot") or {}),
-        capability_snapshot=dict(close_admission.get("capability_snapshot") or {}),
-        metrics=dict(close_admission.get("metrics") or {}),
-        reason_codes=[str(value) for value in close_admission.get("reason_codes") or [] if str(value or "").strip()],
-        blockers=[str(value) for value in close_admission.get("blockers") or [] if str(value or "").strip()],
-        evidence=dict(close_admission.get("evidence") or {}),
-        note=as_text(close_admission.get("message")),
-        execution_attempt_id=None,
-        decided_at=str(close_admission["decided_at"]),
+    admission = {
+        **dict(close_admission),
+        "source_object_type": "close_decision",
+        "source_object_id": str(close_decision["close_decision_id"]),
+        "close_decision_id": str(close_decision["close_decision_id"]),
+        "position_id": str(position["position_id"]),
+    }
+    handoff = execution_store.persist_admission_intent_handoff(
+        admission=admission,
+        execution_intent=None,
     )
     return {
         "status": "recorded",
-        "execution_intent_id": execution_intent_id,
-        "admission_decision_id": close_admission.get("admission_decision_id"),
+        "admission_decision_id": handoff["admission"]["admission_decision_id"],
     }
 
 
@@ -555,6 +492,5 @@ __all__ = [
     "describe_position_exit_state",
     "evaluate_position_close_decision",
     "persist_close_decision",
-    "persist_close_intent_admission",
-    "attach_close_decision_intent",
+    "persist_blocked_close_admission",
 ]

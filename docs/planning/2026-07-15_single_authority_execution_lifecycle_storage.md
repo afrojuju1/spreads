@@ -4,13 +4,23 @@ Date: 2026-07-15
 
 Tracker: `spr-n65`
 
-Status: approved by Ade on 2026-07-15; implementation proceeds through
-`spr-t4z` and then `spr-0jf`
+Status: approved by Ade on 2026-07-15; the `spr-t4z` authority cutover was
+implemented and rolled out on 2026-07-15; `spr-0jf` remains
 
 Related implementation beads:
 
 - `spr-t4z`: eliminate divergent dual execution-intent state
 - `spr-0jf`: remove abandoned lifecycle tables and the portfolio-position mirror
+
+Implementation checkpoint:
+
+- Alembic revision `20260715_0066` is live.
+- `trade_execution_intents` and `execution_intent_events` are removed.
+- Admission/intent creation and versioned intent/event/outbox transitions are
+  transactional.
+- Attempts and replacement intents own their parent links.
+- `spr-0jf` remains the next lifecycle-storage change and owns removal of the
+  rest of the abandoned parallel tables plus the position mirror.
 
 Canonical current-state reference:
 

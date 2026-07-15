@@ -8,6 +8,7 @@ from uuid import uuid4
 from core.db.decorators import with_storage
 from core.money import money_float, option_contract_notional, option_limit_price, option_premium_from_notional
 from core.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
+from core.services.admission_lifecycle import normalize_lifecycle_admission
 from core.services.control_plane import (
     OPEN_ACTIVITY_MANUAL,
     assess_open_activity_gate,
@@ -28,6 +29,7 @@ from core.services.session_positions import CLOSE_TRADE_INTENT, OPEN_TRADE_INTEN
 from core.value_coercion import (
     as_text,
     coerce_float,
+    coerce_int,
     safe_component,
     utc_expiry_iso,
     utc_iso,
@@ -524,10 +526,23 @@ def create_synthetic_paper_open_smoke(
 
     intent = issue_pending_execution_intent(
         storage.execution,
+        admission=normalize_lifecycle_admission(
+            {"status": "approved", "reason": "synthetic_validation_approved"},
+            admission_kind="synthetic_open",
+            source_object_type="operator_command",
+            source_object_id=run_id,
+            session_date=utc_now().date().isoformat(),
+            requested_quantity=normalized_quantity,
+            requested_notional=requested_notional,
+            max_loss=normalized_max_debit,
+            policy_snapshot={"profile": SYNTHETIC_PROFILE},
+            evidence={"validation_provenance": SYNTHETIC_VALIDATION_PROVENANCE},
+        ),
         execution_intent_id=str(payload["execution_intent_id"]),
         trading_strategy_id=SYNTHETIC_TRADING_STRATEGY_ID,
-        strategy_position_id=None,
-        action_type=OPEN_TRADE_INTENT,
+        position_id=None,
+        close_decision_id=None,
+        intent_kind=OPEN_TRADE_INTENT,
         slot_key=f"synthetic_validation:open:{safe_component(normalized_contract)}:{uuid4().hex[:8]}",
         policy_ref={
             "family": "synthetic_validation",
@@ -623,7 +638,7 @@ def create_synthetic_paper_close_smoke(
             statuses=sorted(OPEN_STATUSES),
         )
         active_close_intents = execution_store.list_execution_intents(
-            strategy_position_id=position_id,
+            position_id=position_id,
             states=sorted(ACTIVE_INTENT_STATES),
             limit=10,
         )
@@ -673,10 +688,24 @@ def create_synthetic_paper_close_smoke(
 
     intent = issue_pending_execution_intent(
         execution_store,
+        admission=normalize_lifecycle_admission(
+            {"status": "approved", "reason": "synthetic_validation_approved"},
+            admission_kind="synthetic_close",
+            source_object_type="operator_command",
+            source_object_id=run_id,
+            session_date=utc_now().date().isoformat(),
+            requested_quantity=coerce_int(position_payload.get("remaining_quantity")),
+            policy_snapshot={"profile": SYNTHETIC_PROFILE},
+            evidence={
+                "validation_provenance": SYNTHETIC_VALIDATION_PROVENANCE,
+                "position_id": position_id,
+            },
+        ),
         execution_intent_id=str(payload["execution_intent_id"]),
         trading_strategy_id=SYNTHETIC_TRADING_STRATEGY_ID,
-        strategy_position_id=position_id,
-        action_type=CLOSE_TRADE_INTENT,
+        position_id=position_id,
+        close_decision_id=None,
+        intent_kind=CLOSE_TRADE_INTENT,
         slot_key=f"synthetic_validation:close:{safe_component(position_id)}:{uuid4().hex[:8]}",
         policy_ref={
             "family": "synthetic_validation",
@@ -731,7 +760,8 @@ def inspect_synthetic_paper_smoke(
     intent_payload = intent.get("payload") if isinstance(intent.get("payload"), dict) else intent.get("payload_json")
     if not isinstance(intent_payload, dict):
         intent_payload = {}
-    attempt_id = as_text(intent.get("execution_attempt_id")) or as_text(intent_payload.get("execution_attempt_id"))
+    linked_attempt = execution_store.get_execution_attempt_for_intent(resolved_intent_id)
+    attempt_id = None if linked_attempt is None else as_text(linked_attempt.get("execution_attempt_id"))
     attempt = None
     position = None
     closes: list[dict[str, Any]] = []

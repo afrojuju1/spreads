@@ -147,11 +147,12 @@ def _execution_admission_payload_from_account_capacity(
         "strategy_risk_budget": None,
         "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
     }
-    source_object_id = as_text(request.get("execution_intent_id")) or as_text(attempt.get("execution_attempt_id"))
+    execution_intent_id = as_text(attempt.get("execution_intent_id"))
+    source_object_id = execution_intent_id or as_text(attempt.get("execution_attempt_id"))
     return normalize_lifecycle_admission(
         snapshot,
         admission_kind="submit_account_capacity",
-        source_object_type="execution_intent" if as_text(request.get("execution_intent_id")) is not None else "execution_attempt",
+        source_object_type="execution_intent" if execution_intent_id is not None else "execution_attempt",
         source_object_id=source_object_id,
         session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
         requested_quantity=None if requested_quantity <= 0 else int(requested_quantity),
@@ -211,11 +212,12 @@ def _execution_admission_payload_from_broker_rejection(
         "strategy_risk_budget": None,
         "requested_quantity": None if quantity <= 0 else int(quantity),
     }
-    source_object_id = as_text(request.get("execution_intent_id")) or as_text(attempt.get("execution_attempt_id"))
+    execution_intent_id = as_text(attempt.get("execution_intent_id"))
+    source_object_id = execution_intent_id or as_text(attempt.get("execution_attempt_id"))
     return normalize_lifecycle_admission(
         snapshot,
         admission_kind="broker_rejection",
-        source_object_type="execution_intent" if as_text(request.get("execution_intent_id")) is not None else "execution_attempt",
+        source_object_type="execution_intent" if execution_intent_id is not None else "execution_attempt",
         source_object_id=source_object_id,
         session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
         requested_quantity=None if quantity <= 0 else int(quantity),
@@ -246,7 +248,8 @@ def _execution_admission_payload_from_submission_guard(
     reason = as_text(guard.get("reason")) or "submission_guard_blocked"
     message = as_text(guard.get("message")) or "Execution submission was blocked by a pre-submit guard."
     evidence = guard.get("evidence") if isinstance(guard.get("evidence"), Mapping) else {}
-    source_object_id = as_text(request.get("execution_intent_id")) or as_text(attempt.get("execution_attempt_id"))
+    execution_intent_id = as_text(attempt.get("execution_intent_id"))
+    source_object_id = execution_intent_id or as_text(attempt.get("execution_attempt_id"))
     return normalize_lifecycle_admission(
         {
             "status": "blocked",
@@ -257,7 +260,7 @@ def _execution_admission_payload_from_submission_guard(
             "requested_quantity": None if quantity <= 0 else int(quantity),
         },
         admission_kind="submit_structure_guard",
-        source_object_type="execution_intent" if as_text(request.get("execution_intent_id")) is not None else "execution_attempt",
+        source_object_type="execution_intent" if execution_intent_id is not None else "execution_attempt",
         source_object_id=source_object_id,
         session_date=as_text(attempt.get("session_date")) or as_text(attempt.get("market_date")),
         requested_quantity=None if quantity <= 0 else int(quantity),
@@ -328,6 +331,7 @@ def _admission_source_from_metadata(
 def _metadata_trade_refs(metadata: Mapping[str, Any]) -> dict[str, str | None]:
     execution_admission = metadata.get("execution_admission") if isinstance(metadata.get("execution_admission"), Mapping) else {}
     return {
+        "execution_intent_id": as_text(metadata.get("execution_intent_id")),
         "trade_signal_id": as_text(metadata.get("trade_signal_id")),
         "trade_decision_id": as_text(metadata.get("trade_decision_id")),
         "admission_decision_id": as_text(metadata.get("admission_decision_id")) or as_text(execution_admission.get("admission_decision_id")),

@@ -223,7 +223,6 @@ def _execution_attempt_evidence(
         "strategy_run_id": request.get("strategy_run_id") or request.get("source_cycle_id") or attempt.get("run_id"),
         "trade_decision_id": attempt.get("trade_decision_id") or request.get("trade_decision_id"),
         "execution_intent_id": request.get("execution_intent_id"),
-        "execution_attempt_id": attempt.get("execution_attempt_id"),
         "observed_at": attempt.get("completed_at") or attempt.get("submitted_at") or attempt.get("requested_at"),
     }
     return _apply_evidence_environment(
@@ -255,12 +254,11 @@ def _execution_intent_evidence(
         "execution_runtime": as_text(payload.get("execution_runtime")),
         "broker": payload.get("broker"),
         "source_kind": as_text(source.get("kind")),
-        "trade_intent": intent.get("action_type") or payload.get("trade_intent"),
+        "trade_intent": intent.get("intent_kind") or payload.get("trade_intent"),
         "lifecycle_state": intent.get("state"),
         "strategy_run_id": payload.get("strategy_run_id") or payload.get("source_cycle_id"),
         "trade_decision_id": intent.get("trade_decision_id") or payload.get("trade_decision_id"),
         "execution_intent_id": intent.get("execution_intent_id"),
-        "execution_attempt_id": intent.get("execution_attempt_id"),
         "observed_at": intent.get("updated_at") or intent.get("created_at"),
     }
     return _apply_evidence_environment(

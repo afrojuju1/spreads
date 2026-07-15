@@ -167,7 +167,7 @@ def _intent_matches_scope(
 ) -> bool:
     if not _matches_optional(row.get("trading_strategy_id"), trading_strategy_id):
         return False
-    position_id = _as_text(row.get("strategy_position_id"))
+    position_id = _as_text(row.get("position_id"))
     return not position_ids or position_id is None or position_id in position_ids
 
 

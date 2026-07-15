@@ -52,8 +52,8 @@ def _is_close_attempt(row: Mapping[str, Any]) -> bool:
 
 
 def _is_close_intent(row: Mapping[str, Any]) -> bool:
-    action_type = str(row.get("action_type") or "").strip().lower()
-    if action_type == "close":
+    intent_kind = str(row.get("intent_kind") or "").strip().lower()
+    if intent_kind == "close":
         return True
     payload = as_mapping(row.get("payload"))
     trade_intent = str(payload.get("trade_intent") or row.get("trade_intent") or "")
@@ -129,11 +129,11 @@ def _compact_intent(row: Mapping[str, Any]) -> dict[str, Any]:
     close_decision = as_mapping(payload.get("close_decision"))
     return {
         "execution_intent_id": row.get("execution_intent_id"),
-        "execution_attempt_id": row.get("execution_attempt_id"),
+        "execution_attempt_id": None,
         "state": row.get("state"),
-        "action_type": row.get("action_type"),
-        "position_id": row.get("strategy_position_id") or payload.get("position_id"),
-        "close_decision_id": close_decision.get("close_decision_id"),
+        "intent_kind": row.get("intent_kind"),
+        "position_id": row.get("position_id") or payload.get("position_id"),
+        "close_decision_id": row.get("close_decision_id") or close_decision.get("close_decision_id"),
         "close_decision_state": close_decision.get("decision_state"),
         "symbol": payload.get("symbol") or payload.get("underlying_symbol"),
         "limit_price": payload.get("limit_price"),
@@ -141,8 +141,7 @@ def _compact_intent(row: Mapping[str, Any]) -> dict[str, Any]:
         "previous_limit_price": payload.get("previous_limit_price"),
         "reprice_count": payload.get("reprice_count"),
         "previous_execution_attempt_id": payload.get("previous_execution_attempt_id"),
-        "supersedes_execution_intent_id": payload.get("supersedes_execution_intent_id"),
-        "replacement_execution_intent_id": payload.get("replacement_execution_intent_id") or row.get("superseded_by_id"),
+        "supersedes_execution_intent_id": row.get("supersedes_execution_intent_id"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "expires_at": row.get("expires_at"),
@@ -243,7 +242,7 @@ def build_close_lifecycle_summary(
     close_intents_by_position: dict[str, list[dict[str, Any]]] = {}
     for row in close_intents:
         payload = as_mapping(row.get("payload"))
-        position_id = as_text(row.get("strategy_position_id")) or as_text(payload.get("position_id"))
+        position_id = as_text(row.get("position_id")) or as_text(payload.get("position_id"))
         if position_id is not None:
             close_intents_by_position.setdefault(position_id, []).append(row)
 

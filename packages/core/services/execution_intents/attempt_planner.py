@@ -11,13 +11,12 @@ from core.services.execution.direct_orders import submit_option_order, submit_op
 from core.services.execution.position_close import submit_position_close_by_id
 from core.services.execution_intents.shared import (
     TERMINAL_INTENT_STATES,
-    _append_event,
-    _intent_action_type,
+    _intent_kind,
     _intent_payload,
-    _update_intent,
+    _transition_intent,
 )
 from core.storage.serializers import parse_datetime
-from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, utc_now_iso
+from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int
 
 
 def _nested_mapping(*values: Any) -> dict[str, Any]:
@@ -121,7 +120,7 @@ def _append_attempt_engine_event(
             execution_intent_id=str(intent["execution_intent_id"]),
             execution_attempt_id=execution_attempt_id,
             broker_order_id=broker_order_id,
-            position_id=as_text(attempt.get("position_id")) or as_text(intent.get("strategy_position_id")),
+            position_id=as_text(attempt.get("position_id")) or as_text(intent.get("position_id")),
             workflow_id=workflow_id,
             correlation_id=str(intent["execution_intent_id"]),
             idempotency_key=f"{event_type}:{execution_attempt_id}:{broker_order_id or 'local'}:{as_text(attempt.get('status')) or 'unknown'}",
@@ -164,12 +163,12 @@ def ensure_execution_attempt_for_intent(
     if intent is None:
         raise ValueError(f"Unknown execution_intent_id: {execution_intent_id}")
     payload = _intent_payload(dict(intent))
-    existing_attempt_id = as_text(intent.get("execution_attempt_id")) or as_text(payload.get("execution_attempt_id"))
-    if existing_attempt_id is not None:
+    existing_attempt = execution_store.get_execution_attempt_for_intent(execution_intent_id)
+    if existing_attempt is not None:
         existing = _existing_attempt_result(
             execution_store=execution_store,
             intent=intent,
-            execution_attempt_id=existing_attempt_id,
+            execution_attempt_id=str(existing_attempt["execution_attempt_id"]),
         )
         if existing is not None:
             _append_attempt_engine_event(
@@ -194,47 +193,17 @@ def ensure_execution_attempt_for_intent(
 
     expires_at = parse_datetime(intent.get("expires_at"))
     if expires_at is not None and expires_at <= datetime.now(UTC):
-        _update_intent(
+        _transition_intent(
             execution_store,
             dict(intent),
             state="expired",
-            payload_updates={
-                "broker_activity_status": "intent_expired_before_attempt",
-                "expire_reason": "execution_intent_window_elapsed",
-                "workflow_id": workflow_id,
-            },
-            updated_at=utc_now_iso(),
-        )
-        _append_event(
-            execution_store,
-            execution_intent_id=execution_intent_id,
-            event_type="expired",
-            payload={
+            transition_reason="execution_intent_window_elapsed",
+            workflow_id=workflow_id,
+            event_payload={
                 "reason": "execution_intent_window_elapsed",
                 "workflow_id": workflow_id,
             },
         )
-        engine_events = getattr(storage, "engine_events", None)
-        if engine_events is not None and engine_events.schema_ready():
-            engine_events.append_engine_event(
-                EngineEvent(
-                    event_type=EngineEventType.STATE_TRANSITIONED,
-                    aggregate_type=EngineAggregateType.EXECUTION_INTENT,
-                    aggregate_id=execution_intent_id,
-                    lifecycle_object="execution_intent",
-                    from_state=current_state,
-                    to_state="expired",
-                    trading_strategy_id=as_text(intent.get("trading_strategy_id")),
-                    trade_signal_id=as_text(intent.get("trade_signal_id")),
-                    trade_decision_id=as_text(intent.get("trade_decision_id")),
-                    execution_intent_id=execution_intent_id,
-                    workflow_id=workflow_id,
-                    correlation_id=execution_intent_id,
-                    idempotency_key=f"intent_expired_before_attempt:{execution_intent_id}:{workflow_id or 'unassigned'}",
-                    payload={"reason": "execution_intent_window_elapsed"},
-                    occurred_at=datetime.now(UTC),
-                )
-            )
         return {
             "status": "expired",
             "changed": True,
@@ -244,9 +213,9 @@ def ensure_execution_attempt_for_intent(
         }
 
     metadata = _intent_metadata(intent, payload)
-    action_type = _intent_action_type(dict(intent))
-    if action_type == "close":
-        position_id = as_text(intent.get("strategy_position_id")) or as_text(payload.get("position_id"))
+    intent_kind = _intent_kind(dict(intent))
+    if intent_kind == "close":
+        position_id = as_text(intent.get("position_id")) or as_text(payload.get("position_id"))
         if position_id is None:
             raise ValueError(f"Close lifecycle intent {execution_intent_id} is missing position_id")
         result = submit_position_close_by_id(
@@ -327,16 +296,6 @@ def ensure_execution_attempt_for_intent(
         payload_updates={
             "broker_activity_status": "attempt_prepared",
             "workflow_id": workflow_id,
-        },
-    )
-    _append_event(
-        execution_store,
-        execution_intent_id=execution_intent_id,
-        event_type="attempt_prepared",
-        payload={
-            "execution_attempt_id": attempt.get("execution_attempt_id"),
-            "workflow_id": workflow_id,
-            "message": result.get("message"),
         },
     )
     _append_attempt_engine_event(

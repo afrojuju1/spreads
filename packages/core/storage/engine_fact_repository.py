@@ -28,7 +28,6 @@ class EngineFactRepository(
             "trade_candidates",
             "trade_signals",
             "trade_decisions",
-            "trade_execution_intents",
             "trade_admissions",
         )
 
@@ -36,7 +35,6 @@ class EngineFactRepository(
         return self.schema_has_tables(
             "trade_positions",
             "trade_close_decisions",
-            "trade_execution_intents",
             "trade_admissions",
         )
 

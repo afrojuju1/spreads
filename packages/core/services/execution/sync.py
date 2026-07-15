@@ -31,10 +31,7 @@ from .attempts import (
 def _linked_intent_payload(*, execution_store: Any, attempt: dict[str, Any]) -> dict[str, Any] | None:
     if not execution_store.intent_schema_ready():
         return None
-    request = as_mapping(attempt.get("request"))
-    execution_intent_id = as_text(request.get("execution_intent_id"))
-    if execution_intent_id is None:
-        execution_intent_id = as_text(attempt.get("execution_intent_id"))
+    execution_intent_id = as_text(attempt.get("execution_intent_id"))
     if execution_intent_id is None:
         return None
     intent = execution_store.get_execution_intent(execution_intent_id)
@@ -47,9 +44,9 @@ def _linked_intent_payload(*, execution_store: Any, attempt: dict[str, Any]) -> 
     return {
         "execution_intent_id": intent.get("execution_intent_id"),
         "state": intent.get("state"),
-        "action_type": intent.get("action_type"),
+        "intent_kind": intent.get("intent_kind"),
         "trading_strategy_id": intent.get("trading_strategy_id"),
-        "execution_attempt_id": intent.get("execution_attempt_id"),
+        "execution_attempt_id": attempt.get("execution_attempt_id"),
         "updated_at": intent.get("updated_at"),
         "validation_provenance": payload.get("validation_provenance"),
         "execution_mode": payload.get("execution_mode"),

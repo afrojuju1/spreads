@@ -156,7 +156,6 @@ def _project_execution(
     if execution_store.schema_has_tables(
         "trade_admissions",
         "trade_decisions",
-        "trade_execution_intents",
         "execution_intents",
     ):
         approved_admission_intent_gaps = execution_store.list_approved_admissions_missing_execution_intents(
@@ -166,9 +165,10 @@ def _project_execution(
     else:
         approved_admission_intent_gaps = []
     approved_admission_intent_gap_ids = [
-        str(row["admission"]["execution_intent_id"])
+        str(row["admission"]["admission_decision_id"])
         for row in approved_admission_intent_gaps
-        if isinstance(row.get("admission"), dict) and as_text(row["admission"].get("execution_intent_id")) is not None
+        if isinstance(row.get("admission"), dict)
+        and as_text(row["admission"].get("admission_decision_id")) is not None
     ]
     approved_admission_intent_gap_count = len(approved_admission_intent_gaps)
     execution_health_status = (

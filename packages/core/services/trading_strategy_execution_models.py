@@ -94,11 +94,11 @@ class StrategyExecutionPolicy(DomainModel):
         rendered = str(value or "").strip()
         return rendered or None
 
-    def lifecycle_for_action(self, action_type: str) -> StrategyOrderLifecyclePolicy:
-        return self.close_lifecycle if str(action_type or "").strip().lower() == "close" else self.open_lifecycle
+    def lifecycle_for_intent_kind(self, intent_kind: str) -> StrategyOrderLifecyclePolicy:
+        return self.close_lifecycle if str(intent_kind or "").strip().lower() == "close" else self.open_lifecycle
 
-    def execution_policy_for_action(self, action_type: str, *, quantity: int | None = None) -> dict[str, Any]:
-        lifecycle = self.lifecycle_for_action(action_type)
+    def execution_policy_for_intent_kind(self, intent_kind: str, *, quantity: int | None = None) -> dict[str, Any]:
+        lifecycle = self.lifecycle_for_intent_kind(intent_kind)
         payload = {
             "enabled": self.approval == "auto" and self.mode in {"paper", "live"},
             "mode": "top_promotable",
@@ -117,8 +117,8 @@ class StrategyExecutionPolicy(DomainModel):
             payload["quantity"] = quantity
         return payload
 
-    def executor_profile_snapshot(self, action_type: str) -> dict[str, Any]:
-        lifecycle = self.lifecycle_for_action(action_type)
+    def executor_profile_snapshot(self, intent_kind: str) -> dict[str, Any]:
+        lifecycle = self.lifecycle_for_intent_kind(intent_kind)
         return {
             "executor_profile_id": self.executor_profile_id,
             "approval": self.approval,

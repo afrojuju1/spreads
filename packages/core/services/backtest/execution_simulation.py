@@ -448,7 +448,7 @@ def _simulate_selected_entry(
     admission: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     quantity = _quantity_from(signal, admission)
-    execution_policy = runtime.strategy.execution.execution_policy_for_action("open", quantity=quantity)
+    execution_policy = runtime.strategy.execution.execution_policy_for_intent_kind("open", quantity=quantity)
     ttl_minutes = coerce_int(execution_policy.get("submit_ttl_minutes")) or 5
     quote_context = _quote_context(
         storage=storage,
@@ -601,7 +601,7 @@ def _simulate_selected_entry(
             "trade_signal_id": signal.get("trade_signal_id"),
             "trade_decision_id": decision.get("trade_decision_id"),
             "execution_attempt_id": execution_attempt_id,
-            "action_type": "open",
+            "intent_kind": "open",
             "state": intent_state,
             "expires_at": _utc_iso(quote_context.expires_at),
             "payload": {

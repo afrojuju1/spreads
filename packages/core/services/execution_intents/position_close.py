@@ -53,30 +53,29 @@ def issue_close_execution_intent(
     close_admission: Mapping[str, Any],
 ) -> dict[str, Any]:
     position_id = str(position["position_id"])
-    close_execution_policy = runtime.strategy.execution.execution_policy_for_action("close")
+    close_execution_policy = runtime.strategy.execution.execution_policy_for_intent_kind("close")
     close_repricing_policy = dict(close_execution_policy.get("repricing_policy") or {})
     close_executor_profile = runtime.strategy.execution.executor_profile_snapshot("close")
     return issue_pending_execution_intent(
         execution_store,
+        admission=dict(close_admission),
         execution_intent_id=close_intent_id(position_id=position_id, trading_strategy_id=runtime.trading_strategy_id),
         trading_strategy_id=runtime.trading_strategy_id,
-        strategy_position_id=position_id,
-        execution_attempt_id=None,
-        action_type="close",
+        position_id=position_id,
+        close_decision_id=as_text(close_decision.get("close_decision_id")),
+        intent_kind="close",
         slot_key=close_slot_key(position_id),
-        claim_token=None,
         policy_ref={
             "trading_strategy_id": runtime.trading_strategy_id,
             "trade_structure": runtime.trade_structure,
             "routine": "manage",
         },
         config_hash=runtime.config_hash,
-        state="pending",
         expires_at=utc_expiry_iso(
             minutes=int(close_execution_policy["submit_ttl_minutes"]),
             minimum_seconds=60,
         ),
-        superseded_by_id=None,
+        supersedes_execution_intent_id=None,
         payload={
             "position_id": position_id,
             "limit_price": decision.get("limit_price"),

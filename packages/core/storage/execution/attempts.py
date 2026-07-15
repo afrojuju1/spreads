@@ -64,6 +64,7 @@ class ExecutionAttemptRepositoryMixin:
         trade_signal_id: str | None = None,
         trade_decision_id: str | None = None,
         admission_decision_id: str | None = None,
+        execution_intent_id: str | None = None,
     ) -> ExecutionAttemptRecord:
         resolved_legs = normalize_legs(legs, expiration_date=expiration_date)
         if not resolved_legs:
@@ -92,6 +93,7 @@ class ExecutionAttemptRepositoryMixin:
                 trade_signal_id=trade_signal_id,
                 trade_decision_id=trade_decision_id,
                 admission_decision_id=admission_decision_id,
+                execution_intent_id=execution_intent_id,
                 attempt_context=attempt_context,
                 candidate_generated_at=parse_datetime(candidate_generated_at),
                 run_id=run_id,

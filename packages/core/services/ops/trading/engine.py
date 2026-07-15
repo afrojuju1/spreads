@@ -319,9 +319,9 @@ def _execution_summary(*, execution_store: Any, market_date: str) -> dict[str, A
         row = dict(intent)
         if not _in_window(row, "created_at", start=start, end=end):
             continue
-        action_type = str(row.get("action_type") or "")
+        intent_kind = str(row.get("intent_kind") or "")
         state = str(row.get("state") or "unknown")
-        intent_counts[(action_type, state)] += 1
+        intent_counts[(intent_kind, state)] += 1
     entry_counts = Counter({state: count for (action, state), count in intent_counts.items() if action == "open"})
     management_counts = Counter({state: count for (action, state), count in intent_counts.items() if action == "close"})
     state_counts: Counter[str] = Counter()

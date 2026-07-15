@@ -35,7 +35,7 @@ def _empty_execution_strategy_ledger() -> dict[str, Any]:
         "intents": {
             "intent_count": 0,
             "intent_state_counts": {},
-            "intent_action_state_counts": {},
+            "intent_kind_state_counts": {},
             "latest_execution_intent_id": None,
             "latest_created_at": None,
         },
@@ -113,7 +113,7 @@ def build_execution_strategy_ledgers(
             select(
                 ExecutionIntentModel.trading_strategy_id,
                 ExecutionIntentModel.state,
-                ExecutionIntentModel.action_type,
+                ExecutionIntentModel.intent_kind,
                 ExecutionIntentModel.execution_intent_id,
                 ExecutionIntentModel.created_at,
             )
@@ -124,11 +124,11 @@ def build_execution_strategy_ledgers(
                 ExecutionIntentModel.trading_strategy_id.asc(), ExecutionIntentModel.created_at.desc(), ExecutionIntentModel.execution_intent_id.asc()
             )
         )
-        for strategy_id, state, action_type, execution_intent_id, created_at in intent_rows:
+        for strategy_id, state, intent_kind, execution_intent_id, created_at in intent_rows:
             strategy_key = str(strategy_id)
             intent_payload = payloads[strategy_key]["intents"]
             _bump_count(intent_payload["intent_state_counts"], state)
-            _bump_nested_count(intent_payload["intent_action_state_counts"], action_type, state)
+            _bump_nested_count(intent_payload["intent_kind_state_counts"], intent_kind, state)
             if _newer_desc_asc(created_at, execution_intent_id, latest_intent_at.get(strategy_key), intent_payload.get("latest_execution_intent_id")):
                 latest_intent_at[strategy_key] = created_at
                 intent_payload["latest_execution_intent_id"] = str(execution_intent_id)
@@ -319,7 +319,7 @@ def build_execution_strategy_ledgers(
     for strategy_id, payload in payloads.items():
         intent_state_counts = dict(sorted((str(state), int(count)) for state, count in as_mapping(payload["intents"]["intent_state_counts"]).items()))
         payload["intents"]["intent_state_counts"] = intent_state_counts
-        payload["intents"]["intent_action_state_counts"] = _sort_nested_counts(payload["intents"]["intent_action_state_counts"])
+        payload["intents"]["intent_kind_state_counts"] = _sort_nested_counts(payload["intents"]["intent_kind_state_counts"])
         payload["intents"]["intent_count"] = int(sum(intent_state_counts.values()))
 
         attempt_status_counts = dict(

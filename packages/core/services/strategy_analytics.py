@@ -56,8 +56,8 @@ def build_trading_strategy_metrics(
             if _in_window(row.get("created_at"), start=window_start, end=window_end)
         ]
     intent_state_counts = Counter(str(row.get("state") or "unknown") for row in intents)
-    entry_intents = [row for row in intents if str(row.get("action_type") or "") == "open"]
-    close_intents = [row for row in intents if str(row.get("action_type") or "") == "close"]
+    entry_intents = [row for row in intents if str(row.get("intent_kind") or "") == "open"]
+    close_intents = [row for row in intents if str(row.get("intent_kind") or "") == "close"]
 
     positions: list[dict[str, Any]] = []
     if execution_store.portfolio_schema_ready():

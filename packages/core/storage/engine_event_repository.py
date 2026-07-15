@@ -30,6 +30,113 @@ def _optional_datetime(value: Any) -> datetime | None:
     return parse_datetime(value)
 
 
+def append_engine_event_in_session(
+    session: Any,
+    event: EngineEvent,
+    *,
+    publish: bool = True,
+    stream: str = ENGINE_EVENT_STREAM,
+    subject: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> EngineEventModel:
+    """Append one idempotent engine event and its outbox row in an existing transaction."""
+    now = _utc_now()
+    idempotency_key = event.resolved_idempotency_key()
+    event_id = event.resolved_engine_event_id()
+    recorded_at = _optional_datetime(event.recorded_at) or now
+    occurred_at = parse_datetime(event.occurred_at)
+    if occurred_at is None:
+        raise ValueError("Engine event requires occurred_at")
+
+    payload = render_value(event.payload)
+    metadata = render_value(event.metadata)
+    outbox_subject = subject or event.subject()
+    inserted = session.execute(
+        pg_insert(EngineEventModel)
+        .values(
+            engine_event_id=event_id,
+            run_id=event.run_id,
+            workflow_id=event.workflow_id,
+            workflow_run_id=event.workflow_run_id,
+            event_type=event.event_type,
+            event_version=event.event_version,
+            aggregate_type=event.aggregate_type,
+            aggregate_id=event.aggregate_id,
+            aggregate_version=event.aggregate_version,
+            lifecycle_object=event.lifecycle_object,
+            from_state=event.from_state,
+            to_state=event.to_state,
+            trading_strategy_id=event.trading_strategy_id,
+            trade_signal_id=event.trade_signal_id,
+            trade_decision_id=event.trade_decision_id,
+            execution_intent_id=event.execution_intent_id,
+            execution_attempt_id=event.execution_attempt_id,
+            broker_order_id=event.broker_order_id,
+            position_id=event.position_id,
+            session_date=_optional_date(event.session_date),
+            market_session=event.market_session,
+            correlation_id=event.correlation_id,
+            causation_id=event.causation_id,
+            idempotency_key=idempotency_key,
+            payload_json=payload,
+            metadata_json=metadata,
+            occurred_at=occurred_at,
+            recorded_at=recorded_at,
+        )
+        .on_conflict_do_nothing(index_elements=["idempotency_key"])
+        .returning(EngineEventModel.engine_event_id)
+    ).scalar_one_or_none()
+    resolved_event_id = inserted or session.scalar(
+        select(EngineEventModel.engine_event_id).where(EngineEventModel.idempotency_key == idempotency_key)
+    )
+    if resolved_event_id is None:
+        raise RuntimeError(f"Unable to resolve engine event for idempotency key {idempotency_key!r}")
+    if publish:
+        outbox_id = engine_outbox_id(str(resolved_event_id), stream=stream, subject=outbox_subject)
+        session.execute(
+            pg_insert(EngineOutboxModel)
+            .values(
+                engine_outbox_id=outbox_id,
+                engine_event_id=resolved_event_id,
+                stream=stream,
+                subject=outbox_subject,
+                event_type=event.event_type,
+                aggregate_type=event.aggregate_type,
+                aggregate_id=event.aggregate_id,
+                payload_json={
+                    "engine_event_id": resolved_event_id,
+                    "event_type": event.event_type,
+                    "event_version": event.event_version,
+                    "aggregate_type": event.aggregate_type,
+                    "aggregate_id": event.aggregate_id,
+                    "aggregate_version": event.aggregate_version,
+                    "workflow_id": event.workflow_id,
+                    "workflow_run_id": event.workflow_run_id,
+                    "correlation_id": event.correlation_id,
+                    "causation_id": event.causation_id,
+                    "occurred_at": render_value(occurred_at),
+                    "recorded_at": render_value(recorded_at),
+                    "payload": payload,
+                    "metadata": metadata,
+                },
+                headers_json=dict(headers or {}),
+                publish_state="pending",
+                attempt_count=0,
+                next_attempt_at=None,
+                last_attempt_at=None,
+                published_at=None,
+                error_text=None,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=["engine_outbox_id"])
+        )
+    row = session.get(EngineEventModel, resolved_event_id)
+    if row is None:
+        raise RuntimeError(f"Engine event {resolved_event_id!r} disappeared during append")
+    return row
+
+
 class EngineEventRepository(RepositoryBase):
     def schema_ready(self) -> bool:
         return self.schema_has_tables("engine_events", "engine_outbox")
@@ -52,103 +159,15 @@ class EngineEventRepository(RepositoryBase):
         if not self.schema_ready():
             raise RuntimeError("Engine event schema is not ready. Run Alembic migrations before appending engine events.")
 
-        now = _utc_now()
-        idempotency_key = event.resolved_idempotency_key()
-        event_id = event.resolved_engine_event_id()
-        recorded_at = _optional_datetime(event.recorded_at) or now
-        occurred_at = parse_datetime(event.occurred_at)
-        if occurred_at is None:
-            raise ValueError("Engine event requires occurred_at")
-
-        payload = render_value(event.payload)
-        metadata = render_value(event.metadata)
-        outbox_subject = subject or event.subject()
-        event_payload = {
-            "engine_event_id": event_id,
-            "run_id": event.run_id,
-            "workflow_id": event.workflow_id,
-            "workflow_run_id": event.workflow_run_id,
-            "event_type": event.event_type,
-            "event_version": event.event_version,
-            "aggregate_type": event.aggregate_type,
-            "aggregate_id": event.aggregate_id,
-            "aggregate_version": event.aggregate_version,
-            "lifecycle_object": event.lifecycle_object,
-            "from_state": event.from_state,
-            "to_state": event.to_state,
-            "trading_strategy_id": event.trading_strategy_id,
-            "trade_signal_id": event.trade_signal_id,
-            "trade_decision_id": event.trade_decision_id,
-            "execution_intent_id": event.execution_intent_id,
-            "execution_attempt_id": event.execution_attempt_id,
-            "broker_order_id": event.broker_order_id,
-            "position_id": event.position_id,
-            "session_date": _optional_date(event.session_date),
-            "market_session": event.market_session,
-            "correlation_id": event.correlation_id,
-            "causation_id": event.causation_id,
-            "idempotency_key": idempotency_key,
-            "payload_json": payload,
-            "metadata_json": metadata,
-            "occurred_at": occurred_at,
-            "recorded_at": recorded_at,
-        }
         with self.session_scope() as session:
-            inserted = session.execute(
-                pg_insert(EngineEventModel)
-                .values(**event_payload)
-                .on_conflict_do_nothing(index_elements=["idempotency_key"])
-                .returning(EngineEventModel.engine_event_id)
-            ).scalar_one_or_none()
-            resolved_event_id = inserted or session.scalar(
-                select(EngineEventModel.engine_event_id).where(EngineEventModel.idempotency_key == idempotency_key)
+            row = append_engine_event_in_session(
+                session,
+                event,
+                publish=publish,
+                stream=stream,
+                subject=subject,
+                headers=headers,
             )
-            if resolved_event_id is None:
-                raise RuntimeError(f"Unable to resolve engine event for idempotency key {idempotency_key!r}")
-            if publish:
-                outbox_id = engine_outbox_id(str(resolved_event_id), stream=stream, subject=outbox_subject)
-                outbox_payload = {
-                    "engine_event_id": resolved_event_id,
-                    "event_type": event.event_type,
-                    "event_version": event.event_version,
-                    "aggregate_type": event.aggregate_type,
-                    "aggregate_id": event.aggregate_id,
-                    "aggregate_version": event.aggregate_version,
-                    "workflow_id": event.workflow_id,
-                    "workflow_run_id": event.workflow_run_id,
-                    "correlation_id": event.correlation_id,
-                    "causation_id": event.causation_id,
-                    "occurred_at": render_value(occurred_at),
-                    "recorded_at": render_value(recorded_at),
-                    "payload": payload,
-                    "metadata": metadata,
-                }
-                session.execute(
-                    pg_insert(EngineOutboxModel)
-                    .values(
-                        engine_outbox_id=outbox_id,
-                        engine_event_id=resolved_event_id,
-                        stream=stream,
-                        subject=outbox_subject,
-                        event_type=event.event_type,
-                        aggregate_type=event.aggregate_type,
-                        aggregate_id=event.aggregate_id,
-                        payload_json=outbox_payload,
-                        headers_json=dict(headers or {}),
-                        publish_state="pending",
-                        attempt_count=0,
-                        next_attempt_at=None,
-                        last_attempt_at=None,
-                        published_at=None,
-                        error_text=None,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    .on_conflict_do_nothing(index_elements=["engine_outbox_id"])
-                )
-            row = session.get(EngineEventModel, resolved_event_id)
-            if row is None:
-                raise RuntimeError(f"Engine event {resolved_event_id!r} disappeared during append")
             return self._event_row(row)
 
     def get_engine_event(self, engine_event_id: str) -> EngineEventRecord | None:

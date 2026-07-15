@@ -32,7 +32,6 @@ SignalStateTransitionRecord = StorageRow
 StrategyRunRecord = StorageRow
 JobLeaseRecord = StorageRow
 ExecutionIntentRecord = StorageRow
-ExecutionIntentEventRecord = StorageRow
 ExecutionAttemptRecord = StorageRow
 ExecutionOrderRecord = StorageRow
 ExecutionFillRecord = StorageRow
@@ -73,7 +72,6 @@ __all__ = [
     "StrategyRunRecord",
     "JobLeaseRecord",
     "ExecutionIntentRecord",
-    "ExecutionIntentEventRecord",
     "ExecutionAttemptRecord",
     "ExecutionOrderRecord",
     "ExecutionFillRecord",

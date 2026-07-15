@@ -201,7 +201,7 @@ def _intent_signal_rows(
             "source": "execution_intent",
             "execution_intent_id": intent.get("execution_intent_id"),
             "intent_state": intent.get("state"),
-            "action_type": intent.get("action_type"),
+            "intent_kind": intent.get("intent_kind"),
         }
     return rows
 

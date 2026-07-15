@@ -10,14 +10,13 @@ from core.services.execution_intents.position_close import issue_close_execution
 from core.services.trading_strategy_runtime import resolve_management_runtimes
 from core.services.trading_engine.exit_runtime import (
     ExitEngine,
-    attach_close_decision_intent,
     blocked_close_decision_projection,
     build_exit_run_ref,
     build_position_exit_snapshot,
     close_decision_lifecycle,
     close_decision_projection,
     persist_close_decision,
-    persist_close_intent_admission,
+    persist_blocked_close_admission,
 )
 from core.services.trading_engine.portfolio_runtime import (
     PortfolioEngine,
@@ -342,6 +341,12 @@ def run_trading_strategy_manage(
                 close_admission=close_admission,
             )
             persist_close_decision(engine_facts, position=position, close_decision=decisions[-1]["close_decision"])
+            persist_blocked_close_admission(
+                execution_store,
+                position=position,
+                close_decision=decisions[-1]["close_decision"],
+                close_admission=close_admission,
+            )
             continue
 
         try:
@@ -371,19 +376,6 @@ def run_trading_strategy_manage(
             )
             close_decision["execution_intent_id"] = intent.get("execution_intent_id")
             decisions[-1]["close_decision"] = close_decision
-            attach_close_decision_intent(
-                engine_facts,
-                close_decision_id=str(close_decision["close_decision_id"]),
-                execution_intent_id=str(intent["execution_intent_id"]),
-            )
-            persist_close_intent_admission(
-                engine_facts,
-                intent=intent,
-                close_decision=close_decision,
-                close_admission=close_admission,
-                runtime=management_runtime,
-                position=position,
-            )
             created_intents += 1
         except Exception as exc:
             failures.append(

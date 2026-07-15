@@ -12,7 +12,6 @@ from core.storage.db import Base
 TARGET_LIFECYCLE_TABLES: tuple[dict[str, str], ...] = (
     {"name": "trade_signals", "role": "signal fact"},
     {"name": "trade_decisions", "role": "decision fact"},
-    {"name": "trade_execution_intents", "role": "dispatch request fact"},
     {"name": "trade_admissions", "role": "pre-attempt admission fact"},
     {"name": "trade_execution_attempts", "role": "broker submission attempt fact"},
     {"name": "trade_broker_orders", "role": "broker order snapshot fact"},
@@ -125,63 +124,23 @@ class TradeDecisionModel(Base):
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class TradeExecutionIntentModel(Base):
-    __tablename__ = "trade_execution_intents"
-    __table_args__ = (
-        Index("ux_trade_execution_intents_idempotency_key", "idempotency_key", unique=True),
-        Index("idx_trade_execution_intents_slot_state", "slot_key", "intent_state"),
-        Index("idx_trade_execution_intents_source", "source_object_type", "source_object_id"),
-        Index("idx_trade_execution_intents_created", "created_at"),
-    )
-
-    execution_intent_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    intent_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_object_type: Mapped[str] = mapped_column(Text, nullable=False)
-    source_object_id: Mapped[str] = mapped_column(Text, nullable=False)
-    trade_signal_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("trade_signals.trade_signal_id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    trade_decision_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("trade_decisions.trade_decision_id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    position_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    trade_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
-    routine: Mapped[str | None] = mapped_column(Text, nullable=True)
-    account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    slot_key: Mapped[str] = mapped_column(Text, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
-    intent_state: Mapped[str] = mapped_column(Text, nullable=False)
-    claim_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    supersedes_intent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    superseded_by_intent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    policy_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
 class TradeAdmissionModel(Base):
     __tablename__ = "trade_admissions"
     __table_args__ = (
-        Index("idx_trade_admissions_intent", "execution_intent_id"),
+        Index("idx_trade_admissions_source", "source_object_type", "source_object_id"),
+        Index("idx_trade_admissions_close_decision", "close_decision_id"),
         Index("idx_trade_admissions_state_decided", "admission_state", "decided_at"),
         Index("idx_trade_admissions_signal_decided", "trade_signal_id", "decided_at"),
         Index("idx_trade_admissions_session_decided", "session_date", "decided_at"),
     )
 
     admission_decision_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    execution_intent_id: Mapped[str] = mapped_column(
+    source_object_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_object_id: Mapped[str] = mapped_column(Text, nullable=False)
+    close_decision_id: Mapped[str | None] = mapped_column(
         Text,
-        ForeignKey("trade_execution_intents.execution_intent_id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("trade_close_decisions.close_decision_id", ondelete="RESTRICT"),
+        nullable=True,
     )
     trade_signal_id: Mapped[str | None] = mapped_column(
         Text,
@@ -193,7 +152,16 @@ class TradeAdmissionModel(Base):
         ForeignKey("trade_decisions.trade_decision_id", ondelete="SET NULL"),
         nullable=True,
     )
-    position_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "portfolio_positions.position_id",
+            name="trade_admissions_position_id_fkey",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
     admission_kind: Mapped[str] = mapped_column(Text, nullable=False)
     admission_state: Mapped[str] = mapped_column(Text, nullable=False)
     account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -208,13 +176,8 @@ class TradeAdmissionModel(Base):
     blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    execution_attempt_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    trade_intent: Mapped[TradeExecutionIntentModel] = relationship(
-        "TradeExecutionIntentModel",
-        foreign_keys=[execution_intent_id],
-    )
     decision: Mapped[TradeDecisionModel | None] = relationship(
         "TradeDecisionModel",
         foreign_keys=[trade_decision_id],
@@ -232,7 +195,6 @@ class TradeExecutionAttemptModel(Base):
     execution_attempt_id: Mapped[str] = mapped_column(Text, primary_key=True)
     execution_intent_id: Mapped[str] = mapped_column(
         Text,
-        ForeignKey("trade_execution_intents.execution_intent_id", ondelete="CASCADE"),
         nullable=False,
     )
     admission_decision_id: Mapped[str | None] = mapped_column(

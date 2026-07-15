@@ -20,7 +20,6 @@ from core.value_coercion import (
     coerce_float,
     coerce_int,
     utc_now,
-    utc_now_iso,
 )
 from core.storage.serializers import parse_datetime
 
@@ -47,7 +46,6 @@ TERMINAL_INTENT_STATES = {
     ExecutionIntentState.EXPIRED.value,
     ExecutionIntentState.SUPERSEDED.value,
 }
-_UNCHANGED = object()
 
 
 def _intent_payload(intent: dict[str, Any]) -> dict[str, Any]:
@@ -96,8 +94,8 @@ def _attempt_request(attempt: dict[str, Any]) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, dict) else {}
 
 
-def _intent_action_type(intent: dict[str, Any], attempt: dict[str, Any] | None = None) -> str:
-    action_type = str(intent.get("action_type") or "").strip().lower()
+def _intent_kind(intent: dict[str, Any], attempt: dict[str, Any] | None = None) -> str:
+    intent_kind = str(intent.get("intent_kind") or "").strip().lower()
     request = {} if attempt is None else _attempt_request(attempt)
     payload = _intent_payload(intent)
     trade_intent = (
@@ -105,145 +103,100 @@ def _intent_action_type(intent: dict[str, Any], attempt: dict[str, Any] | None =
         .strip()
         .lower()
     )
-    if action_type in {"open", "close"}:
-        return action_type
+    if intent_kind in {"open", "close"}:
+        return intent_kind
     if trade_intent in {"open", "close"}:
         return trade_intent
-    if action_type in {"buy", "buy_to_open", "sell_to_open"}:
-        return "open"
-    if action_type in {"sell", "sell_to_close", "buy_to_close"}:
-        return "close"
-    return action_type or "open"
+    return intent_kind or "open"
 
 
-def _update_intent(
+def _transition_intent(
     execution_store: Any,
     intent: dict[str, Any],
     *,
-    state: str | object = _UNCHANGED,
-    payload_updates: dict[str, Any] | None = None,
-    payload: dict[str, Any] | object = _UNCHANGED,
-    trade_signal_id: str | None | object = _UNCHANGED,
-    trade_decision_id: str | None | object = _UNCHANGED,
-    strategy_position_id: str | None | object = _UNCHANGED,
-    execution_attempt_id: str | None | object = _UNCHANGED,
-    claim_token: str | None | object = _UNCHANGED,
-    expires_at: str | None | object = _UNCHANGED,
-    superseded_by_id: str | None | object = _UNCHANGED,
-    updated_at: str | None = None,
+    state: str,
+    transition_reason: str,
+    event_payload: dict[str, Any] | None = None,
+    engine_event_type: str = "engine.state_transitioned",
+    claim_token: str | None = None,
+    claimed_at: str | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
+    execution_attempt_id: str | None = None,
 ) -> dict[str, Any]:
-    resolved_payload = _intent_payload(intent) if payload is _UNCHANGED else dict(payload or {})
-    if payload_updates:
-        resolved_payload.update(payload_updates)
     current_state = as_text(intent.get("state"))
-    if state is _UNCHANGED:
-        if current_state is None:
-            raise ValueError("Execution intent is missing its lifecycle state.")
-        resolved_state = normalize_execution_intent_state(current_state)
-    else:
-        resolved_state = require_execution_intent_transition(current_state, state)
-    return execution_store.upsert_execution_intent(
+    if current_state is None:
+        raise ValueError("Execution intent is missing its lifecycle state.")
+    resolved_state = require_execution_intent_transition(current_state, state)
+    return execution_store.transition_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
-        trading_strategy_id=str(intent["trading_strategy_id"]),
-        trade_signal_id=(as_text(intent.get("trade_signal_id")) if trade_signal_id is _UNCHANGED else trade_signal_id),
-        trade_decision_id=(as_text(intent.get("trade_decision_id")) if trade_decision_id is _UNCHANGED else trade_decision_id),
-        strategy_position_id=(as_text(intent.get("strategy_position_id")) if strategy_position_id is _UNCHANGED else strategy_position_id),
-        execution_attempt_id=(as_text(intent.get("execution_attempt_id")) if execution_attempt_id is _UNCHANGED else execution_attempt_id),
-        action_type=str(intent["action_type"]),
-        slot_key=str(intent["slot_key"]),
-        claim_token=(as_text(intent.get("claim_token")) if claim_token is _UNCHANGED else claim_token),
-        policy_ref=dict(intent.get("policy_ref") or {}),
-        config_hash=str(intent.get("config_hash") or ""),
-        state=resolved_state,
-        expires_at=(as_text(intent.get("expires_at")) if expires_at is _UNCHANGED else expires_at),
-        superseded_by_id=(as_text(intent.get("superseded_by_id")) if superseded_by_id is _UNCHANGED else superseded_by_id),
-        payload=resolved_payload,
-        created_at=str(intent["created_at"]),
-        updated_at=updated_at or utc_now_iso(),
-    )
-
-
-def _append_event(
-    execution_store: Any,
-    *,
-    execution_intent_id: str,
-    event_type: str,
-    payload: dict[str, Any] | None = None,
-) -> None:
-    execution_store.append_execution_intent_event(
-        execution_intent_id=execution_intent_id,
-        event_type=event_type,
-        event_at=utc_now_iso(),
-        payload=payload,
+        expected_state=current_state,
+        expected_version=int(intent.get("state_version") or 0),
+        to_state=resolved_state,
+        transition_reason=transition_reason,
+        event_payload=event_payload,
+        engine_event_type=engine_event_type,
+        claim_token=claim_token,
+        claimed_at=claimed_at,
+        workflow_id=workflow_id,
+        workflow_run_id=workflow_run_id,
+        execution_attempt_id=execution_attempt_id,
     )
 
 
 def issue_pending_execution_intent(
     execution_store: Any,
     *,
+    admission: dict[str, Any],
     execution_intent_id: str,
     trading_strategy_id: str,
-    strategy_position_id: str | None,
-    action_type: str,
+    position_id: str | None,
+    close_decision_id: str | None,
+    intent_kind: str,
     slot_key: str,
     policy_ref: dict[str, Any],
     config_hash: str,
     expires_at: str | None,
     payload: dict[str, Any] | None = None,
     created_event_payload: dict[str, Any] | None = None,
-    claim_token: str | None = None,
-    execution_attempt_id: str | None = None,
-    superseded_by_id: str | None = None,
+    supersedes_execution_intent_id: str | None = None,
     trade_signal_id: str | None = None,
     trade_decision_id: str | None = None,
-    state: str = "pending",
 ) -> dict[str, Any]:
-    created_at = utc_now_iso()
-    resolved_state = require_execution_intent_transition(None, state)
-    intent = execution_store.upsert_execution_intent(
-        execution_intent_id=execution_intent_id,
-        trading_strategy_id=trading_strategy_id,
-        trade_signal_id=trade_signal_id,
-        trade_decision_id=trade_decision_id,
-        strategy_position_id=strategy_position_id,
-        execution_attempt_id=execution_attempt_id,
-        action_type=action_type,
-        slot_key=slot_key,
-        claim_token=claim_token,
-        policy_ref=policy_ref,
-        config_hash=config_hash,
-        state=resolved_state,
-        expires_at=expires_at,
-        superseded_by_id=superseded_by_id,
-        payload={} if payload is None else dict(payload),
-        created_at=created_at,
-        updated_at=created_at,
+    created_at = utc_now().isoformat().replace("+00:00", "Z")
+    admission_decision_id = str(admission["admission_decision_id"])
+    handoff = execution_store.persist_admission_intent_handoff(
+        admission=admission,
+        execution_intent={
+            "execution_intent_id": execution_intent_id,
+            "trading_strategy_id": trading_strategy_id,
+            "trade_signal_id": trade_signal_id,
+            "trade_decision_id": trade_decision_id,
+            "admission_decision_id": admission_decision_id,
+            "close_decision_id": close_decision_id,
+            "position_id": position_id,
+            "intent_kind": intent_kind,
+            "slot_key": slot_key,
+            "claim_token": None,
+            "claimed_at": None,
+            "workflow_id": None,
+            "workflow_run_id": None,
+            "policy_ref": policy_ref,
+            "config_hash": config_hash,
+            "state": "pending",
+            "expires_at": expires_at,
+            "supersedes_execution_intent_id": supersedes_execution_intent_id,
+            "state_version": 1,
+            "payload": {} if payload is None else dict(payload),
+            "created_at": created_at,
+            "updated_at": created_at,
+        },
+        created_event_payload=created_event_payload,
     )
-    _append_event(
-        execution_store,
-        execution_intent_id=str(intent["execution_intent_id"]),
-        event_type="created",
-        payload=None if created_event_payload is None else dict(created_event_payload),
-    )
+    intent = handoff.get("execution_intent")
+    if not isinstance(intent, dict):
+        raise RuntimeError(f"Approved admission {admission_decision_id} did not create an execution intent")
     return intent
-
-
-def link_execution_intent_position(
-    execution_store: Any,
-    *,
-    intent: dict[str, Any],
-    position_id: str,
-    execution_attempt_id: str | None = None,
-    updated_at: str | None = None,
-) -> dict[str, Any]:
-    return _update_intent(
-        execution_store,
-        intent,
-        strategy_position_id=position_id,
-        execution_attempt_id=(_UNCHANGED if execution_attempt_id is None else execution_attempt_id),
-        payload_updates={"strategy_position_id": position_id},
-        updated_at=updated_at,
-    )
 
 
 def sync_execution_intent_from_attempt(
@@ -257,30 +210,18 @@ def sync_execution_intent_from_attempt(
     payload_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     execution_attempt_id = as_text(attempt.get("execution_attempt_id"))
-    strategy_position_id = as_text(attempt.get("position_id")) or as_text(intent.get("strategy_position_id"))
-    updated_at = utc_now_iso()
-    updated = _update_intent(
+    return _transition_intent(
         execution_store,
         intent,
         state=state,
-        strategy_position_id=(_UNCHANGED if strategy_position_id is None else strategy_position_id),
-        execution_attempt_id=(_UNCHANGED if execution_attempt_id is None else execution_attempt_id),
-        payload_updates={
-            "dispatch_status": state,
-            "execution_attempt_id": execution_attempt_id,
+        transition_reason=event_type,
+        execution_attempt_id=execution_attempt_id,
+        event_payload={
             "attempt_status": str(attempt.get("status") or ""),
-            **({} if strategy_position_id is None else {"strategy_position_id": strategy_position_id}),
+            **({} if event_payload is None else dict(event_payload)),
             **({} if payload_updates is None else dict(payload_updates)),
         },
-        updated_at=updated_at,
     )
-    _append_event(
-        execution_store,
-        execution_intent_id=str(intent["execution_intent_id"]),
-        event_type=event_type,
-        payload=None if event_payload is None else dict(event_payload),
-    )
-    return updated
 
 
 def _attempt_state(attempt: dict[str, Any] | None) -> str:
@@ -361,7 +302,7 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
     policy = _repricing_policy(intent, attempt)
     if not policy or not _policy_enabled(policy):
         return None
-    action_type = _intent_action_type(intent, attempt)
+    intent_kind = _intent_kind(intent, attempt)
     max_reprices = coerce_int(policy.get("max_reprices", policy.get("max_reprice_count")))
     if max_reprices is None:
         max_reprices = 3
@@ -394,7 +335,7 @@ def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> floa
     if original_limit is None:
         original_limit = current_limit
     premium_kind = net_premium_kind(normalize_strategy_family(attempt.get("strategy_family") or attempt.get("strategy")))
-    if action_type == "close":
+    if intent_kind == "close":
         if premium_kind == "credit":
             premium_kind = "debit"
         elif premium_kind == "debit":
