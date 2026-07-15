@@ -6,6 +6,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from core.cli.command_harness import (
+    render_json_value,
+    run_payload_command,
     run_visibility_command,
     validate_positive_limit,
 )
@@ -22,6 +24,7 @@ from core.services.ops import (
     build_storage_ops_state,
     build_trading_ops_state,
 )
+from core.jobs.projection_repair import repair_terminal_routine_projection
 
 
 def _run_ops_visibility_command(**kwargs: Any) -> None:
@@ -50,6 +53,17 @@ def _render_value(value: Any) -> str:
     if value in (None, ""):
         return "-"
     return str(value)
+
+
+def _render_projection_repair(payload: dict[str, Any]) -> None:
+    typer.echo(f"Projection: {payload.get('status')}")
+    typer.echo(f"Job run: {payload.get('job_run_id')}")
+    typer.echo(f"Temporal workflow: {payload.get('workflow_id')}")
+    typer.echo(f"Temporal run: {payload.get('workflow_run_id')}")
+    typer.echo(f"Provider status: {payload.get('provider_status')}")
+    typer.echo(f"Provider attempts: {payload.get('provider_attempt_count')}")
+    typer.echo(f"Job status: {payload.get('job_status')}")
+    typer.echo(f"Changed: {'yes' if payload.get('changed') else 'no'}")
 
 
 def _render_money(value: Any) -> str:
@@ -336,4 +350,27 @@ def jobs_run_command(
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,
+    )
+
+
+@jobs_app.command(
+    "repair-projection",
+    help="Repair one stale job projection from its exact terminal Temporal run.",
+)
+def jobs_repair_projection_command(
+    job_run_id: str = typer.Argument(..., help="Job run id whose terminal projection should be repaired."),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    run_payload_command(
+        builder=lambda: repair_terminal_routine_projection(
+            db_target=db,
+            job_run_id=job_run_id,
+        ),
+        renderer=_render_projection_repair,
+        json_output=json_output,
+        no_color=no_color,
+        json_renderer=render_json_value,
+        error_prefix="Projection repair refused",
     )

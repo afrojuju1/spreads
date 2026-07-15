@@ -79,6 +79,7 @@ class _JobRunHealthProjection:
 class _WorkflowRuntimeProjection:
     routine_schedules_payload: dict[str, Any]
     workflow_lane_rows: list[dict[str, Any]]
+    execution_health_payload: dict[str, Any]
     blocked_workflow_lane_count: int
     due_routines_missing: list[dict[str, Any]]
     statuses: tuple[str, ...]
@@ -495,6 +496,7 @@ def _workflow_lane_rows(
     queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
     definitions: list[dict[str, Any]],
+    diagnostics: Mapping[str, Any],
     disabled_lanes: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     disabled = {str(value).strip() for value in (disabled_lanes or set()) if str(value).strip()}
@@ -503,7 +505,6 @@ def _workflow_lane_rows(
     }
     queued_by_lane = Counter(get_workflow_lane_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in queued_jobs)
     running_by_lane = Counter(get_workflow_lane_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in running_jobs)
-    diagnostics = get_workflow_runtime_diagnostics()
     diagnostics_by_lane = {str(row.get("lane")): row for row in diagnostics.get("lanes") or [] if isinstance(row, Mapping)}
 
     rows: list[dict[str, Any]] = []
@@ -542,6 +543,40 @@ def _workflow_lane_rows(
             }
         )
     return rows
+
+
+def _workflow_runtime_targets(
+    *,
+    execution_store: Any,
+    queued_jobs: list[dict[str, Any]],
+    running_jobs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    targets: list[dict[str, Any]] = []
+    if execution_store is not None and execution_store.intent_schema_ready():
+        for intent in execution_store.list_execution_intents(states=["claimed"], limit=200):
+            row = dict(intent)
+            payload = row.get("payload") if isinstance(row.get("payload"), Mapping) else {}
+            targets.append(
+                {
+                    "kind": "execution_intent",
+                    "correlation_id": row.get("execution_intent_id"),
+                    "status": row.get("state"),
+                    "workflow_id": payload.get("workflow_id"),
+                    "workflow_run_id": payload.get("workflow_run_id"),
+                    "projected_at": parse_datetime(row.get("updated_at") or row.get("created_at")),
+                }
+            )
+    for row in [*queued_jobs, *running_jobs]:
+        targets.append(
+            {
+                "kind": "job_run",
+                "correlation_id": row.get("job_run_id"),
+                "status": row.get("status"),
+                "workflow_run_id": row.get("orchestration_id"),
+                "projected_at": parse_datetime(_activity_at(row)),
+            }
+        )
+    return targets
 
 
 def _disabled_workflow_lane_rows(
@@ -648,9 +683,11 @@ def _job_run_health_attention(health: _JobRunHealthProjection) -> list[dict[str,
 def _project_workflow_runtime(
     *,
     job_store: Any,
+    execution_store: Any,
     definitions: list[dict[str, Any]],
     routine_schedule_definitions: list[dict[str, Any]],
     queued_jobs: list[dict[str, Any]],
+    correlated_queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
     disabled_lanes: set[str],
     now: datetime,
@@ -663,10 +700,19 @@ def _project_workflow_runtime(
         definitions=routine_schedule_definitions,
         now=now,
     )
+    diagnostics = get_workflow_runtime_diagnostics(
+        targets=_workflow_runtime_targets(
+            execution_store=execution_store,
+            queued_jobs=correlated_queued_jobs,
+            running_jobs=running_jobs,
+        )
+    )
+    execution_health_payload = dict(diagnostics.get("executions") or {})
     workflow_lane_rows = _workflow_lane_rows(
         queued_jobs=queued_jobs,
         running_jobs=running_jobs,
         definitions=definitions,
+        diagnostics=diagnostics,
         disabled_lanes=disabled_lanes,
     )
     blocked_workflow_lane_count = sum(1 for row in workflow_lane_rows if str(row.get("status") or "") == "blocked")
@@ -697,6 +743,19 @@ def _project_workflow_runtime(
             )
 
     statuses.append(str(schedules_payload.get("status") or "unknown"))
+    execution_health_status = str(execution_health_payload.get("status") or "unknown")
+    statuses.append(execution_health_status)
+
+    if execution_health_status in {"blocked", "degraded"}:
+        attention.append(
+            _attention(
+                severity="high" if execution_health_status == "blocked" else "medium",
+                code="workflow_executions_unhealthy",
+                message=(
+                    f"{len(execution_health_payload.get('issues') or [])} Temporal workflow execution issue(s) need attention."
+                ),
+            )
+        )
 
     if blocked_workflow_lane_count:
         if include_blocked_workflow_lane_status:
@@ -722,6 +781,7 @@ def _project_workflow_runtime(
     return _WorkflowRuntimeProjection(
         routine_schedules_payload=schedules_payload,
         workflow_lane_rows=workflow_lane_rows,
+        execution_health_payload=execution_health_payload,
         blocked_workflow_lane_count=blocked_workflow_lane_count,
         due_routines_missing=due_routines_missing,
         statuses=tuple(statuses),

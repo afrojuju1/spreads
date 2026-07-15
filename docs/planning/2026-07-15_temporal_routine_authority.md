@@ -1,6 +1,6 @@
 # Temporal Routine Authority
 
-Tracker: `spr-58o`
+Tracker: `spr-58o`, `spr-of1`, `spr-0yq`
 
 Status: implemented 2026-07-15
 
@@ -147,6 +147,25 @@ expected slots, Temporal execution evidence, and projected outcomes. A stale
 projection is an observability/reconciliation defect, not permission to create
 a parallel execution.
 
+Canonical JobsState and TradingOpsState read Temporal visibility and execution
+descriptions directly. They project open execution count, pending workflow-task
+age and attempt, Activity retry/dispatch/heartbeat age, retired-queue work,
+latest unresolved scheduled failures, and exact `job_runs` or claimed-intent
+correlations. A blocked execution projection blocks trading even when task-queue
+pollers are healthy.
+
+`spreads jobs repair-projection <job-run-id>` is the only routine projection
+repair operation. It resolves the exact run in `job_runs.orchestration_id`,
+verifies the workflow ID and `ScheduledJobWorkflow` type, refuses active or
+identity-mismatched work, and reads the terminal result/failure plus Activity
+attempt from Temporal. It can update only the existing Postgres outcome; it
+cannot acquire a lease, requeue work, or start a workflow. Completed routine
+results carry a versioned repair envelope with exact job/run identity,
+`succeeded` versus `skipped`, provider attempt, and the bounded persisted result,
+so repair never guesses from domain-specific result status strings. Temporal
+history remains the detailed failure source; Postgres retains only a bounded
+failure projection.
+
 ## Known Risk Boundary
 
 The provider can repeat an activity after a worker dies after committing a side
@@ -177,3 +196,13 @@ attempt model or set the provider attempt limit to one, as alert delivery does.
   required lanes have pollers, no required/optional-enabled lane is blocked,
   schedule health is healthy, actionable failed jobs are zero, capture is
   healthy, and trading remains allowed.
+- A deliberately unpolled workflow made canonical JobsState blocked after 41
+  seconds with exact workflow/run ID, queue, workflow-task age, and attempt;
+  terminating that exact run returned health to healthy immediately. The live
+  capture workflow remained healthy while heartbeating on provider attempt 2.
+- A controlled completed routine projection was changed to stale `running`.
+  Canonical health reported the exact Postgres/Temporal mismatch; the shipped
+  repair restored its Temporal result, close time, and attempt count. A second
+  repair was unchanged. Separate live checks refused an active run and a
+  workflow-ID mismatch, and a controlled failed workflow projected its bounded
+  Temporal failure chain and Activity attempt without a requeue or lease.

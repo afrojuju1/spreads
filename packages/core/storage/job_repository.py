@@ -276,6 +276,84 @@ class JobRepository(RepositoryBase):
             worker_name=worker_name,
         )
 
+    def repair_terminal_job_run_projection(
+        self,
+        *,
+        job_run_id: str,
+        expected_orchestration_id: str,
+        status: str,
+        retry_count: int,
+        finished_at: str | datetime,
+        result: dict[str, Any] | None,
+        error_text: str | None,
+    ) -> tuple[JobRunRecord, bool]:
+        if status not in {"succeeded", "skipped", "failed"}:
+            raise ValueError(f"Unsupported terminal job status: {status}")
+        finished_at_dt = parse_datetime(finished_at)
+        if finished_at_dt is None:
+            raise ValueError("Terminal projection repair requires finished_at")
+        resolved_retry_count = max(int(retry_count), 0)
+        with self.session_scope() as session:
+            row = session.scalar(
+                select(JobRunModel)
+                .where(JobRunModel.job_run_id == job_run_id)
+                .with_for_update()
+            )
+            if row is None:
+                raise ValueError(f"Unknown job_run_id: {job_run_id}")
+            if row.orchestration_id != expected_orchestration_id:
+                raise ValueError(
+                    f"Job run {job_run_id} belongs to Temporal run {row.orchestration_id}, "
+                    f"not {expected_orchestration_id}."
+                )
+            terminal_outcome_matches = (
+                row.status == status
+                and int(row.retry_count) == resolved_retry_count
+                and row.result_json == result
+                and row.error_text == error_text
+            )
+            if terminal_outcome_matches:
+                return self.row(row), False
+            if row.status in {"succeeded", "skipped", "failed"}:
+                raise ValueError(
+                    f"Job run {job_run_id} already has a different terminal projection; refusing to overwrite it."
+                )
+            row.status = status
+            row.retry_count = resolved_retry_count
+            row.finished_at = finished_at_dt
+            row.result_json = result
+            row.error_text = error_text
+            session.flush()
+            session.refresh(row)
+            return self.row(row), True
+
+    def record_terminal_job_run_delivery_attempt(
+        self,
+        *,
+        job_run_id: str,
+        expected_orchestration_id: str,
+        provider_attempt: int,
+    ) -> JobRunRecord:
+        with self.session_scope() as session:
+            row = session.scalar(
+                select(JobRunModel)
+                .where(JobRunModel.job_run_id == job_run_id)
+                .with_for_update()
+            )
+            if row is None:
+                raise ValueError(f"Unknown job_run_id: {job_run_id}")
+            if row.orchestration_id != expected_orchestration_id:
+                raise ValueError(
+                    f"Job run {job_run_id} belongs to Temporal run {row.orchestration_id}, "
+                    f"not {expected_orchestration_id}."
+                )
+            if row.status not in {"succeeded", "skipped"}:
+                raise ValueError(f"Job run {job_run_id} is not a completed terminal projection.")
+            row.retry_count = max(int(row.retry_count), max(int(provider_attempt) - 1, 0))
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
     def begin_job_run_attempt(
         self,
         *,

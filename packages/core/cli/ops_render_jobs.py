@@ -70,6 +70,14 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         ),
     )
     overview.add_row("Workflow Lanes", _render_value(summary.get("workflow_lane_count")))
+    overview.add_row(
+        "Workflow Executions",
+        (
+            f"{_render_value(summary.get('workflow_execution_status'))} | "
+            f"open {_render_value(summary.get('open_workflow_execution_count'))} | "
+            f"issues {_render_value(summary.get('workflow_execution_issue_count'))}"
+        ),
+    )
     overview.add_row("Disabled Workflow Lanes", _render_value(summary.get("disabled_workflow_lane_count")))
     if summary.get("status_filter") == "failed" or summary.get("actionable_failed_count"):
         overview.add_row(
@@ -113,6 +121,36 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         console.print(table)
 
     _render_disabled_workflow_lanes(console, list(details.get("disabled_workflow_lanes") or []))
+
+    workflow_execution_issues = list(dict(details.get("workflow_executions") or {}).get("issues") or [])
+    if workflow_execution_issues:
+        table = Table(title="Workflow Execution Issues", header_style="bold")
+        table.add_column("Health")
+        table.add_column("Issue")
+        table.add_column("Workflow")
+        table.add_column("Correlation")
+        table.add_column("Queue")
+        table.add_column("Age", justify="right")
+        table.add_column("Attempt", justify="right")
+        for row in workflow_execution_issues:
+            age = row.get("task_age_seconds")
+            if age is None:
+                age = row.get("activity_age_seconds")
+            if age is None:
+                age = row.get("projection_age_seconds")
+            attempt = row.get("task_attempt")
+            if attempt is None:
+                attempt = row.get("activity_attempt")
+            table.add_row(
+                _status_text(row.get("severity")),
+                str(row.get("issue") or "-"),
+                str(row.get("workflow_id") or "-"),
+                str(row.get("correlation_id") or "-"),
+                str(row.get("task_queue") or "-"),
+                _render_value(age),
+                _render_value(attempt),
+            )
+        console.print(table)
 
     definition_rows = [] if summary.get("status_filter") else list(details.get("declared_jobs") or [])
     if definition_rows:

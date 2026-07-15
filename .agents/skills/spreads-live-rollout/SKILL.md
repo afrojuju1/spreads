@@ -113,9 +113,11 @@ docker compose ps
 uv run spreads ops state
 uv run spreads ops storage
 uv run spreads jobs
-uv run spreads jobs lanes
 uv run spreads execution positions --date <YYYY-MM-DD> --json
 ```
+
+Confirm `details.workflow_executions.status` is healthy as well as workflow-lane
+pollers. A provider execution issue is not cleared by a healthy poller count.
 
 Do not add rollout checks around removed runtime product names or fragmented ops surfaces.
 

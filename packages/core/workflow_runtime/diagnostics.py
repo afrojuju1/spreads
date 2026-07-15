@@ -11,10 +11,11 @@ from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
 from core.jobs.registry import WORKFLOW_LANES
 from core.jobs.specs import disabled_workflow_lanes
 from core.runtime.config import default_workflow_address, default_workflow_namespace
+from core.workflow_runtime.execution_health import collect_execution_health
 from core.workflow_runtime.provider import PROVIDER_NAME, connect_provider, provider_queue_for_lane
 
 
-async def _lane_diagnostics() -> dict[str, Any]:
+async def _runtime_diagnostics(*, targets: list[dict[str, Any]]) -> dict[str, Any]:
     namespace = default_workflow_namespace()
     client = await connect_provider(address=default_workflow_address(), namespace=namespace)
     disabled_lanes = disabled_workflow_lanes()
@@ -62,18 +63,46 @@ async def _lane_diagnostics() -> dict[str, Any]:
                 "provider": {"name": PROVIDER_NAME, "queue": queue},
             }
         )
-    return {"status": "healthy", "provider": PROVIDER_NAME, "lanes": rows}
+    execution_health = await collect_execution_health(client, targets=targets)
+    return {
+        "status": "blocked" if execution_health["status"] == "blocked" else "healthy",
+        "provider": PROVIDER_NAME,
+        "lanes": rows,
+        "executions": execution_health,
+    }
 
 
-def get_workflow_runtime_diagnostics(*, timeout_seconds: float = 3.0) -> dict[str, Any]:
+def get_workflow_runtime_diagnostics(
+    *,
+    targets: list[dict[str, Any]] | None = None,
+    timeout_seconds: float = 5.0,
+) -> dict[str, Any]:
     try:
-        return asyncio.run(asyncio.wait_for(_lane_diagnostics(), timeout=timeout_seconds))
+        return asyncio.run(
+            asyncio.wait_for(
+                _runtime_diagnostics(targets=list(targets or [])),
+                timeout=timeout_seconds,
+            )
+        )
     except Exception as exc:
         disabled_lanes = disabled_workflow_lanes()
         return {
             "status": "blocked",
             "provider": PROVIDER_NAME,
             "error": str(exc),
+            "executions": {
+                "status": "blocked",
+                "open_execution_count": 0,
+                "correlated_target_count": len(targets or []),
+                "stuck_workflow_task_count": 0,
+                "pending_activity_retry_count": 0,
+                "stuck_activity_count": 0,
+                "retired_queue_execution_count": 0,
+                "schedule_failure_count": 0,
+                "projection_mismatch_count": 0,
+                "issues": [],
+                "error": str(exc),
+            },
             "lanes": [
                 {
                     "lane": spec.lane,

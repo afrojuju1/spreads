@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from core.jobs.contracts import ResolvedRoutineRequest, RoutineExecutionContext, RoutineHandler
+from core.jobs.contracts import ResolvedRoutineRequest, RoutineExecutionContext, RoutineHandler, RoutineOutcome
 from core.storage.factory import build_storage_context
 from core.storage.job_repository import JobRepository
 
@@ -36,7 +36,7 @@ class RoutineActivityRunner:
         job_store: JobRepository,
         request: ResolvedRoutineRequest,
         payload: dict[str, Any],
-    ) -> dict[str, Any] | None:
+    ) -> RoutineOutcome | None:
         row, created = job_store.create_job_run(
             job_run_id=request.job_run_id,
             job_key=request.job_key,
@@ -58,15 +58,36 @@ class RoutineActivityRunner:
             )
         row_status = str(row.get("status") or "")
         if row_status in COMPLETED_JOB_STATUSES:
+            row = job_store.record_terminal_job_run_delivery_attempt(
+                job_run_id=request.job_run_id,
+                expected_orchestration_id=request.orchestration_id,
+                provider_attempt=request.provider_attempt,
+            )
             persisted_result = row.get("result")
             if isinstance(persisted_result, Mapping):
-                return dict(persisted_result)
-            return {
+                return (
+                    RoutineOutcome.skipped(persisted_result)
+                    if row_status == "skipped"
+                    else RoutineOutcome.succeeded(persisted_result)
+                )
+            fallback = {
                 "status": row_status,
                 "reason": "job_run_already_terminal",
                 "job_run_id": request.job_run_id,
             }
+            return RoutineOutcome.skipped(fallback) if row_status == "skipped" else RoutineOutcome.succeeded(fallback)
         return None
+
+    @staticmethod
+    def _provider_result(request: ResolvedRoutineRequest, outcome: RoutineOutcome) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "job_run_id": request.job_run_id,
+            "orchestration_id": request.orchestration_id,
+            "job_status": outcome.job_status,
+            "provider_attempt": request.provider_attempt,
+            "result": dict(outcome.persisted_result),
+        }
 
     def _heartbeat_callback(
         self,
@@ -106,7 +127,7 @@ class RoutineActivityRunner:
             early_result = self._prepare_job_run(job_store, request, payload)
             job_row_ready = True
             if early_result is not None:
-                return early_result
+                return self._provider_result(request, early_result)
 
             running = job_store.begin_job_run_attempt(
                 job_run_id=request.job_run_id,
@@ -146,7 +167,7 @@ class RoutineActivityRunner:
             )
             if completed is None:
                 raise RuntimeError(f"Job run {request.job_run_id} was superseded before completion.")
-            return outcome.persisted_result
+            return self._provider_result(request, outcome)
         except Exception as exc:
             if job_row_ready:
                 job_store.update_job_run_status(

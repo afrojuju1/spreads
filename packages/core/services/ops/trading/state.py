@@ -126,6 +126,8 @@ def build_trading_ops_state(
         trading_allowed = False
     elif account.account.get("trading_blocked") or account.account.get("account_blocked"):
         trading_allowed = False
+    elif jobs.summary.get("workflow_execution_status") == "blocked":
+        trading_allowed = False
     elif execution_contract.summary.get("environment_compatible") is False:
         trading_allowed = False
     elif execution.stale_open_execution_count or execution.submit_unknown_execution_count:
@@ -171,6 +173,10 @@ def build_trading_ops_state(
         "blocked_workflow_lane_count": sum(
             1 for row in as_list(jobs.details.get("workflow_lanes")) if as_mapping(row).get("status") == "blocked"
         ),
+        "workflow_execution_status": jobs.summary.get("workflow_execution_status"),
+        "open_workflow_execution_count": jobs.summary.get("open_workflow_execution_count"),
+        "workflow_execution_issue_count": jobs.summary.get("workflow_execution_issue_count"),
+        "workflow_projection_mismatch_count": jobs.summary.get("workflow_projection_mismatch_count"),
         "idle_workflow_lane_count": sum(
             1 for row in as_list(jobs.details.get("workflow_lanes")) if as_mapping(row).get("status") == "idle"
         ),
@@ -241,6 +247,7 @@ def build_trading_ops_state(
         "jobs": jobs.payload,
         "routine_schedules": jobs.details.get("routine_schedules"),
         "workflow_lanes": jobs.details.get("workflow_lanes"),
+        "workflow_executions": jobs.details.get("workflow_executions"),
         "disabled_workflow_lanes": jobs.details.get("disabled_workflow_lanes"),
         "running_jobs": [dict(row) for row in as_list(jobs.details.get("running_jobs")) if as_mapping(row).get("status") == "running"],
         "queued_jobs": [dict(row) for row in as_list(jobs.details.get("queued_jobs")) if as_mapping(row).get("status") == "queued"],

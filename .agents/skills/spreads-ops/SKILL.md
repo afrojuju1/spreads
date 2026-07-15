@@ -39,7 +39,9 @@ uv run spreads ops storage --json
 uv run spreads jobs --json
 ```
 
-Read workflow-lane health from `details.workflow_lanes` in the jobs payload.
+Read workflow-lane pollers from `details.workflow_lanes` and provider execution
+progress from `details.workflow_executions` in the jobs payload. Healthy pollers
+do not override a blocked execution projection.
 
 For a market date:
 
@@ -85,6 +87,14 @@ Use these splits:
 - For strategy-output diagnosis, use `spreads ops strategy-ledger --date YYYY-MM-DD --json` and inspect `candidates.candidate_productivity_state`, `diagnostic_status_counts`, raw/postprocess/runtime/returned counts, and market-context/regime-fit status counts before calling a strategy barren.
 - selected decisions without active or filled intents point at admission, executor lifecycle policy, dispatch, or broker submission.
 - stale open executions or unknown submit status point at execution lifecycle reconciliation.
+- `workflow_task_stuck`, `activity_dispatch_stuck`, or
+  `activity_heartbeat_stale` under `details.workflow_executions.issues` points
+  at the exact Temporal workflow/run and queue; inspect that run before
+  restarting a worker.
+- `projection_mismatch` means Postgres still shows active work after the exact
+  Temporal run closed. Use `spreads jobs repair-projection <job-run-id>` only
+  for the correlated row. The command must refuse active or mismatched runs;
+  never requeue or start a replacement as projection repair.
 - historical failed jobs are not live blockers when canonical state recovered and `actionable_failed_count=0`.
 
 ## Daily Or Post-Market
