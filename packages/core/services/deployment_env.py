@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from dotenv import dotenv_values
 
@@ -52,6 +53,17 @@ def _secret_value(
     return default
 
 
+def _password_from_url(value: str | None) -> str | None:
+    text = as_text(value)
+    if text is None:
+        return None
+    try:
+        password = urlparse(text).password
+    except ValueError:
+        return None
+    return None if password is None else unquote(password)
+
+
 def _web_allowed_dev_origins(target: DeployTarget) -> str:
     origins = ["localhost", "127.0.0.1"]
     for value in (target.bind_host, target.ssh_host, target.name):
@@ -72,13 +84,16 @@ def build_deploy_env_values(
         merged,
         "POSTGRES_PASSWORD",
         "SPREADS_POSTGRES_PASSWORD",
-        default="replace-me",
+        default=_password_from_url(merged.get("SPREADS_DATABASE_URL")) or "replace-me",
     )
     clickhouse_password = _secret_value(
         merged,
         "CLICKHOUSE_PASSWORD",
         "SPREADS_CLICKHOUSE_PASSWORD",
-        default="replace-me",
+        default=(
+            _password_from_url(merged.get("SPREADS_CLICKHOUSE_URL"))
+            or ("spreads" if target.compose_file == "docker-compose.yml" else "replace-me")
+        ),
     )
     api_key = _secret_value(
         merged,
@@ -122,7 +137,6 @@ def build_deploy_env_values(
 
     env_values = {
         "SPREADS_DEPLOY_ENV": target.name,
-        "SPREADS_EXCLUDED_JOB_TYPES": ",".join(target.excluded_job_types),
         "SPREADS_COMPOSE_PROJECT_NAME": target.compose_project_name,
         "SPREADS_CONTAINER_ENV_FILE": target.env_file,
         "SPREADS_BIND_HOST": target.bind_host,
@@ -138,10 +152,19 @@ def build_deploy_env_values(
         "SPREADS_DOCKER_LOG_MAX_FILE": str(target.docker_log_max_file),
         "SPREADS_COMPOSE_FILE": target.compose_file,
         "SPREADS_WEB_ENABLED": "true" if target.web_enabled else "false",
-        "SPREADS_WORKER_RUNTIME_REPLICAS": str(target.worker_runtime_replicas),
-        "SPREADS_WORKER_DATA_REPLICAS": str(target.worker_data_replicas),
-        "SPREADS_WORKER_VALUATION_REPLICAS": str(target.worker_valuation_replicas),
-        "SPREADS_WORKER_RESEARCH_REPLICAS": str(target.worker_research_replicas),
+        "SPREADS_RUNTIME_LANE_REPLICAS": str(target.runtime_lane_replicas),
+        "SPREADS_DATA_LANE_REPLICAS": str(target.data_lane_replicas),
+        "SPREADS_MAINTENANCE_LANE_REPLICAS": str(target.maintenance_lane_replicas),
+        "SPREADS_VALUATION_LANE_REPLICAS": str(target.valuation_lane_replicas),
+        "SPREADS_RESEARCH_LANE_REPLICAS": str(target.research_lane_replicas),
+        "SPREADS_DISABLED_WORKFLOW_LANES": ",".join(
+            lane
+            for lane, replicas in (
+                ("valuation", target.valuation_lane_replicas),
+                ("research", target.research_lane_replicas),
+            )
+            if replicas == 0
+        ),
         "SPREADS_BACKUP_RETENTION_DAYS": str(target.backup_retention_days),
         "SPREADS_HEALTH_CHECK_MINUTES": str(target.health_check_minutes),
         "SPREADS_OPS_LOG_DIR": str(_ops_log_dir(target)),
@@ -166,7 +189,7 @@ def build_deploy_env_values(
         "SPREADS_TRADINGAGENTS_DIR": str(tradingagents_container_dir),
         "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(tradingagents_uv_environment),
         "OLLAMA_BASE_URL": str(ollama_base_url),
-        "SPREADS_MARKET_RECORDER_OWNER_ENV": str(as_text(target.market_recorder_owner_env) or ""),
+        "SPREADS_CAPTURE_OWNER_TARGET": str(as_text(target.capture_owner_target) or ""),
     }
 
     if require_secrets:
@@ -214,14 +237,15 @@ def build_host_env_values(
     api_base_url = f"http://{host_bind_host}:{values['SPREADS_API_PORT']}"
     return {
         "SPREADS_DEPLOY_ENV": values["SPREADS_DEPLOY_ENV"],
-        "SPREADS_EXCLUDED_JOB_TYPES": values["SPREADS_EXCLUDED_JOB_TYPES"],
+        "SPREADS_DISABLED_WORKFLOW_LANES": values["SPREADS_DISABLED_WORKFLOW_LANES"],
         "SPREADS_CONTAINER_ENV_FILE": values["SPREADS_CONTAINER_ENV_FILE"],
         "SPREADS_COMPOSE_FILE": values["SPREADS_COMPOSE_FILE"],
         "SPREADS_WEB_ENABLED": values["SPREADS_WEB_ENABLED"],
-        "SPREADS_WORKER_RUNTIME_REPLICAS": values["SPREADS_WORKER_RUNTIME_REPLICAS"],
-        "SPREADS_WORKER_DATA_REPLICAS": values["SPREADS_WORKER_DATA_REPLICAS"],
-        "SPREADS_WORKER_VALUATION_REPLICAS": values["SPREADS_WORKER_VALUATION_REPLICAS"],
-        "SPREADS_WORKER_RESEARCH_REPLICAS": values["SPREADS_WORKER_RESEARCH_REPLICAS"],
+        "SPREADS_RUNTIME_LANE_REPLICAS": values["SPREADS_RUNTIME_LANE_REPLICAS"],
+        "SPREADS_DATA_LANE_REPLICAS": values["SPREADS_DATA_LANE_REPLICAS"],
+        "SPREADS_MAINTENANCE_LANE_REPLICAS": values["SPREADS_MAINTENANCE_LANE_REPLICAS"],
+        "SPREADS_VALUATION_LANE_REPLICAS": values["SPREADS_VALUATION_LANE_REPLICAS"],
+        "SPREADS_RESEARCH_LANE_REPLICAS": values["SPREADS_RESEARCH_LANE_REPLICAS"],
         "SPREADS_BACKUP_RETENTION_DAYS": values["SPREADS_BACKUP_RETENTION_DAYS"],
         "SPREADS_HEALTH_CHECK_MINUTES": values["SPREADS_HEALTH_CHECK_MINUTES"],
         "SPREADS_DATABASE_URL": host_database_url,
@@ -239,7 +263,7 @@ def build_host_env_values(
         "SPREADS_TRADINGAGENTS_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
         "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(Path(values["SPREADS_TRADINGAGENTS_HOST_DIR"]) / ".venv"),
         "OLLAMA_BASE_URL": "http://localhost:11434/v1",
-        "SPREADS_MARKET_RECORDER_OWNER_ENV": values["SPREADS_MARKET_RECORDER_OWNER_ENV"],
+        "SPREADS_CAPTURE_OWNER_TARGET": values["SPREADS_CAPTURE_OWNER_TARGET"],
     }
 
 
@@ -255,7 +279,7 @@ def render_deploy_env_file(
         "",
         "# Compose target",
         f"SPREADS_DEPLOY_ENV={values['SPREADS_DEPLOY_ENV']}",
-        f"SPREADS_EXCLUDED_JOB_TYPES={values['SPREADS_EXCLUDED_JOB_TYPES']}",
+        f"SPREADS_DISABLED_WORKFLOW_LANES={values['SPREADS_DISABLED_WORKFLOW_LANES']}",
         f"SPREADS_COMPOSE_PROJECT_NAME={values['SPREADS_COMPOSE_PROJECT_NAME']}",
         f"SPREADS_CONTAINER_ENV_FILE={values['SPREADS_CONTAINER_ENV_FILE']}",
         f"SPREADS_COMPOSE_FILE={values['SPREADS_COMPOSE_FILE']}",
@@ -266,10 +290,11 @@ def render_deploy_env_file(
         f"SPREADS_REDIS_PORT={values['SPREADS_REDIS_PORT']}",
         f"SPREADS_WEB_PORT={values['SPREADS_WEB_PORT']}",
         f"SPREADS_WEB_ENABLED={values['SPREADS_WEB_ENABLED']}",
-        f"SPREADS_WORKER_RUNTIME_REPLICAS={values['SPREADS_WORKER_RUNTIME_REPLICAS']}",
-        f"SPREADS_WORKER_DATA_REPLICAS={values['SPREADS_WORKER_DATA_REPLICAS']}",
-        f"SPREADS_WORKER_VALUATION_REPLICAS={values['SPREADS_WORKER_VALUATION_REPLICAS']}",
-        f"SPREADS_WORKER_RESEARCH_REPLICAS={values['SPREADS_WORKER_RESEARCH_REPLICAS']}",
+        f"SPREADS_RUNTIME_LANE_REPLICAS={values['SPREADS_RUNTIME_LANE_REPLICAS']}",
+        f"SPREADS_DATA_LANE_REPLICAS={values['SPREADS_DATA_LANE_REPLICAS']}",
+        f"SPREADS_MAINTENANCE_LANE_REPLICAS={values['SPREADS_MAINTENANCE_LANE_REPLICAS']}",
+        f"SPREADS_VALUATION_LANE_REPLICAS={values['SPREADS_VALUATION_LANE_REPLICAS']}",
+        f"SPREADS_RESEARCH_LANE_REPLICAS={values['SPREADS_RESEARCH_LANE_REPLICAS']}",
         f"SPREADS_BACKUP_RETENTION_DAYS={values['SPREADS_BACKUP_RETENTION_DAYS']}",
         f"SPREADS_HEALTH_CHECK_MINUTES={values['SPREADS_HEALTH_CHECK_MINUTES']}",
         f"SPREADS_OPS_LOG_DIR={values['SPREADS_OPS_LOG_DIR']}",
@@ -278,7 +303,7 @@ def render_deploy_env_file(
         f"SPREADS_DOCKER_LOG_DRIVER={values['SPREADS_DOCKER_LOG_DRIVER']}",
         f"SPREADS_DOCKER_LOG_MAX_SIZE={values['SPREADS_DOCKER_LOG_MAX_SIZE']}",
         f"SPREADS_DOCKER_LOG_MAX_FILE={values['SPREADS_DOCKER_LOG_MAX_FILE']}",
-        f"SPREADS_MARKET_RECORDER_OWNER_ENV={values['SPREADS_MARKET_RECORDER_OWNER_ENV']}",
+        f"SPREADS_CAPTURE_OWNER_TARGET={values['SPREADS_CAPTURE_OWNER_TARGET']}",
         "",
         "# Application secrets",
         f"APCA_API_KEY_ID={values['APCA_API_KEY_ID']}",

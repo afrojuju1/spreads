@@ -289,7 +289,7 @@ def classify_open_execution_attempt(
         lifecycle["stale"] = True
         lifecycle["next_action"] = "inspect_workflow"
         lifecycle["intervention"] = "inspect_workflow"
-        lifecycle["note"] = "Execution stayed queued past the submission grace window; inspect the Temporal workflow activity."
+        lifecycle["note"] = "Execution stayed queued past the submission grace window; inspect the lifecycle workflow activity."
         return lifecycle
 
     if status == SUBMIT_UNKNOWN_STATUS:

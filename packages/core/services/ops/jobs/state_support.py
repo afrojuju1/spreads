@@ -3,18 +3,23 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.orchestration import (
     SINGLETON_LEASE_PREFIX,
+    expected_routine_slots,
     resolve_scheduled_for,
     singleton_lease_key,
 )
-from core.jobs.registry import JOB_SPECS, TEMPORAL_TASK_QUEUES, get_task_queue_name_for_job_type
+from core.jobs.registry import (
+    ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE,
+    WORKFLOW_LANES,
+    get_workflow_lane_for_job_type,
+)
 from core.jobs.specs import (
-    excluded_declared_job_types,
+    disabled_workflow_lanes,
     get_declared_job_row,
     list_declared_job_rows,
 )
@@ -44,8 +49,9 @@ from core.services.ops.shared import (
 )
 from core.services.ops.trading.broker import broker_sync_payload as _broker_sync_payload
 from core.services.ops.trading.market import market_session_context as _market_session_context
+from core.workflow_runtime.diagnostics import get_workflow_runtime_diagnostics
+from core.workflow_runtime.routine_schedules import routine_config_hash
 
-_JOB_TYPE_BY_TASK_NAME = {spec.task_name: job_type for job_type, spec in JOB_SPECS.items()}
 RETIRED_LIFECYCLE_JOB_TYPES = frozenset(
     {
         "execution_intent" + "_dispatch",
@@ -75,27 +81,54 @@ class _JobRunHealthProjection:
 
 
 @dataclass(frozen=True)
-class _WorkerRuntimeProjection:
-    schedules_payload: dict[str, Any]
-    task_queue_rows: list[dict[str, Any]]
+class _WorkflowRuntimeProjection:
+    routine_schedules_payload: dict[str, Any]
+    workflow_lane_rows: list[dict[str, Any]]
     singleton_leases: list[dict[str, Any]]
     stale_singleton_leases: list[dict[str, Any]]
-    blocked_task_queue_count: int
+    blocked_workflow_lane_count: int
+    due_routines_missing: list[dict[str, Any]]
     statuses: tuple[str, ...]
     attention: list[dict[str, str]]
 
 
-def _temporal_schedules_payload(definitions: list[dict[str, Any]]) -> dict[str, Any]:
-    enabled_count = sum(1 for row in definitions if bool(row.get("enabled")))
-    declared_count = len(definitions)
+def _routine_schedules_payload(
+    *,
+    job_store: Any,
+    definitions: list[dict[str, Any]],
+    now: datetime,
+) -> dict[str, Any]:
+    scheduled_definitions = [row for row in definitions if str(row.get("schedule_type") or "manual") != "manual"]
+    enabled_count = sum(1 for row in scheduled_definitions if bool(row.get("enabled")))
+    declared_count = len(scheduled_definitions)
+    latest_runs = job_store.list_job_runs(job_type=ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE, limit=1)
+    latest = None if not latest_runs else dict(latest_runs[0])
+    result = latest.get("result") if isinstance(latest, Mapping) and isinstance(latest.get("result"), Mapping) else {}
+    expected_hash = routine_config_hash(definitions)
+    observed_hash = as_text(result.get("config_hash"))
+    age_seconds = None if latest is None else _seconds_since(_activity_at(latest), now=now)
+    hash_matches = observed_hash == expected_hash
+    if enabled_count == 0:
+        status = "idle"
+    elif latest is None or not hash_matches:
+        status = "blocked"
+    elif age_seconds is None or age_seconds > 86400:
+        status = "degraded"
+    else:
+        status = "healthy"
     return {
-        "status": "healthy" if enabled_count else "idle",
-        "kind": "temporal_schedules",
+        "status": status,
+        "kind": "routine_schedules",
         "declared_schedule_count": declared_count,
         "enabled_schedule_count": enabled_count,
         "disabled_schedule_count": max(declared_count - enabled_count, 0),
-        "reconcile_command": "spreads runtime temporal-schedules",
-        "note": "Temporal schedules are reconciled from declared job definitions.",
+        "reconcile_command": "spreads runtime routine-schedules",
+        "last_reconciled_at": None if latest is None else _activity_at(latest),
+        "reconciliation_age_seconds": age_seconds,
+        "config_hash": expected_hash,
+        "reconciled_config_hash": observed_hash,
+        "config_hash_matches": hash_matches,
+        "note": "Routine schedules are reconciled from declared routine definitions.",
     }
 
 
@@ -245,7 +278,7 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
     error_text = str(as_text(run.get("error_text")) or "").strip().lower()
     return error_text in {
         "superseded during queue consolidation",
-        "superseded by a newer live slot under Temporal schedule coalescing.",
+        "superseded by a newer live slot under routine schedule coalescing.",
         "superseded by a newer scheduled run.",
     }
 
@@ -438,7 +471,11 @@ def _summarize_job_definition(
 ) -> dict[str, Any]:
     enriched_latest_run = None if latest_run is None else dict(latest_run)
     latest_summary = None if enriched_latest_run is None else _summarize_job_run(enriched_latest_run, now=now)
-    session_schedule: dict[str, Any] = {}
+    slots = expected_routine_slots(definition, now=now)
+    session_schedule: dict[str, Any] = {
+        "previous_expected_slot_at": None if slots["previous"] is None else utc_iso(slots["previous"]),
+        "next_expected_slot_at": None if slots["next"] is None else utc_iso(slots["next"]),
+    }
     return {
         "job_key": definition.get("job_key"),
         "job_type": definition.get("job_type"),
@@ -460,7 +497,8 @@ def _summarize_job_definition(
         "latest_run_at": None if latest_summary is None else latest_summary.get("activity_at"),
         "latest_capture_status": None if latest_summary is None else latest_summary.get("capture_status"),
         "schedule_state": session_schedule.get("state"),
-        "expected_slot_at": session_schedule.get("expected_current_slot_at"),
+        "expected_slot_at": session_schedule.get("previous_expected_slot_at"),
+        "next_expected_slot_at": session_schedule.get("next_expected_slot_at"),
         "schedule_note": None,
     }
 
@@ -469,85 +507,82 @@ def _job_key_is_adhoc(job_key: Any) -> bool:
     return str(job_key or "").strip().endswith(":adhoc")
 
 
-def _task_queue_rows(
+def _workflow_lane_rows(
     *,
     queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
     definitions: list[dict[str, Any]],
-    excluded_job_types: set[str] | None = None,
+    disabled_lanes: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    excluded = {str(value).strip() for value in (excluded_job_types or set()) if str(value).strip()}
+    disabled = {str(value).strip() for value in (disabled_lanes or set()) if str(value).strip()}
     enabled_job_types = {
         str(row.get("job_type") or "").strip() for row in definitions if bool(row.get("enabled")) and str(row.get("job_type") or "").strip()
     }
-    queued_by_task_queue = Counter(get_task_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in queued_jobs)
-    running_by_task_queue = Counter(get_task_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in running_jobs)
+    queued_by_lane = Counter(get_workflow_lane_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in queued_jobs)
+    running_by_lane = Counter(get_workflow_lane_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in running_jobs)
+    diagnostics = get_workflow_runtime_diagnostics()
+    diagnostics_by_lane = {str(row.get("lane")): row for row in diagnostics.get("lanes") or [] if isinstance(row, Mapping)}
 
     rows: list[dict[str, Any]] = []
-    for spec in TEMPORAL_TASK_QUEUES:
-        task_names = [task_name for task_name in spec.task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") not in excluded]
-        if not task_names:
-            continue
-        enabled_task_names = [task_name for task_name in task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") in enabled_job_types]
-        queued_job_count = int(queued_by_task_queue.get(str(spec.task_queue_name), 0))
-        running_job_count = int(running_by_task_queue.get(str(spec.task_queue_name), 0))
-        if not enabled_task_names:
-            status = "degraded" if queued_job_count > 0 or running_job_count > 0 else "idle"
+    for spec in WORKFLOW_LANES:
+        diagnostic = diagnostics_by_lane.get(spec.lane, {})
+        job_types = list(spec.job_types)
+        enabled_types = [job_type for job_type in job_types if job_type in enabled_job_types]
+        queued_job_count = int(queued_by_lane.get(spec.lane, 0))
+        running_job_count = int(running_by_lane.get(spec.lane, 0))
+        lane_disabled = spec.lane in disabled or not bool(diagnostic.get("enabled", True))
+        if lane_disabled:
+            status = "disabled"
+        elif spec.optional and not enabled_types:
+            status = "idle"
+        elif int(diagnostic.get("poller_count") or 0) == 0:
+            status = "blocked"
         else:
             status = "healthy"
         rows.append(
             {
-                "worker": spec.worker,
-                "task_queue": spec.task_queue_name,
-                "task_names": task_names,
-                "task_count": len(task_names),
-                "enabled_task_names": enabled_task_names,
-                "enabled_task_count": len(enabled_task_names),
-                "max_jobs": spec.max_jobs,
+                "lane": spec.lane,
+                "required_for_trading": spec.required_for_trading,
+                "required_for_deploy": spec.required_for_deploy,
+                "optional": spec.optional,
+                "routine_types": job_types,
+                "routine_type_count": len(job_types),
+                "enabled_routine_types": enabled_types,
+                "enabled_routine_type_count": len(enabled_types),
+                "max_concurrency": spec.max_concurrency,
                 "queued_job_count": queued_job_count,
                 "running_job_count": running_job_count,
+                "poller_count": int(diagnostic.get("poller_count") or 0),
+                "pollers": list(diagnostic.get("pollers") or []),
+                **({} if not isinstance(diagnostic.get("provider"), Mapping) else {"provider": dict(diagnostic["provider"])}),
                 "status": status,
             }
         )
     return rows
 
 
-def _disabled_task_queue_rows(
+def _disabled_workflow_lane_rows(
     *,
-    excluded_job_types: set[str],
+    disabled_lanes: set[str],
 ) -> list[dict[str, Any]]:
-    excluded = {str(value).strip() for value in excluded_job_types if str(value).strip()}
-    rows: list[dict[str, Any]] = []
-    for spec in TEMPORAL_TASK_QUEUES:
-        disabled_task_names = []
-        disabled_job_types = []
-        active_task_names = []
-        for task_name in spec.task_names:
-            job_type = _JOB_TYPE_BY_TASK_NAME.get(task_name, "")
-            if job_type in excluded:
-                disabled_task_names.append(task_name)
-                disabled_job_types.append(job_type)
-            else:
-                active_task_names.append(task_name)
-        if not disabled_task_names or active_task_names:
-            continue
-        rows.append(
+    disabled = {str(value).strip() for value in disabled_lanes if str(value).strip()}
+    return [
             {
-                "worker": spec.worker,
-                "task_queue": spec.task_queue_name,
-                "task_names": disabled_task_names,
-                "task_count": len(disabled_task_names),
-                "enabled_task_names": [],
-                "enabled_task_count": 0,
-                "disabled_job_types": disabled_job_types,
-                "disabled_job_type_count": len(disabled_job_types),
+                "lane": spec.lane,
+                "required_for_trading": spec.required_for_trading,
+                "required_for_deploy": spec.required_for_deploy,
+                "optional": spec.optional,
+                "routine_types": list(spec.job_types),
+                "routine_type_count": len(spec.job_types),
                 "queued_job_count": 0,
                 "running_job_count": 0,
+                "poller_count": 0,
                 "status": "disabled",
-                "operator_note": "Task queue disabled by deploy target excluded_job_types.",
+                "operator_note": "Workflow lane is explicitly disabled by deploy policy.",
             }
-        )
-    return rows
+            for spec in WORKFLOW_LANES
+            if spec.lane in disabled
+        ]
 
 
 def _split_active_queued_jobs(
@@ -627,38 +662,73 @@ def _job_run_health_attention(health: _JobRunHealthProjection) -> list[dict[str,
     return attention
 
 
-def _project_worker_runtime(
+def _project_workflow_runtime(
     *,
     job_store: Any,
     definitions: list[dict[str, Any]],
     queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
-    excluded_job_types: set[str],
+    disabled_lanes: set[str],
     now: datetime,
     include_singletons: bool,
-    include_blocked_task_queue_status: bool,
-) -> _WorkerRuntimeProjection:
+    include_blocked_workflow_lane_status: bool,
+) -> _WorkflowRuntimeProjection:
     attention: list[dict[str, str]] = []
     statuses: list[str] = []
-    schedules_payload = _temporal_schedules_payload(definitions)
-    task_queue_rows = _task_queue_rows(
+    schedules_payload = _routine_schedules_payload(job_store=job_store, definitions=definitions, now=now)
+    workflow_lane_rows = _workflow_lane_rows(
         queued_jobs=queued_jobs,
         running_jobs=running_jobs,
         definitions=definitions,
-        excluded_job_types=excluded_job_types,
+        disabled_lanes=disabled_lanes,
     )
-    blocked_task_queue_count = sum(1 for row in task_queue_rows if str(row.get("status") or "") == "blocked")
+    blocked_workflow_lane_count = sum(1 for row in workflow_lane_rows if str(row.get("status") or "") == "blocked")
+
+    enabled_definitions = [row for row in definitions if bool(row.get("enabled"))]
+    latest_by_key = {
+        str(row["job_key"]): dict(row)
+        for row in job_store.list_latest_runs_by_job_keys(
+            job_keys=[str(row["job_key"]) for row in enabled_definitions],
+            statuses=None,
+        )
+    }
+    due_routines_missing: list[dict[str, Any]] = []
+    for definition in enabled_definitions:
+        previous_slot = expected_routine_slots(definition, now=now)["previous"]
+        if previous_slot is None or now < previous_slot + timedelta(minutes=2):
+            continue
+        latest = latest_by_key.get(str(definition["job_key"]))
+        latest_at = None if latest is None else parse_datetime(_activity_at(latest))
+        if latest_at is None or latest_at < previous_slot:
+            due_routines_missing.append(
+                {
+                    "job_key": definition["job_key"],
+                    "job_type": definition["job_type"],
+                    "expected_slot_at": utc_iso(previous_slot),
+                    "latest_activity_at": None if latest_at is None else utc_iso(latest_at),
+                }
+            )
 
     statuses.append(str(schedules_payload.get("status") or "unknown"))
 
-    if blocked_task_queue_count:
-        if include_blocked_task_queue_status:
+    if blocked_workflow_lane_count:
+        if include_blocked_workflow_lane_status:
             statuses.append("blocked")
         attention.append(
             _attention(
                 severity="high",
-                code="temporal_task_queues_blocked",
-                message=f"{blocked_task_queue_count} Temporal task queue(s) are blocked.",
+                code="workflow_lanes_blocked",
+                message=f"{blocked_workflow_lane_count} enabled workflow lane(s) have no live poller.",
+            )
+        )
+
+    if due_routines_missing:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="high",
+                code="due_routines_missing",
+                message=f"{len(due_routines_missing)} enabled routine(s) have no activity for their latest expected slot.",
             )
         )
 
@@ -685,12 +755,13 @@ def _project_worker_runtime(
                 )
             )
 
-    return _WorkerRuntimeProjection(
-        schedules_payload=schedules_payload,
-        task_queue_rows=task_queue_rows,
+    return _WorkflowRuntimeProjection(
+        routine_schedules_payload=schedules_payload,
+        workflow_lane_rows=workflow_lane_rows,
         singleton_leases=singleton_leases,
         stale_singleton_leases=stale_singleton_leases,
-        blocked_task_queue_count=blocked_task_queue_count,
+        blocked_workflow_lane_count=blocked_workflow_lane_count,
+        due_routines_missing=due_routines_missing,
         statuses=tuple(statuses),
         attention=attention,
     )
@@ -712,19 +783,19 @@ __all__ = [
     "_broker_sync_payload",
     "_combine_statuses",
     "_definition_requires_attention",
-    "_disabled_task_queue_rows",
+    "_disabled_workflow_lane_rows",
     "_filter_excluded_job_runs",
     "_job_key_is_adhoc",
     "_job_run_health_attention",
     "_market_session_context",
     "_project_job_run_health",
-    "_project_worker_runtime",
+    "_project_workflow_runtime",
     "_sorted_by_activity",
     "_split_active_queued_jobs",
     "_summarize_job_definition",
     "_summarize_job_run",
     "as_text",
-    "excluded_declared_job_types",
+    "disabled_workflow_lanes",
     "get_declared_job_row",
     "list_declared_job_rows",
     "singleton_lease_key",

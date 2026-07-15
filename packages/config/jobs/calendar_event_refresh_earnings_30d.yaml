@@ -2,7 +2,7 @@ job_key: calendar_event_refresh:earnings_30d
 job_type: calendar_event_refresh
 enabled: true
 schedule:
-  type: interval_minutes
+  type: interval
   minutes: 60
 payload:
   refresh_id: earnings_30d

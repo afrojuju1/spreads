@@ -107,7 +107,7 @@ def configure_logging(
 
     temporal_level = getattr(
         logging,
-        str(os.environ.get("SPREADS_TEMPORAL_LOG_LEVEL") or "WARNING").upper(),
+        str(os.environ.get("SPREADS_WORKFLOW_PROVIDER_LOG_LEVEL") or "WARNING").upper(),
         logging.WARNING,
     )
     for logger_name in ("temporal", "temporal.worker"):

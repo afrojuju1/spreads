@@ -12,19 +12,15 @@ postgres_port: 55432
 clickhouse_port: 58123
 redis_port: 56379
 web_port: 53000
-worker_runtime_replicas: 2
-worker_data_replicas: 1
-worker_valuation_replicas: 0
-worker_research_replicas: 0
+runtime_lane_replicas: 2
+data_lane_replicas: 1
+maintenance_lane_replicas: 1
+valuation_lane_replicas: 0
+research_lane_replicas: 0
 web_enabled: true
 backup_retention_days: 7
 health_check_minutes: 5
-market_recorder_owner_env: ade-nucbox-k8-plus
-excluded_job_types:
-  - tradingagents_scan
-  - company_valuation_bootstrap
-  - company_valuation_screen_materialize
-  - company_valuation_resolve_unresolved
+capture_owner_target: ade-nucbox-k8-plus
 postgres_volume_name: spreads_spreads_postgres_data
 clickhouse_volume_name: spreads_spreads_clickhouse_data
 docker_log_driver: local

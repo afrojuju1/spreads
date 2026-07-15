@@ -117,11 +117,12 @@ services:
       - "${SPREADS_BIND_HOST}:${SPREADS_API_PORT}:8000"
     environment:
       SPREADS_OPS_LOG_DIR: /app/logs/ops
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
     volumes:
       - ${SPREADS_OPS_LOG_DIR}:/app/logs/ops:ro
     logging: *default-logging
 
-  worker-temporal:
+  workflow-lifecycle:
     build:
       context: .
     restart: unless-stopped
@@ -135,11 +136,11 @@ services:
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
-      SPREADS_TEMPORAL_ADDRESS: temporal:7233
-    command: ["uv", "run", "spreads", "runtime", "temporal-worker"]
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "worker", "--lane", "lifecycle"]
     logging: *default-logging
 
-  worker-runtime:
+  workflow-runtime:
     build:
       context: .
     restart: unless-stopped
@@ -153,11 +154,11 @@ services:
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
-      SPREADS_TEMPORAL_ADDRESS: temporal:7233
-    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-runtime-jobs", "--kind", "jobs"]
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "worker", "--lane", "runtime"]
     logging: *default-logging
 
-  worker-data:
+  workflow-data:
     build:
       context: .
     restart: unless-stopped
@@ -171,12 +172,11 @@ services:
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
-      SPREADS_TEMPORAL_ADDRESS: temporal:7233
-    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-data-jobs", "--kind", "jobs"]
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "worker", "--lane", "data"]
     logging: *default-logging
 
-  worker-valuation:
-    profiles: ["container-valuation"]
+  workflow-maintenance:
     build:
       context: .
     restart: unless-stopped
@@ -185,17 +185,20 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
-      api:
-        condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
-      SPREADS_TEMPORAL_ADDRESS: temporal:7233
-    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-valuation-jobs", "--kind", "jobs"]
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+      SPREADS_BACKUP_ROOT: /app/backups/postgres
+      SPREADS_OPS_LOG_DIR: /app/logs/ops
+    command: ["uv", "run", "spreads", "runtime", "worker", "--lane", "maintenance"]
+    volumes:
+      - ./backups:/app/backups
+      - ./logs:/app/logs
     logging: *default-logging
 
-  worker-research:
-    profiles: ["container-research"]
+  workflow-valuation:
+    profiles: ["workflow-valuation"]
     build:
       context: .
     restart: unless-stopped
@@ -209,19 +212,39 @@ services:
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
-      SPREADS_TEMPORAL_ADDRESS: temporal:7233
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "worker", "--lane", "valuation"]
+    logging: *default-logging
+
+  workflow-research:
+    profiles: ["workflow-research"]
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      api:
+        condition: service_started
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    environment:
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
       SPREADS_TRADINGAGENTS_DIR: ${SPREADS_TRADINGAGENTS_DIR}
       SPREADS_TRADINGAGENTS_UV_ENVIRONMENT: ${SPREADS_TRADINGAGENTS_UV_ENVIRONMENT}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["uv", "run", "spreads", "runtime", "temporal-worker", "--task-queue", "spreads-research-jobs", "--kind", "jobs"]
+    command: ["uv", "run", "spreads", "runtime", "worker", "--lane", "research"]
     volumes:
       - ${SPREADS_TRADINGAGENTS_HOST_DIR}:${SPREADS_TRADINGAGENTS_DIR}:ro
       - spreads_tradingagents_outputs:/app/outputs/tradingagents
     logging: *default-logging
 
-  temporal-schedules:
+  routine-schedules:
+    profiles: ["deploy"]
     build:
       context: .
     restart: "no"
@@ -233,11 +256,11 @@ services:
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     environment:
-      SPREADS_TEMPORAL_ADDRESS: temporal:7233
-    command: ["uv", "run", "spreads", "runtime", "temporal-schedules"]
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "routine-schedules"]
     logging: *default-logging
 
-  market-recorder:
+  capture-worker:
     build:
       context: .
     restart: unless-stopped
@@ -246,9 +269,13 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      temporal:
+        condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "spreads", "runtime", "market-recorder"]
+    environment:
+      SPREADS_WORKFLOW_ADDRESS: temporal:7233
+    command: ["uv", "run", "spreads", "runtime", "capture-worker"]
     logging: *default-logging
 
   web:

@@ -165,11 +165,15 @@ def build_trading_ops_state(
         "trading_allowed": trading_allowed,
         **execution_contract.summary,
         "control_mode": market_control.control.get("mode"),
-        "temporal_schedule_status": as_mapping(jobs.details.get("schedules")).get("status"),
-        "task_queue_count": jobs.summary.get("task_queue_count"),
-        "disabled_task_queue_count": jobs.summary.get("disabled_task_queue_count"),
-        "blocked_task_queue_count": sum(1 for row in as_list(jobs.details.get("task_queues")) if as_mapping(row).get("status") == "blocked"),
-        "idle_task_queue_count": sum(1 for row in as_list(jobs.details.get("task_queues")) if as_mapping(row).get("status") == "idle"),
+        "routine_schedule_status": as_mapping(jobs.details.get("routine_schedules")).get("status"),
+        "workflow_lane_count": jobs.summary.get("workflow_lane_count"),
+        "disabled_workflow_lane_count": jobs.summary.get("disabled_workflow_lane_count"),
+        "blocked_workflow_lane_count": sum(
+            1 for row in as_list(jobs.details.get("workflow_lanes")) if as_mapping(row).get("status") == "blocked"
+        ),
+        "idle_workflow_lane_count": sum(
+            1 for row in as_list(jobs.details.get("workflow_lanes")) if as_mapping(row).get("status") == "idle"
+        ),
         "actionable_failed_job_count": jobs.summary.get("actionable_failed_count"),
         "broker_sync_status": account.broker_sync.get("status"),
         "broker_sync_age_seconds": account.broker_sync.get("age_seconds"),
@@ -235,9 +239,9 @@ def build_trading_ops_state(
         "market_session": market_control.market_session,
         "control": market_control.control,
         "jobs": jobs.payload,
-        "schedules": jobs.details.get("schedules"),
-        "task_queues": jobs.details.get("task_queues"),
-        "disabled_task_queues": jobs.details.get("disabled_task_queues"),
+        "routine_schedules": jobs.details.get("routine_schedules"),
+        "workflow_lanes": jobs.details.get("workflow_lanes"),
+        "disabled_workflow_lanes": jobs.details.get("disabled_workflow_lanes"),
         "running_jobs": [dict(row) for row in as_list(jobs.details.get("running_jobs")) if as_mapping(row).get("status") == "running"],
         "queued_jobs": [dict(row) for row in as_list(jobs.details.get("queued_jobs")) if as_mapping(row).get("status") == "queued"],
         "recent_job_runs": jobs.details.get("job_runs"),

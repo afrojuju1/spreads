@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
+import socket
 
 from temporalio import activity
 
@@ -20,13 +21,22 @@ from core.jobs.registry import (
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
     ENGINE_OUTBOX_PUBLISH_JOB_TYPE,
     EXECUTION_LIFECYCLE_START_JOB_TYPE,
+    OPS_HEALTH_SNAPSHOT_JOB_TYPE,
+    OPS_LOG_RETENTION_JOB_TYPE,
+    POSTGRES_BACKUP_JOB_TYPE,
+    ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE,
     TICKER_SOURCE_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
     TRADING_STRATEGY_ENTRY_JOB_TYPE,
     TRADING_STRATEGY_MANAGE_JOB_TYPE,
 )
 from core.jobs.specs import get_declared_job_row
-from core.runtime.config import default_database_url, default_redis_url
+from core.runtime.config import (
+    default_database_url,
+    default_redis_url,
+    default_workflow_address,
+    default_workflow_namespace,
+)
 from core.services.alert_delivery import (
     ALERT_DELIVERY_STALE_SECONDS,
     reconcile_alert_delivery,
@@ -69,7 +79,7 @@ def _heartbeat(job_store: Any, *, job_run_id: str, orchestration_id: str, worker
         worker_name=worker_name,
     )
     if run_record is None:
-        raise RuntimeError(f"Job run {job_run_id} was superseded during Temporal execution.")
+        raise RuntimeError(f"Job run {job_run_id} was superseded during workflow execution.")
     if lease_key is not None:
         job_store.renew_lease(
             lease_key=lease_key,
@@ -210,6 +220,38 @@ def _run_job(
             )
         )
         return result, render_value(result)
+    if job_type == POSTGRES_BACKUP_JOB_TYPE:
+        from core.services.maintenance import run_postgres_backup
+
+        heartbeat()
+        result = run_postgres_backup(database_url=database_url, payload=payload)
+        return result, render_value(result)
+    if job_type == ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE:
+        from core.workflow_runtime.provider import connect_provider
+        from core.workflow_runtime.routine_schedules import reconcile_routine_schedules
+
+        async def reconcile() -> dict[str, Any]:
+            client = await connect_provider(
+                address=default_workflow_address(),
+                namespace=default_workflow_namespace(),
+            )
+            return await reconcile_routine_schedules(client=client)
+
+        heartbeat()
+        result = asyncio.run(reconcile())
+        return result, render_value(result)
+    if job_type == OPS_HEALTH_SNAPSHOT_JOB_TYPE:
+        from core.services.maintenance import run_ops_health_snapshot
+
+        heartbeat()
+        result = run_ops_health_snapshot(database_url=database_url)
+        return result, render_value(result)
+    if job_type == OPS_LOG_RETENTION_JOB_TYPE:
+        from core.services.maintenance import run_ops_log_retention
+
+        heartbeat()
+        result = run_ops_log_retention(payload=payload)
+        return result, render_value(result)
     if job_type == ALERT_DELIVERY_JOB_TYPE:
         heartbeat()
         result = run_alert_delivery(
@@ -322,13 +364,13 @@ def _run_job(
             heartbeat=heartbeat,
         ).to_payload()
         return result, render_value(result)
-    raise RuntimeError(f"Unsupported Temporal job type: {job_type}")
+    raise RuntimeError(f"Unsupported workflow job type: {job_type}")
 
 
 def _scheduled_payload(request: dict[str, Any]) -> tuple[str, datetime, dict[str, Any], dict[str, Any]] | None:
     job_key = str(request.get("job_key") or "").strip()
     if not job_key:
-        raise ValueError("Temporal scheduled job request requires job_key")
+        raise ValueError("Routine workflow request requires job_key")
     definition = get_declared_job_row(job_key)
     if definition is None or not bool(definition.get("enabled")):
         return None
@@ -343,6 +385,7 @@ def _scheduled_payload(request: dict[str, Any]) -> tuple[str, datetime, dict[str
 @activity.defn(name="run_scheduled_job_activity")
 def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
     info = activity.info()
+    worker_name = socket.gethostname()
     base_orchestration_id = str(request.get("orchestration_id") or info.workflow_id)
     orchestration_id = base_orchestration_id
     storage = build_storage_context(default_database_url())
@@ -358,7 +401,7 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
             job_key = str(request["job_key"])
             job_type = str(request["job_type"])
             singleton_scope = payload.get("singleton_scope")
-            job_store.create_job_run(
+            row, created = job_store.create_job_run(
                 job_run_id=job_run_id,
                 job_key=job_key,
                 orchestration_id=orchestration_id,
@@ -368,6 +411,12 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
                 session_id=payload.get("session_id") if isinstance(payload.get("session_id"), str) else None,
                 payload=payload,
             )
+            if not created and str(row.get("orchestration_id") or "") != orchestration_id:
+                job_store.requeue_job_run(
+                    job_run_id=job_run_id,
+                    orchestration_id=orchestration_id,
+                    payload=payload,
+                )
         else:
             scheduled = _scheduled_payload(request)
             if scheduled is None:
@@ -404,7 +453,7 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
                     job_run_id=job_run_id,
                     status="skipped",
                     expected_orchestration_id=orchestration_id,
-                    worker_name=info.worker_identity,
+                    worker_name=worker_name,
                     finished_at=_utc_now(),
                     heartbeat_at=_utc_now(),
                     result=result,
@@ -415,7 +464,7 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
             job_run_id=job_run_id,
             status="running",
             expected_orchestration_id=orchestration_id,
-            worker_name=info.worker_identity,
+            worker_name=worker_name,
             started_at=_utc_now(),
             heartbeat_at=_utc_now(),
         )
@@ -425,7 +474,7 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
                 job_store,
                 job_run_id=job_run_id or "",
                 orchestration_id=orchestration_id,
-                worker_name=info.worker_identity,
+                worker_name=worker_name,
                 lease_key=lease_key,
             )
 
@@ -441,7 +490,7 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
             job_run_id=job_run_id,
             status=final_status,
             expected_orchestration_id=orchestration_id,
-            worker_name=info.worker_identity,
+            worker_name=worker_name,
             finished_at=_utc_now(),
             heartbeat_at=_utc_now(),
             result=compact,
@@ -455,7 +504,7 @@ def run_scheduled_job_activity(request: dict[str, Any]) -> dict[str, Any]:
                 job_run_id=job_run_id,
                 status="failed",
                 expected_orchestration_id=orchestration_id,
-                worker_name=info.worker_identity,
+                worker_name=worker_name,
                 finished_at=_utc_now(),
                 heartbeat_at=_utc_now(),
                 error_text=str(exc),

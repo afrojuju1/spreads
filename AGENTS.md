@@ -13,7 +13,7 @@
 - For Alpaca-related research, candidate-building, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 - Current execution direction: `spreads` owns the live paper runtime. The active execution adapter is `alpaca_direct`; Nautilus Trader is retained only as historical context and a source of architectural ideas. Do not route new live Spreads work through Nautilus, Rust bridge paths, or host-managed Nautilus services unless the user explicitly asks to re-enable a separate experiment.
 - Canonical operator state is split between `TradingOpsState` and `StorageOpsState`. Do not add parallel operator products, compatibility routes, or duplicate status pages outside those read models.
-- Multi-strategy execution must be activated deliberately through `activation.state` and `execution.mode` in the strategy catalog. Do not auto-enable disabled strategy breadth or add automatic all-strategy observation scheduling; non-long-call families must pass family quality, portfolio admission, execution admission, and queued submit readiness before paper or live Temporal schedule enablement.
+- Multi-strategy execution must be activated deliberately through `activation.state` and `execution.mode` in the strategy catalog. Do not auto-enable disabled strategy breadth or add automatic all-strategy observation scheduling; non-long-call families must pass family quality, portfolio admission, execution admission, and queued submit readiness before paper or live routine-schedule enablement.
 
 ## Code Quality And Architecture
 
@@ -53,9 +53,9 @@
 - Do not add, update, or expand automated tests unless the user explicitly asks for test work.
 - Only write or modify e2e tests when the user explicitly asks for e2e coverage. Do not add e2e tests as default regression coverage for implementation work.
 - This repo has repo-local Codex skills under `.agents/skills`. Prefer these direct repo skills when the task matches:
-  - `spreads-ops` for live and post-market system health, market-open readiness, blocked or degraded trading, capture or alert triage, Temporal schedule or worker status, and "how is the system doing?" checks
+  - `spreads-ops` for live and post-market system health, market-open readiness, blocked or degraded trading, capture or alert triage, routine-schedule or workflow-lane status, and "how is the system doing?" checks
   - `spreads-strategy-lab` for strategy evidence review, strategy catalog/profile changes, quality-profile tuning, new strategy families, and "why did this strategy select or skip?" questions
-  - `spreads-data-platform` for ClickHouse/Postgres/Redis storage health, DB sizing, capture pressure, market-recorder behavior, retention, rollups, and market-data quality
+  - `spreads-data-platform` for ClickHouse/Postgres/Redis storage health, DB sizing, capture pressure, capture-session behavior, retention, rollups, and market-data quality
   - `spreads-live-rollout` for changes that must be applied to the running Docker-backed system
   - `spreads-architecture-docs` for architecture-doc maintenance, boundary updates, and source-of-truth consolidation
 - Spreads owns the active repo-local operator guidance. Do not add new active guidance to the retired `trading_operator` hub repo.
@@ -78,24 +78,24 @@
   - `uv run spreads jobs --json`
   - `uv run spreads execution list --date <YYYY-MM-DD>`
   - `uv run spreads execution positions --date <YYYY-MM-DD> --json`
-  - `docker compose logs --tail=200 temporal-schedules worker-temporal worker-runtime worker-data market-recorder`
+  - `docker compose logs --tail=200 workflow-lifecycle workflow-runtime workflow-data workflow-maintenance capture-worker`
 - Canonical remote live-ops examples from another host:
   - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops state --json`
   - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ops storage --json`
   - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- jobs --json`
   - `uv run spreads deploy exec --env ade-nucbox-k8-plus -- execution list --date <YYYY-MM-DD>`
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...`, `uv run spreads deploy logs --env ade-nucbox-k8-plus ...`, and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` only from another host or when intentionally exercising deploy-target plumbing.
-- Runtime resource policy lives in [docs/current_system_state.md](docs/current_system_state.md). Market-closed `market_recorder_idle` logs are expected and healthy; do not treat recorder idling outside market hours as a capture outage.
+- Runtime resource policy lives in [docs/current_system_state.md](docs/current_system_state.md). Market-closed `capture_session_idle` logs are expected and healthy; do not treat capture idling outside market hours as an outage.
 - Do not tell operators to run removed or currently unshipped `spreads scan`, `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first; for backend historical evaluation, use the current plural `spreads backtests run` adapter over `BacktestEngine`.
 - For offline selection research or policy tuning, start by validating current strategy config and stored engine facts. If a historical evaluator is needed, use or extend `services/backtest` against the current ticker-source/candidate/signal/decision model instead of reviving old audit/backtest wrappers.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.
-- For runtime verification of the API, Temporal workers, schedule reconciliation, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
+- For runtime verification of the API, workflow workers, schedule reconciliation, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn` or worker runs.
 - Prefer live validation through the running stack and shipped ops CLI before unit/integration test work unless the user explicitly asks for tests.
-- In Docker, the `api` service hot-reloads source changes, but the `worker-temporal`, `worker-runtime`, `worker-data`, and `temporal-schedules` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.
-- When multiple deployments share one Alpaca account, run only one live `market-recorder` against the option websocket at a time. Stop secondary/local recorders before validating capture on another host.
-- Unless the user explicitly asks for local live automation, keep the laptop out of the live plane once the NUC is deployed. Do not restart or run local `temporal-schedules`, `worker-temporal`, `worker-runtime`, `worker-data`, or `market-recorder` just to inspect the live environment.
+- In Docker, the `api` service hot-reloads source changes, but workflow workers, `routine-schedules`, and `capture-worker` do not. After changing imported runtime code, restart the affected containers before trusting runtime behavior.
+- When multiple deployments share one Alpaca account, only the configured capture-owner target may run the live option websocket capture session. Stop secondary/local capture workers before validating another host.
+- Unless the user explicitly asks for local live automation, keep the laptop out of the live plane once the NUC is deployed. Do not restart local workflow lanes, routine schedules, or capture workers just to inspect the live environment.
 - Do not run production build commands such as `npm run build` or `next build` unless the user explicitly asks for a production check or release validation.
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
 - Prefer dev-safe verification during normal work, such as linting, targeted type checks, and narrow runtime checks.

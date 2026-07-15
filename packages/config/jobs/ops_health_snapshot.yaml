@@ -1,0 +1,9 @@
+job_key: ops_health_snapshot:scheduled
+job_type: ops_health_snapshot
+enabled: true
+schedule:
+  type: interval
+  minutes: 5
+payload:
+  allow_off_hours: true
+singleton_scope: ops_health_snapshot:global

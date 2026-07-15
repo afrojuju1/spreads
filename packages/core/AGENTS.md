@@ -5,8 +5,8 @@
 - Prefer extending existing service entrypoints instead of adding parallel aggregators.
 - Keep module boundaries clear: `services/` owns business logic, `storage/` owns persistence and query shapes, `jobs/` owns scheduling and worker entrypoints, and `packages/api` stays a thin adapter over services.
 - Treat [../../docs/current_system_state.md](../../docs/current_system_state.md) as the canonical source of truth for current backend ownership and runtime boundaries.
-- `services/market_recorder.py` is the sole owner of the Alpaca option websocket connection in the normal runtime. Do not add API-owned reactive option stream capture paths; strategies and APIs should consume recorder-backed persisted rows or shared services over that state unless an explicit architecture change is being made.
-- When multiple hosts share one Alpaca account, only one live `market-recorder` should own the option websocket at a time. Stop secondary/local recorders before validating another host's live capture.
+- The workflow-supervised capture session in `services/market_capture.py` is the sole owner of the Alpaca option websocket connection in normal runtime. Do not add API-owned reactive option stream capture paths; strategies and APIs should consume persisted capture rows or shared services over that state unless an explicit architecture change is being made.
+- When multiple hosts share one Alpaca account, only the configured capture-owner target should own the option websocket. Stop secondary/local capture workers before validating another host's live capture.
 - Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
 - Keep the recent package splits canonical. Do not reintroduce monolithic ownership around old candidate-building, execution, or fragmented ops-visibility mental models.
 - For multi-leg options work, keep `legs[]` canonical end to end. Do not add new 3+ leg special cases around `short_symbol` / `long_symbol`, and route quote/mark math through the shared structure snapshot path.
@@ -48,8 +48,8 @@
 ## Rollout Checklist
 
 - After schema changes, run `uv run alembic upgrade head`.
-- If declared job YAML, ticker-source config, or strategy config changed, reconcile Temporal schedules and restart affected workers so they reload config.
-- After changing code imported by `worker-runtime`, `worker-data`, `worker-temporal`, or `temporal-schedules`, restart those containers before trusting runtime behavior.
+- If declared job YAML, ticker-source config, or strategy config changed, reconcile routine schedules and restart affected workflow lanes so they reload config.
+- After changing code imported by workflow lanes or `routine-schedules`, restart those containers before trusting runtime behavior.
 - Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
 - Restart `api` only when the changed runtime surface requires it or when explicitly requested.
-- When the live target is already deployed on `ade-nucbox-k8-plus`, avoid bringing local Temporal schedules/workers/recorder back up unless the user explicitly wants dual-host validation. The NUC is the live owner.
+- When the live target is already deployed on `ade-nucbox-k8-plus`, avoid bringing local routine schedules, workflow workers, or capture sessions back up unless the user explicitly wants dual-host validation. The NUC is the live owner.

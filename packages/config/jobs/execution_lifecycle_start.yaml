@@ -2,7 +2,7 @@ job_key: execution_lifecycle_start:global
 job_type: execution_lifecycle_start
 enabled: true
 schedule:
-  type: interval_minutes
+  type: market_session
   minutes: 1
 payload:
   limit: 25

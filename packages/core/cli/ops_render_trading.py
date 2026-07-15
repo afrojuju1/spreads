@@ -116,12 +116,12 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         ),
     )
     overview.add_row(
-        "Task Queues",
+        "Workflow Lanes",
         (
-            f"configured {_render_value(summary.get('task_queue_count'))} | "
-            f"disabled {_render_value(summary.get('disabled_task_queue_count'))} | "
-            f"blocked {_render_value(summary.get('blocked_task_queue_count'))} | "
-            f"idle {_render_value(summary.get('idle_task_queue_count'))}"
+            f"configured {_render_value(summary.get('workflow_lane_count'))} | "
+            f"disabled {_render_value(summary.get('disabled_workflow_lane_count'))} | "
+            f"blocked {_render_value(summary.get('blocked_workflow_lane_count'))} | "
+            f"idle {_render_value(summary.get('idle_workflow_lane_count'))}"
         ),
     )
     overview.add_row(

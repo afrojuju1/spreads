@@ -393,22 +393,20 @@ def _render_attention(console: Console, payload: dict[str, Any]) -> None:
     console.print(table)
 
 
-def _render_disabled_task_queues(console: Console, rows: list[Any]) -> None:
-    disabled_task_queues = [dict(row) for row in rows if isinstance(row, dict)]
-    if not disabled_task_queues:
+def _render_disabled_workflow_lanes(console: Console, rows: list[Any]) -> None:
+    disabled_lanes = [dict(row) for row in rows if isinstance(row, dict)]
+    if not disabled_lanes:
         return
-    table = Table(title="Disabled Task Queues", header_style="bold")
-    table.add_column("Worker")
-    table.add_column("Task Queue")
+    table = Table(title="Disabled Workflow Lanes", header_style="bold")
+    table.add_column("Lane")
     table.add_column("Status")
-    table.add_column("Job Types")
+    table.add_column("Routine Types")
     table.add_column("Note")
-    for row in disabled_task_queues:
+    for row in disabled_lanes:
         table.add_row(
-            str(row.get("worker") or "-"),
-            str(row.get("task_queue") or "-"),
+            str(row.get("lane") or "-"),
             _status_text(row.get("status")),
-            _render_count_map({str(value): 1 for value in list(row.get("disabled_job_types") or [])}, limit=6, item_length=72),
+            _render_count_map({str(value): 1 for value in list(row.get("routine_types") or [])}, limit=6, item_length=72),
             str(row.get("operator_note") or "-"),
         )
     console.print(table)
@@ -423,7 +421,7 @@ __all__ = [
     "_render_attention",
     "_render_bytes",
     "_render_count_map",
-    "_render_disabled_task_queues",
+    "_render_disabled_workflow_lanes",
     "_render_duration",
     "_render_engine_summary",
     "_render_entry_budget",

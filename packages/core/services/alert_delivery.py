@@ -107,64 +107,42 @@ def enqueue_alert_delivery_job(
     }
 
     existing = job_store.get_job_run(job_run_id)
-    if existing is None:
-        job_run, _ = job_store.create_job_run(
-            job_run_id=job_run_id,
-            job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
-            orchestration_id=job_run_id,
-            job_type=ALERT_DELIVERY_JOB_TYPE,
-            status="queued",
-            scheduled_for=scheduled_for,
-            session_id=resolved_session_id,
-            payload=payload,
-        )
-    elif not force_requeue and existing["status"] in {"queued", "running"}:
+    if existing is not None and not force_requeue and existing["status"] in {"queued", "running"}:
         alert_store.mark_delivery_job_queued(
             alert_id=alert_id,
             delivery_job_run_id=job_run_id,
             queued_at=scheduled_for,
         )
         return dict(existing)
-    else:
-        next_retry_count = int(existing.get("retry_count", 0)) + 1
-        job_run = job_store.requeue_job_run(
-            job_run_id=job_run_id,
-            orchestration_id=build_job_attempt_id(job_run_id, next_retry_count),
-            payload=payload,
-        )
+    next_retry_count = 0 if existing is None else int(existing.get("retry_count", 0)) + 1
+    orchestration_id = job_run_id if next_retry_count == 0 else build_job_attempt_id(job_run_id, next_retry_count)
 
-    alert_store.mark_delivery_job_queued(
-        alert_id=alert_id,
-        delivery_job_run_id=job_run_id,
-        queued_at=scheduled_for,
-    )
     try:
         started = start_ad_hoc_job_workflow(
             job_type=ALERT_DELIVERY_JOB_TYPE,
             job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
             job_run_id=job_run_id,
-            orchestration_id=str(job_run["orchestration_id"]),
+            orchestration_id=orchestration_id,
             payload=payload,
         )
     except Exception as exc:
-        job_store.update_job_run_status(
-            job_run_id=job_run_id,
-            status="failed",
-            expected_orchestration_id=str(job_run["orchestration_id"]),
-            finished_at=_utc_now(),
-            error_text=str(exc),
-        )
         raise RuntimeError(f"Alert delivery queueing failed: {exc}") from exc
     if started is None:
-        job_store.update_job_run_status(
-            job_run_id=job_run_id,
-            status="failed",
-            expected_orchestration_id=str(job_run["orchestration_id"]),
-            finished_at=_utc_now(),
-            error_text="Alert delivery workflow was not started.",
-        )
         raise RuntimeError("Alert delivery workflow start failed.")
-    return dict(job_store.get_job_run(job_run_id) or job_run)
+    alert_store.mark_delivery_job_queued(
+        alert_id=alert_id,
+        delivery_job_run_id=job_run_id,
+        queued_at=scheduled_for,
+    )
+    return {
+        "job_run_id": job_run_id,
+        "job_key": ALERT_DELIVERY_ADHOC_JOB_KEY,
+        "job_type": ALERT_DELIVERY_JOB_TYPE,
+        "orchestration_id": orchestration_id,
+        "status": "started",
+        "scheduled_for": payload["scheduled_for"],
+        "payload": payload,
+    }
 
 
 def plan_alert_delivery(

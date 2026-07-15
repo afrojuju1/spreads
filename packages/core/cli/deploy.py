@@ -13,7 +13,6 @@ from core.services.deployments import (
     exec_spreads_command,
     get_deploy_target,
     install_systemd_service,
-    install_target_ops_schedule,
     list_deploy_targets,
     logs_deploy_target,
     render_deploy_env_file,
@@ -403,29 +402,6 @@ def install_service_command(
         print_command_error("Refusing to install the systemd unit without --yes.")
         raise typer.Exit(3)
     _run_deploy_action(lambda: install_systemd_service(_resolve_target(environment)))
-
-
-@deploy_app.command(
-    "install-ops",
-    help="Install user-level reboot, backup, and health schedule for one target.",
-)
-def install_ops_command(
-    environment: str = typer.Option(
-        ...,
-        "--env",
-        "--target",
-        help="Deployment target name.",
-    ),
-    yes: bool = typer.Option(
-        False,
-        "--yes",
-        help="Install the remote ops scripts and cron entries.",
-    ),
-) -> None:
-    if not yes:
-        print_command_error("Refusing to install ops schedule without --yes.")
-        raise typer.Exit(3)
-    _run_deploy_action(lambda: install_target_ops_schedule(_resolve_target(environment)))
 
 
 __all__ = ["deploy_app"]

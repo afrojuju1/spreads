@@ -5,15 +5,15 @@ from core.services.ops.jobs.state_support import (
     RETIRED_LIFECYCLE_JOB_TYPES,
     _attention,
     _combine_statuses,
-    _disabled_task_queue_rows,
+    _disabled_workflow_lane_rows,
     _filter_excluded_job_runs,
     _job_run_health_attention,
     _project_job_run_health,
-    _project_worker_runtime,
+    _project_workflow_runtime,
     _sorted_by_activity,
     _split_active_queued_jobs,
     _summarize_job_run,
-    excluded_declared_job_types,
+    disabled_workflow_lanes,
     list_declared_job_rows,
     utc_iso,
     utc_now,
@@ -31,10 +31,10 @@ def build_jobs_compact_state(
 ) -> dict[str, Any]:
     now = utc_now()
     generated_at = utc_iso(now) or utc_now_iso()
-    excluded_job_types = excluded_declared_job_types().union(RETIRED_LIFECYCLE_JOB_TYPES)
+    disabled_lanes = disabled_workflow_lanes()
     attention: list[dict[str, str]] = []
     definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=None)]
-    disabled_task_queue_rows = _disabled_task_queue_rows(excluded_job_types=excluded_job_types)
+    disabled_lane_rows = _disabled_workflow_lane_rows(disabled_lanes=disabled_lanes)
 
     job_store = storage.jobs
     if not job_store.schema_ready():
@@ -52,10 +52,9 @@ def build_jobs_compact_state(
                 "view": "compact",
                 "definition_count": len(definitions),
                 "enabled_definition_count": sum(1 for row in definitions if bool(row.get("enabled"))),
-                "disabled_task_queue_count": len(disabled_task_queue_rows),
-                "excluded_job_types": sorted(excluded_job_types),
+                "disabled_workflow_lane_count": len(disabled_lane_rows),
                 "run_count": 0,
-                "task_queue_count": 0,
+                "workflow_lane_count": 0,
                 "stale_running_count": 0,
                 "stale_queued_job_count": 0,
                 "actionable_failed_count": 0,
@@ -64,9 +63,9 @@ def build_jobs_compact_state(
             "attention": attention,
             "details": {
                 "view": "compact",
-                "schedules": None,
-                "task_queues": [],
-                "disabled_task_queues": disabled_task_queue_rows,
+                "routine_schedules": None,
+                "workflow_lanes": [],
+                "disabled_workflow_lanes": disabled_lane_rows,
                 "running_jobs": [],
                 "queued_jobs": [],
                 "job_runs": [],
@@ -77,31 +76,31 @@ def build_jobs_compact_state(
     recent_runs = _sorted_by_activity(
         _filter_excluded_job_runs(
             recent_runs,
-            excluded_job_types=excluded_job_types,
+            excluded_job_types=set(RETIRED_LIFECYCLE_JOB_TYPES),
         )
     )
     queued_runs = _filter_excluded_job_runs(
         [_summarize_job_run(dict(row), now=now) for row in job_store.list_job_runs(status="queued", limit=200)],
-        excluded_job_types=excluded_job_types,
+        excluded_job_types=set(RETIRED_LIFECYCLE_JOB_TYPES),
     )
     running_runs = _filter_excluded_job_runs(
         [_summarize_job_run(dict(row), now=now) for row in job_store.list_job_runs(status="running", limit=200)],
-        excluded_job_types=excluded_job_types,
+        excluded_job_types=set(RETIRED_LIFECYCLE_JOB_TYPES),
     )
     active_queued_runs, stale_queued_runs = _split_active_queued_jobs(
         queued_runs,
         now=now,
     )
 
-    worker_runtime = _project_worker_runtime(
+    workflow_runtime = _project_workflow_runtime(
         job_store=job_store,
         definitions=definitions,
         queued_jobs=active_queued_runs,
         running_jobs=running_runs,
-        excluded_job_types=excluded_job_types,
+        disabled_lanes=disabled_lanes,
         now=now,
         include_singletons=False,
-        include_blocked_task_queue_status=False,
+        include_blocked_workflow_lane_status=True,
     )
     run_health = _project_job_run_health(
         counted_runs=recent_runs,
@@ -109,15 +108,15 @@ def build_jobs_compact_state(
         stale_queued_rows=stale_queued_runs,
     )
 
-    statuses = list(worker_runtime.statuses)
-    attention.extend(worker_runtime.attention)
+    statuses = list(workflow_runtime.statuses)
+    attention.extend(workflow_runtime.attention)
     attention.extend(_job_run_health_attention(run_health))
 
     statuses.append(
         _combine_statuses(
             "blocked" if run_health.actionable_failed_count else "healthy",
             "degraded" if run_health.actionable_skipped_count or run_health.stale_running_count or run_health.stale_queued_job_count else "healthy",
-            "blocked" if worker_runtime.blocked_task_queue_count else "healthy",
+            "blocked" if workflow_runtime.blocked_workflow_lane_count else "healthy",
         )
     )
 
@@ -132,9 +131,10 @@ def build_jobs_compact_state(
             "status_counts": dict(run_health.status_counts),
             "operator_status_counts": dict(run_health.operator_status_counts),
             "job_type_counts": dict(run_health.job_type_counts),
-            "task_queue_count": len(worker_runtime.task_queue_rows),
-            "disabled_task_queue_count": len(disabled_task_queue_rows),
-            "excluded_job_types": sorted(excluded_job_types),
+            "workflow_lane_count": len(workflow_runtime.workflow_lane_rows),
+            "disabled_workflow_lane_count": len(disabled_lane_rows),
+            "blocked_workflow_lane_count": workflow_runtime.blocked_workflow_lane_count,
+            "due_routine_count": len(workflow_runtime.due_routines_missing),
             "stale_running_count": run_health.stale_running_count,
             "stale_queued_job_count": run_health.stale_queued_job_count,
             "actionable_failed_count": run_health.actionable_failed_count,
@@ -143,9 +143,10 @@ def build_jobs_compact_state(
         "attention": attention,
         "details": {
             "view": "compact",
-            "schedules": worker_runtime.schedules_payload,
-            "task_queues": worker_runtime.task_queue_rows,
-            "disabled_task_queues": disabled_task_queue_rows,
+            "routine_schedules": workflow_runtime.routine_schedules_payload,
+            "workflow_lanes": workflow_runtime.workflow_lane_rows,
+            "disabled_workflow_lanes": disabled_lane_rows,
+            "due_routines_missing": workflow_runtime.due_routines_missing,
             "running_jobs": running_runs,
             "queued_jobs": active_queued_runs,
             "stale_queued_job_runs": stale_queued_runs,

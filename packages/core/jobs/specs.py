@@ -10,6 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from core.model_contracts import DomainModel
+from core.jobs.registry import get_workflow_lane_for_job_type
 from core.services.config_inheritance import load_yaml_mapping as _load_yaml_mapping
 from core.services.payload_validation import (
     normalize_mapping,
@@ -24,16 +25,18 @@ from core.services.trading_strategies import (
 )
 
 VALID_SCHEDULE_TYPES = {
-    "interval_minutes",
-    "market_open_plus_minutes",
-    "market_close_plus_minutes",
+    "interval",
+    "market_session",
+    "market_open",
+    "market_close",
+    "calendar",
     "manual",
 }
-ScheduleType = Literal["interval_minutes", "market_open_plus_minutes", "market_close_plus_minutes", "manual"]
+ScheduleType = Literal["interval", "market_session", "market_open", "market_close", "calendar", "manual"]
 
 
-def excluded_declared_job_types() -> set[str]:
-    raw = os.environ.get("SPREADS_EXCLUDED_JOB_TYPES", "")
+def disabled_workflow_lanes() -> set[str]:
+    raw = os.environ.get("SPREADS_DISABLED_WORKFLOW_LANES", "")
     return {part.strip() for part in raw.split(",") if part is not None and str(part).strip()}
 
 
@@ -336,7 +339,7 @@ def _trading_strategy_job_specs(
                     job_key=job_key,
                     job_type=f"trading_strategy_{routine_name}",
                     enabled=True,
-                    schedule_type="interval_minutes",
+                    schedule_type="market_session" if bool(routine.schedule.market_hours_only) else "interval",
                     schedule={
                         "minutes": max(int(routine.schedule.cadence_minutes), 1),
                         "offset_seconds": max(int(routine.schedule.offset_seconds), 0),
@@ -364,9 +367,9 @@ def load_declared_job_specs(
     specs = list(_load_job_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_ticker_source_specs(config_root))
     specs.extend(_trading_strategy_job_specs(config_root))
-    excluded_job_types = excluded_declared_job_types()
-    if excluded_job_types:
-        specs = [spec for spec in specs if str(spec.job_type or "").strip() not in excluded_job_types]
+    disabled_lanes = disabled_workflow_lanes()
+    if disabled_lanes:
+        specs = [spec for spec in specs if get_workflow_lane_for_job_type(spec.job_type) not in disabled_lanes]
     specs.sort(key=lambda item: item.job_key)
     return specs
 
@@ -405,7 +408,7 @@ __all__ = [
     "DeclaredJobSpec",
     "TickerSourceConfig",
     "TickerSourceSpec",
-    "excluded_declared_job_types",
+    "disabled_workflow_lanes",
     "get_declared_job_row",
     "get_declared_ticker_source_spec",
     "list_declared_job_rows",

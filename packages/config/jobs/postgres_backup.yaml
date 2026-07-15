@@ -1,0 +1,10 @@
+job_key: postgres_backup:daily
+job_type: postgres_backup
+enabled: true
+schedule:
+  type: calendar
+  hour: 0
+  minute: 0
+payload:
+  allow_off_hours: true
+singleton_scope: postgres_backup:global

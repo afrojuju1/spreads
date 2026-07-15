@@ -10,9 +10,7 @@ from rich.table import Table
 from core.cli.ops_render import build_console, render_json_payload
 from core.services.execution.activity import list_execution_activity
 from core.services.execution.sync import (
-    cancel_execution_attempt,
     inspect_execution_attempt,
-    refresh_execution_attempt,
 )
 from core.cli.runtime import execution_runtimes_command, positions_command
 
@@ -410,44 +408,10 @@ def execution_inspect_command(
     )
 
 
-@execution_app.command("refresh", help="Refresh broker/order/fill state for an execution_attempt by id.")
-def execution_refresh_command(
-    execution_attempt_id: str = typer.Argument(..., help="Execution attempt id."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI color."),
-) -> None:
-    _run_attempt_action(
-        refresh_execution_attempt,
-        execution_attempt_id=execution_attempt_id,
-        db=db,
-        json_output=json_output,
-        no_color=no_color,
-    )
-
-
-@execution_app.command("cancel", help="Cancel an open execution_attempt by id; terminal attempts return changed=false.")
-def execution_cancel_command(
-    execution_attempt_id: str = typer.Argument(..., help="Execution attempt id."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI color."),
-) -> None:
-    _run_attempt_action(
-        cancel_execution_attempt,
-        execution_attempt_id=execution_attempt_id,
-        db=db,
-        json_output=json_output,
-        no_color=no_color,
-    )
-
-
 __all__ = [
     "execution_app",
-    "execution_cancel_command",
     "execution_inspect_command",
     "execution_list_command",
-    "execution_refresh_command",
     "execution_runtimes_command",
     "positions_command",
 ]

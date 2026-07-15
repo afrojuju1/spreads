@@ -4,7 +4,7 @@ job_type: company_valuation_resolve_unresolved
 # company valuation maintenance with a valuation worker.
 enabled: false
 schedule:
-  type: interval_minutes
+  type: interval
   minutes: 60
 payload:
   allow_off_hours: true

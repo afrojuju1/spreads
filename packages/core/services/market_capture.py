@@ -8,12 +8,12 @@ import socket
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from core.common import load_local_env
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
-from core.jobs.orchestration import market_recorder_runtime_lease_key
+from core.jobs.orchestration import capture_session_runtime_lease_key
 from core.observability.logging import configure_logging, log_event
 from core.runtime.config import default_database_url
 from core.services.market_dates import NEW_YORK, market_session_window
@@ -33,8 +33,8 @@ DEFAULT_IDLE_LOG_SECONDS = 300.0
 DEFAULT_QUOTE_DURATION_SECONDS = 20.0
 DEFAULT_TRADE_DURATION_SECONDS = 20.0
 DEFAULT_TARGET_LIMIT = 1000
-MARKET_RECORDER_SOURCE = "market_recorder"
-MARKET_RECORDER_LEASE_SCOPE = "alpaca_options"
+CAPTURE_SESSION_SOURCE = "capture_session"
+CAPTURE_SESSION_LEASE_SCOPE = "alpaca_options"
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +53,16 @@ def _current_deploy_env() -> str | None:
     return _as_text(os.environ.get("SPREADS_DEPLOY_ENV"))
 
 
-def _configured_recorder_owner_env() -> str | None:
-    return _as_text(os.environ.get("SPREADS_MARKET_RECORDER_OWNER_ENV"))
+def _configured_capture_owner_target() -> str | None:
+    return _as_text(os.environ.get("SPREADS_CAPTURE_OWNER_TARGET"))
 
 
-def _market_recorder_owner_id() -> str:
+def _capture_session_owner_id() -> str:
     deploy_env = _current_deploy_env() or "unknown"
     return f"{deploy_env}:{socket.gethostname()}:{os.getpid()}"
 
 
-def _market_recorder_lease_seconds(
+def _capture_session_lease_seconds(
     *,
     poll_seconds: float,
     quote_duration_seconds: float,
@@ -78,16 +78,16 @@ def _market_recorder_lease_seconds(
 
 
 def _owner_mismatch_payload() -> dict[str, Any] | None:
-    configured_owner_env = _configured_recorder_owner_env()
+    configured_owner_target = _configured_capture_owner_target()
     current_env = _current_deploy_env()
-    if configured_owner_env is None or current_env == configured_owner_env:
+    if configured_owner_target is None or current_env == configured_owner_target:
         return None
     return {
         "status": "skipped",
         "reason": "owner_env_mismatch",
         "deploy_env": current_env,
-        "configured_owner_env": configured_owner_env,
-        "message": (f"Market recorder ownership is assigned to {configured_owner_env}; " f"{current_env or 'unknown'} is read-only."),
+        "configured_owner_target": configured_owner_target,
+        "message": (f"Market capture ownership is assigned to {configured_owner_target}; " f"{current_env or 'unknown'} is read-only."),
     }
 
 
@@ -128,7 +128,7 @@ def _build_route(row: Mapping[str, Any]) -> dict[str, Any] | None:
     option_symbol = _as_text(row.get("option_symbol"))
     if option_symbol is None:
         return None
-    label = _as_text(row.get("label")) or _as_text(row.get("session_id")) or _as_text(row.get("owner_key")) or "market_recorder"
+    label = _as_text(row.get("label")) or _as_text(row.get("session_id")) or _as_text(row.get("owner_key")) or "capture_session"
     return {
         "option_symbol": option_symbol,
         "label": label,
@@ -251,7 +251,7 @@ def _save_capture_summary(
     if not capture_store.schema_ready():
         return summary
     capture_summary = capture_store.save_capture_summary(
-        source=MARKET_RECORDER_SOURCE,
+        source=CAPTURE_SESSION_SOURCE,
         status=str(summary.get("status") or "unknown"),
         active_target_count=int(target_refresh.get("active_target_count") or len(target_rows)),
         selected_target_count=len(target_rows),
@@ -296,7 +296,7 @@ def _fan_out_quote_rows(
                     "underlying_symbol": route.get("underlying_symbol") or record.get("underlying_symbol"),
                     "strategy": route.get("strategy") or record.get("strategy"),
                     "leg_role": route.get("leg_role") or record.get("leg_role"),
-                    "source": MARKET_RECORDER_SOURCE,
+                    "source": CAPTURE_SESSION_SOURCE,
                 }
             )
     return rows
@@ -325,7 +325,7 @@ def _fan_out_trade_rows(
                     "underlying_symbol": route.get("underlying_symbol") or record.get("underlying_symbol"),
                     "strategy": route.get("strategy") or record.get("strategy"),
                     "leg_role": route.get("leg_role") or record.get("leg_role"),
-                    "source": MARKET_RECORDER_SOURCE,
+                    "source": CAPTURE_SESSION_SOURCE,
                 }
             )
     return rows
@@ -385,7 +385,7 @@ async def _capture_group(
                 captured_at=captured_at,
                 symbol_metadata={str(row["option_symbol"]): dict(row) for row in quote_candidates if _as_text(row.get("option_symbol")) is not None},
                 quotes=quote_result.quotes,
-                source=MARKET_RECORDER_SOURCE,
+                source=CAPTURE_SESSION_SOURCE,
             )
         except Exception as exc:
             quote_error = str(exc)
@@ -396,12 +396,12 @@ async def _capture_group(
                 captured_at=captured_at,
                 symbol_metadata={str(row["option_symbol"]): dict(row) for row in trade_candidates if _as_text(row.get("option_symbol")) is not None},
                 trades=trade_result.trades,
-                source=MARKET_RECORDER_SOURCE,
+                source=CAPTURE_SESSION_SOURCE,
             )
         except Exception as exc:
             trade_error = str(exc)
 
-    cycle_id = f"market_recorder:{captured_at}:{uuid4().hex[:8]}"
+    cycle_id = f"capture_session:{captured_at}:{uuid4().hex[:8]}"
     return {
         "feed": feed,
         "data_base_url": data_base_url,
@@ -422,7 +422,7 @@ async def _capture_group(
     }
 
 
-async def run_market_recorder_iteration(
+async def run_capture_iteration(
     *,
     db_target: str,
     broker: AlpacaOptionStreamBroker,
@@ -442,14 +442,14 @@ async def run_market_recorder_iteration(
         capture_store = storage.capture
         market_data = storage.market_data
         if jobs_store.schema_ready():
-            lease_seconds = _market_recorder_lease_seconds(
+            lease_seconds = _capture_session_lease_seconds(
                 poll_seconds=poll_seconds,
                 quote_duration_seconds=quote_duration_seconds,
                 trade_duration_seconds=trade_duration_seconds,
             )
             lease_state = {
                 "deploy_env": _current_deploy_env(),
-                "configured_owner_env": _configured_recorder_owner_env(),
+                "configured_owner_target": _configured_capture_owner_target(),
                 "hostname": socket.gethostname(),
                 "pid": os.getpid(),
             }
@@ -551,13 +551,15 @@ async def run_market_recorder_iteration(
         )
 
 
-async def run_market_recorder_loop(args: argparse.Namespace) -> int:
+async def run_capture_session(args: argparse.Namespace, *, heartbeat: Callable[[dict[str, Any]], None] | None = None) -> int:
     broker = AlpacaOptionStreamBroker()
-    lease_key = market_recorder_runtime_lease_key(MARKET_RECORDER_LEASE_SCOPE)
-    lease_owner = _market_recorder_owner_id()
+    lease_key = capture_session_runtime_lease_key(CAPTURE_SESSION_LEASE_SCOPE)
+    lease_owner = _capture_session_owner_id()
     last_idle_log_at = 0.0
     try:
         while True:
+            if heartbeat is not None:
+                heartbeat({"state": "checking_market", "at": utc_iso(datetime.now(UTC))})
             if args.market_hours_only:
                 idle_summary = _closed_market_idle_summary(calendar_name=args.market_calendar)
                 if idle_summary is not None:
@@ -567,7 +569,7 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
                         log_event(
                             logger,
                             logging.INFO,
-                            "market_recorder_idle",
+                            "capture_session_idle",
                             **idle_summary,
                             next_check_seconds=float(args.off_hours_poll_seconds),
                         )
@@ -578,7 +580,7 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
                     continue
 
             iteration_started_at = asyncio.get_running_loop().time()
-            summary = await run_market_recorder_iteration(
+            summary = await run_capture_iteration(
                 db_target=args.db,
                 broker=broker,
                 quote_duration_seconds=args.quote_duration_seconds,
@@ -591,9 +593,11 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
             log_event(
                 logger,
                 logging.INFO,
-                "market_recorder_iteration",
+                "capture_session_iteration",
                 **summary,
             )
+            if heartbeat is not None:
+                heartbeat({"state": "captured", "at": utc_iso(datetime.now(UTC)), "summary": summary})
             if args.once:
                 return 0
             elapsed = asyncio.get_running_loop().time() - iteration_started_at
@@ -608,7 +612,7 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
             log_event(
                 logger,
                 logging.WARNING,
-                "market_recorder_lease_release_failed",
+                "capture_session_lease_release_failed",
                 exc_info=True,
                 lease_key=lease_key,
                 lease_owner=lease_owner,
@@ -644,13 +648,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--off-hours-poll-seconds",
         type=float,
-        default=_env_float("SPREADS_MARKET_RECORDER_OFF_HOURS_POLL_SECONDS", DEFAULT_OFF_HOURS_POLL_SECONDS),
+        default=_env_float("SPREADS_CAPTURE_OFF_HOURS_POLL_SECONDS", DEFAULT_OFF_HOURS_POLL_SECONDS),
         help="Seconds between market-hours checks while the market is closed. Default: 30",
     )
     parser.add_argument(
         "--idle-log-seconds",
         type=float,
-        default=_env_float("SPREADS_MARKET_RECORDER_IDLE_LOG_SECONDS", DEFAULT_IDLE_LOG_SECONDS),
+        default=_env_float("SPREADS_CAPTURE_IDLE_LOG_SECONDS", DEFAULT_IDLE_LOG_SECONDS),
         help="Minimum seconds between closed-market idle log events. Default: 300",
     )
     parser.add_argument(
@@ -681,10 +685,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
-    configure_logging(service="market-recorder", force=True)
+    configure_logging(service="capture-worker", force=True)
     args = parse_args(argv)
     try:
-        return asyncio.run(run_market_recorder_loop(args))
+        return asyncio.run(run_capture_session(args))
     except KeyboardInterrupt:
         return 130
 

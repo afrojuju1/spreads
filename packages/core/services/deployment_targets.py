@@ -13,7 +13,6 @@ from core.services.payload_validation import (
     format_validation_error,
     normalize_optional_text,
     normalize_required_text,
-    normalize_text_tuple,
 )
 
 
@@ -35,10 +34,11 @@ class DeployTargetYamlPayload(DomainModel):
     clickhouse_port: int = Field(default=58123, gt=0)
     redis_port: int = Field(default=56379, gt=0)
     web_port: int = Field(default=53000, gt=0)
-    worker_runtime_replicas: int = Field(default=1, gt=0)
-    worker_data_replicas: int = Field(default=2, gt=0)
-    worker_valuation_replicas: int = Field(default=0, ge=0)
-    worker_research_replicas: int = Field(default=0, ge=0)
+    runtime_lane_replicas: int = Field(default=1, gt=0)
+    data_lane_replicas: int = Field(default=2, gt=0)
+    maintenance_lane_replicas: int = Field(default=1, gt=0)
+    valuation_lane_replicas: int = Field(default=0, ge=0)
+    research_lane_replicas: int = Field(default=0, ge=0)
     web_enabled: bool = True
     postgres_volume_name: str | None = None
     clickhouse_volume_name: str | None = None
@@ -47,8 +47,7 @@ class DeployTargetYamlPayload(DomainModel):
     docker_log_max_file: int = Field(default=5, gt=0)
     backup_retention_days: int = Field(default=7, gt=0)
     health_check_minutes: int = Field(default=5, gt=0)
-    excluded_job_types: tuple[str, ...] = Field(default_factory=tuple)
-    market_recorder_owner_env: str | None = None
+    capture_owner_target: str | None = None
     ssh_host: str | None = None
 
     @field_validator(
@@ -58,7 +57,7 @@ class DeployTargetYamlPayload(DomainModel):
         "compose_project_name",
         "postgres_volume_name",
         "clickhouse_volume_name",
-        "market_recorder_owner_env",
+        "capture_owner_target",
         "ssh_host",
         mode="before",
     )
@@ -83,13 +82,6 @@ class DeployTargetYamlPayload(DomainModel):
     def _normalize_mode(cls, value: Any) -> str:
         return normalize_required_text(value).lower()
 
-    @field_validator("excluded_job_types", mode="before")
-    @classmethod
-    def _normalize_excluded_job_types(cls, value: Any) -> tuple[str, ...]:
-        if isinstance(value, str):
-            return tuple(part.strip() for part in value.split(",") if part.strip())
-        return normalize_text_tuple(value)
-
     @model_validator(mode="after")
     def _validate_target(self) -> DeployTargetYamlPayload:
         if self.mode == "ssh" and self.ssh_host is None:
@@ -112,10 +104,11 @@ class DeployTarget:
     clickhouse_port: int
     redis_port: int
     web_port: int
-    worker_runtime_replicas: int
-    worker_data_replicas: int
-    worker_valuation_replicas: int
-    worker_research_replicas: int
+    runtime_lane_replicas: int
+    data_lane_replicas: int
+    maintenance_lane_replicas: int
+    valuation_lane_replicas: int
+    research_lane_replicas: int
     web_enabled: bool
     postgres_volume_name: str
     clickhouse_volume_name: str
@@ -124,8 +117,7 @@ class DeployTarget:
     docker_log_max_file: int
     backup_retention_days: int
     health_check_minutes: int
-    excluded_job_types: tuple[str, ...]
-    market_recorder_owner_env: str | None = None
+    capture_owner_target: str | None = None
     ssh_host: str | None = None
 
     @property
@@ -175,10 +167,11 @@ def _load_target(path: Path) -> DeployTarget:
         clickhouse_port=payload.clickhouse_port,
         redis_port=payload.redis_port,
         web_port=payload.web_port,
-        worker_runtime_replicas=payload.worker_runtime_replicas,
-        worker_data_replicas=payload.worker_data_replicas,
-        worker_valuation_replicas=payload.worker_valuation_replicas,
-        worker_research_replicas=payload.worker_research_replicas,
+        runtime_lane_replicas=payload.runtime_lane_replicas,
+        data_lane_replicas=payload.data_lane_replicas,
+        maintenance_lane_replicas=payload.maintenance_lane_replicas,
+        valuation_lane_replicas=payload.valuation_lane_replicas,
+        research_lane_replicas=payload.research_lane_replicas,
         web_enabled=payload.web_enabled,
         postgres_volume_name=payload.postgres_volume_name or f"spreads_{name.replace('-', '_')}_postgres_data",
         clickhouse_volume_name=payload.clickhouse_volume_name or f"spreads_{name.replace('-', '_')}_clickhouse_data",
@@ -187,8 +180,7 @@ def _load_target(path: Path) -> DeployTarget:
         docker_log_max_file=payload.docker_log_max_file,
         backup_retention_days=payload.backup_retention_days,
         health_check_minutes=payload.health_check_minutes,
-        excluded_job_types=payload.excluded_job_types,
-        market_recorder_owner_env=payload.market_recorder_owner_env,
+        capture_owner_target=payload.capture_owner_target,
         ssh_host=payload.ssh_host,
     )
 
@@ -223,10 +215,11 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "clickhouse_port": target.clickhouse_port,
         "redis_port": target.redis_port,
         "web_port": target.web_port,
-        "worker_runtime_replicas": target.worker_runtime_replicas,
-        "worker_data_replicas": target.worker_data_replicas,
-        "worker_valuation_replicas": target.worker_valuation_replicas,
-        "worker_research_replicas": target.worker_research_replicas,
+        "runtime_lane_replicas": target.runtime_lane_replicas,
+        "data_lane_replicas": target.data_lane_replicas,
+        "maintenance_lane_replicas": target.maintenance_lane_replicas,
+        "valuation_lane_replicas": target.valuation_lane_replicas,
+        "research_lane_replicas": target.research_lane_replicas,
         "web_enabled": target.web_enabled,
         "postgres_volume_name": target.postgres_volume_name,
         "clickhouse_volume_name": target.clickhouse_volume_name,
@@ -235,8 +228,7 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "docker_log_max_file": target.docker_log_max_file,
         "backup_retention_days": target.backup_retention_days,
         "health_check_minutes": target.health_check_minutes,
-        "excluded_job_types": list(target.excluded_job_types),
-        "market_recorder_owner_env": target.market_recorder_owner_env,
+        "capture_owner_target": target.capture_owner_target,
         "overlay_env_file": str(target.local_overlay_env_path),
         "service_name": target.service_name,
     }

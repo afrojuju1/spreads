@@ -54,12 +54,12 @@ def _strategy_not_active_message(reasons: list[str]) -> str | None:
     if "strategy_disabled" in reasons:
         return (
             "Authored strategy is disabled; listed for strategy-breadth observation only. "
-            "No Temporal scheduled jobs, candidates, intents, or broker submission will be created."
+            "No routine schedules, candidates, intents, or broker submission will be created."
         )
     if "strategy_paused" in reasons:
         return (
             "Authored strategy is paused; listed for operator context only. "
-            "No Temporal scheduled jobs, candidates, intents, or broker submission will be created."
+            "No routine schedules, candidates, intents, or broker submission will be created."
         )
     return "Strategy is not scheduled; no jobs, candidates, intents, or broker submission will be created."
 

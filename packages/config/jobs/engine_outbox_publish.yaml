@@ -2,7 +2,7 @@ job_key: engine_outbox_publish:global
 job_type: engine_outbox_publish
 enabled: true
 schedule:
-  type: interval_minutes
+  type: interval
   minutes: 1
 payload:
   limit: 100

@@ -1,0 +1,11 @@
+job_key: ops_log_retention:daily
+job_type: ops_log_retention
+enabled: true
+schedule:
+  type: calendar
+  hour: 1
+  minute: 17
+payload:
+  allow_off_hours: true
+  retention_days: 14
+singleton_scope: ops_log_retention:global

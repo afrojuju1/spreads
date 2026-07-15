@@ -2,7 +2,7 @@ ticker_source_id: earnings_event_window
 job_key: ticker_source:earnings_event_window
 enabled: true
 schedule:
-  type: interval_minutes
+  type: market_session
   minutes: 30
 allow_off_hours: true
 recipe: earnings_event_window

@@ -48,6 +48,7 @@ class CalendarEventStore:
     def upsert_events(self, records: list[CalendarEventRecord]) -> None:
         if not records:
             return
+        records_by_id = {record.event_id: record for record in records}
         statement = insert(CalendarEventModel).values(
             [
                 {
@@ -65,7 +66,7 @@ class CalendarEventStore:
                     "ingested_at": _parse_datetime(record.ingested_at),
                     "source_updated_at": _parse_datetime(record.source_updated_at),
                 }
-                for record in records
+                for record in records_by_id.values()
             ]
         )
         upsert = statement.on_conflict_do_update(

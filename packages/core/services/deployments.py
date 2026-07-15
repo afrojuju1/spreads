@@ -18,7 +18,6 @@ from core.services.deployment_lifecycle import (
 from core.services.deployment_remote import (
     bootstrap_remote_target,
     install_systemd_service,
-    install_target_ops_schedule,
     sync_deploy_target,
 )
 from core.services.deployment_targets import (
@@ -38,7 +37,6 @@ __all__ = [
     "exec_spreads_command",
     "get_deploy_target",
     "install_systemd_service",
-    "install_target_ops_schedule",
     "list_deploy_targets",
     "logs_deploy_target",
     "render_deploy_env_file",

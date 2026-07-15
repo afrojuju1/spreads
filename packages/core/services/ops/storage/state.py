@@ -176,7 +176,7 @@ def build_storage_ops_state(
             _attention(
                 severity="medium",
                 code="latest_capture_summary_degraded",
-                message=f"The latest market-recorder capture summary status is {latest_capture_status}.",
+                message=f"The latest capture session summary status is {latest_capture_status}.",
             )
         )
 

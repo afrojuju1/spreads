@@ -7,6 +7,8 @@ from core.services.deployment_commands import (
     _compose_base_args,
     _compose_down_args,
     _compose_ps_args,
+    _compose_routine_reconcile_args,
+    _compose_runtime_verify_args,
     _compose_up_args,
     _ensure_local_env_file,
     _local_target_command_env,
@@ -32,10 +34,15 @@ def start_deploy_target(
             sync_deploy_target(target, require_secrets=require_secrets)
         command = " ".join(shlex.quote(part) for part in _compose_up_args(target, build=build))
         _run_command(_remote_shell_command(target, command))
+        reconcile_command = " ".join(shlex.quote(part) for part in _compose_routine_reconcile_args(target))
+        _run_command(_remote_shell_command(target, reconcile_command))
+        verify_command = " ".join(shlex.quote(part) for part in _compose_runtime_verify_args(target))
+        _run_command(_remote_shell_command(target, verify_command))
         return
-    if not target.is_remote:
-        _ensure_local_env_file(target, require_secrets=require_secrets)
+    _ensure_local_env_file(target, require_secrets=require_secrets)
     _run_command(_compose_up_args(target, build=build), cwd=target.deploy_path)
+    _run_command(_compose_routine_reconcile_args(target), cwd=target.deploy_path)
+    _run_command(_compose_runtime_verify_args(target), cwd=target.deploy_path)
 
 
 def stop_deploy_target(target: DeployTarget) -> None:

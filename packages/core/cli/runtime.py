@@ -252,33 +252,44 @@ def positions_command(
 
 
 @runtime_app.command(
-    "temporal-schedules",
+    "routine-schedules",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Reconcile declared jobs to Temporal schedules.",
+    help="Reconcile declared routine schedules with the workflow runtime.",
 )
-def temporal_schedules_command(ctx: typer.Context) -> None:
-    from core.jobs.temporal_schedules import main as temporal_schedules_main
+def routine_schedules_command(ctx: typer.Context) -> None:
+    from core.workflow_runtime.routine_schedules import main as routine_schedules_main
 
-    run_passthrough(ctx=ctx, entrypoint=temporal_schedules_main)
+    run_passthrough(ctx=ctx, entrypoint=routine_schedules_main)
 
 
 @runtime_app.command(
-    "market-recorder",
+    "capture-worker",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run the market recorder loop.",
+    help="Run the workflow-supervised market capture owner.",
 )
-def market_recorder_command(ctx: typer.Context) -> None:
-    from core.services.market_recorder import main as market_recorder_main
+def capture_worker_command(ctx: typer.Context) -> None:
+    from core.workflow_runtime.capture import main as capture_worker_main
 
-    run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
+    run_passthrough(ctx=ctx, entrypoint=capture_worker_main)
 
 
 @runtime_app.command(
-    "temporal-worker",
+    "worker",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run the Temporal lifecycle worker.",
+    help="Run one workflow lane worker.",
 )
-def temporal_worker_command(ctx: typer.Context) -> None:
-    from core.workflows.worker import main as temporal_worker_main
+def workflow_worker_command(ctx: typer.Context) -> None:
+    from core.workflow_runtime.worker import main as workflow_worker_main
 
-    run_passthrough(ctx=ctx, entrypoint=temporal_worker_main)
+    run_passthrough(ctx=ctx, entrypoint=workflow_worker_main)
+
+
+@runtime_app.command(
+    "verify",
+    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
+    help="Verify required workflow lanes and routine schedules.",
+)
+def workflow_runtime_verify_command(ctx: typer.Context) -> None:
+    from core.workflow_runtime.verification import main as workflow_runtime_verify_main
+
+    run_passthrough(ctx=ctx, entrypoint=workflow_runtime_verify_main)

@@ -249,8 +249,8 @@ export function TodayCommandCenter() {
             </div>
             <StatusLine
               label="Schedules"
-              value={summary.temporal_schedule_status ?? (loading ? "loading" : "idle")}
-              note={`${formatNumberMetric(summary.task_queue_count, pendingLabel)} task queues`}
+              value={summary.routine_schedule_status ?? (loading ? "loading" : "idle")}
+              note={`${formatNumberMetric(summary.workflow_lane_count, pendingLabel)} workflow lanes`}
             />
             <StatusLine
               label="Broker Sync"

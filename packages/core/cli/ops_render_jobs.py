@@ -13,8 +13,7 @@ from core.cli.ops_render_helpers import (
     STATUS_STYLES,
     _job_run_status_text,
     _render_attention,
-    _render_count_map,
-    _render_disabled_task_queues,
+    _render_disabled_workflow_lanes,
     _render_duration,
     _render_expected_slot,
     _render_schedule,
@@ -52,7 +51,7 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
 def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
-    schedules = dict(details.get("schedules") or {})
+    schedules = dict(details.get("routine_schedules") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -71,13 +70,8 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         ),
     )
     overview.add_row("Singleton Leases", _render_value(summary.get("singleton_lease_count")))
-    overview.add_row("Task Queues", _render_value(summary.get("task_queue_count")))
-    overview.add_row("Disabled Task Queues", _render_value(summary.get("disabled_task_queue_count")))
-    if summary.get("excluded_job_types"):
-        overview.add_row(
-            "Excluded Job Types",
-            _render_count_map({str(value): 1 for value in list(summary.get("excluded_job_types") or [])}, limit=6, item_length=72),
-        )
+    overview.add_row("Workflow Lanes", _render_value(summary.get("workflow_lane_count")))
+    overview.add_row("Disabled Workflow Lanes", _render_value(summary.get("disabled_workflow_lane_count")))
     if summary.get("status_filter") == "failed" or summary.get("actionable_failed_count"):
         overview.add_row(
             "Actionable Failed",
@@ -97,29 +91,29 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    task_queue_rows = list(details.get("task_queues") or [])
-    if task_queue_rows:
-        table = Table(title="Task Queues", header_style="bold")
-        table.add_column("Worker")
-        table.add_column("Task Queue")
+    workflow_lane_rows = list(details.get("workflow_lanes") or [])
+    if workflow_lane_rows:
+        table = Table(title="Workflow Lanes", header_style="bold")
+        table.add_column("Lane")
         table.add_column("Status")
+        table.add_column("Pollers", justify="right")
         table.add_column("Running", justify="right")
         table.add_column("Queued", justify="right")
-        table.add_column("Tasks", justify="right")
-        table.add_column("Max Jobs", justify="right")
-        for row in task_queue_rows:
+        table.add_column("Routines", justify="right")
+        table.add_column("Max", justify="right")
+        for row in workflow_lane_rows:
             table.add_row(
-                str(row.get("worker") or "-"),
-                str(row.get("task_queue") or "-"),
+                str(row.get("lane") or "-"),
                 _status_text(row.get("status")),
+                _render_value(row.get("poller_count")),
                 _render_value(row.get("running_job_count")),
                 _render_value(row.get("queued_job_count")),
-                _render_value(row.get("task_count")),
-                _render_value(row.get("max_jobs")),
+                _render_value(row.get("routine_type_count")),
+                _render_value(row.get("max_concurrency")),
             )
         console.print(table)
 
-    _render_disabled_task_queues(console, list(details.get("disabled_task_queues") or []))
+    _render_disabled_workflow_lanes(console, list(details.get("disabled_workflow_lanes") or []))
 
     definition_rows = [] if summary.get("status_filter") else list(details.get("declared_jobs") or [])
     if definition_rows:

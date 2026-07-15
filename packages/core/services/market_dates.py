@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import lru_cache
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
@@ -14,6 +15,7 @@ def resolve_market_date(value: str) -> str:
     return value
 
 
+@lru_cache(maxsize=1024)
 def market_session_window(
     calendar_name: str,
     session_day: date,

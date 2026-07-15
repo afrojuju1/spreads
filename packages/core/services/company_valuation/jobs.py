@@ -15,13 +15,11 @@ from core.jobs.registry import (
     COMPANY_VALUATION_SCREEN_MATERIALIZE_ADHOC_JOB_KEY,
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
 )
-from core.runtime.config import default_database_url
 from core.services.company_valuation.bootstrap import CompanyValuationBootstrapRequest
 from core.services.company_valuation.contracts import CompanyValuationContractModel
 from core.services.company_valuation.unresolved import (
     ResolveUnresolvedInstitutionalPositionsRequest,
 )
-from core.storage.factory import build_job_repository
 from core.storage.serializers import parse_date, parse_datetime
 
 
@@ -94,10 +92,7 @@ def _queue_job(
     payload: dict[str, Any],
     db_target: str | None,
 ) -> QueuedCompanyValuationJob:
-    database_url = db_target or default_database_url()
-    job_store = build_job_repository(database_url)
-    if not job_store.schema_ready():
-        raise RuntimeError("Job schema is unavailable.")
+    del db_target
     scheduled_for = datetime.now(UTC)
     scheduled_for_iso = _isoformat(scheduled_for)
     if scheduled_for_iso is None:
@@ -110,15 +105,6 @@ def _queue_job(
     }
     job_run_id = _job_run_id(job_key, scheduled_for)
     orchestration_id = job_run_id
-    job_run, _created = job_store.create_job_run(
-        job_run_id=job_run_id,
-        job_key=job_key,
-        orchestration_id=orchestration_id,
-        job_type=job_type,
-        status="queued",
-        scheduled_for=scheduled_for,
-        payload=full_payload,
-    )
     try:
         started = start_ad_hoc_job_workflow(
             job_type=job_type,
@@ -128,30 +114,15 @@ def _queue_job(
             payload=full_payload,
         )
     except Exception as exc:
-        job_store.update_job_run_status(
-            job_run_id=job_run_id,
-            status="failed",
-            expected_orchestration_id=orchestration_id,
-            finished_at=datetime.now(UTC),
-            error_text=str(exc),
-        )
         raise RuntimeError(f"Company valuation queueing failed: {exc}") from exc
     if started is None:
-        job_store.update_job_run_status(
-            job_run_id=job_run_id,
-            status="failed",
-            expected_orchestration_id=orchestration_id,
-            finished_at=datetime.now(UTC),
-            error_text="Company valuation workflow was not started.",
-        )
         raise RuntimeError("Company valuation workflow was not started.")
-    row = dict(job_store.get_job_run(job_run_id) or job_run)
     return QueuedCompanyValuationJob(
-        job_run_id=str(row["job_run_id"]),
-        job_key=str(row["job_key"]),
-        job_type=str(row["job_type"]),
-        orchestration_id=str(row.get("orchestration_id") or orchestration_id),
-        status=str(row["status"]),
+        job_run_id=job_run_id,
+        job_key=job_key,
+        job_type=job_type,
+        orchestration_id=orchestration_id,
+        status="started",
         scheduled_for=scheduled_for_iso,
         payload=full_payload,
     )

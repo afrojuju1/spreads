@@ -6,9 +6,9 @@ import os
 DEFAULT_POSTGRES_URL = "postgresql://spreads:spreads@localhost:55432/spreads"
 DEFAULT_REDIS_URL = "redis://localhost:56379/0"
 DEFAULT_CLICKHOUSE_URL = "http://spreads:spreads@localhost:58123/spreads"
-DEFAULT_TEMPORAL_ADDRESS = "localhost:7233"
-DEFAULT_TEMPORAL_NAMESPACE = "default"
-DEFAULT_TEMPORAL_TASK_QUEUE = "spreads-trading-lifecycle"
+DEFAULT_WORKFLOW_ADDRESS = "localhost:7233"
+DEFAULT_WORKFLOW_NAMESPACE = "default"
+DEFAULT_LIFECYCLE_WORKFLOW_LANE = "lifecycle"
 DEFAULT_NATS_URL = "nats://localhost:4222"
 DEFAULT_NATS_ENGINE_STREAM = "spreads_engine_lifecycle"
 DEFAULT_BACKTEST_ARTIFACT_ROOT = "outputs/backtest_runs"
@@ -36,16 +36,16 @@ def default_clickhouse_url() -> str:
     return os.environ.get("SPREADS_CLICKHOUSE_URL") or os.environ.get("CLICKHOUSE_URL") or DEFAULT_CLICKHOUSE_URL
 
 
-def default_temporal_address() -> str:
-    return os.environ.get("SPREADS_TEMPORAL_ADDRESS") or os.environ.get("TEMPORAL_ADDRESS") or DEFAULT_TEMPORAL_ADDRESS
+def default_workflow_address() -> str:
+    return os.environ.get("SPREADS_WORKFLOW_ADDRESS") or DEFAULT_WORKFLOW_ADDRESS
 
 
-def default_temporal_namespace() -> str:
-    return os.environ.get("SPREADS_TEMPORAL_NAMESPACE") or os.environ.get("TEMPORAL_NAMESPACE") or DEFAULT_TEMPORAL_NAMESPACE
+def default_workflow_namespace() -> str:
+    return os.environ.get("SPREADS_WORKFLOW_NAMESPACE") or DEFAULT_WORKFLOW_NAMESPACE
 
 
-def default_temporal_task_queue() -> str:
-    return os.environ.get("SPREADS_TEMPORAL_TASK_QUEUE") or DEFAULT_TEMPORAL_TASK_QUEUE
+def default_lifecycle_workflow_lane() -> str:
+    return os.environ.get("SPREADS_LIFECYCLE_WORKFLOW_LANE") or DEFAULT_LIFECYCLE_WORKFLOW_LANE
 
 
 def default_nats_url() -> str:

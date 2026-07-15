@@ -2,7 +2,7 @@ ticker_source_id: finviz_momentum
 job_key: ticker_source:finviz_momentum
 enabled: true
 schedule:
-  type: interval_minutes
+  type: market_session
   minutes: 2
 allow_off_hours: false
 recipe: finviz_screener

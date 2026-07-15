@@ -7,7 +7,7 @@ from core.services.market_dates import market_session_window
 from core.storage.records import RecordMapping
 
 NEW_YORK = ZoneInfo("America/New_York")
-MARKET_RECORDER_RUNTIME_LEASE_PREFIX = "runtime:market_recorder"
+CAPTURE_SESSION_RUNTIME_LEASE_PREFIX = "runtime:capture_session"
 SINGLETON_LEASE_PREFIX = "singleton:"
 
 
@@ -19,11 +19,11 @@ def singleton_lease_key(job_type: str, scope: str) -> str:
     return f"{SINGLETON_LEASE_PREFIX}{job_type}:{scope}"
 
 
-def market_recorder_runtime_lease_key(scope: str | None = None) -> str:
+def capture_session_runtime_lease_key(scope: str | None = None) -> str:
     normalized = str(scope or "").strip().lower()
     if not normalized:
-        return MARKET_RECORDER_RUNTIME_LEASE_PREFIX
-    return f"{MARKET_RECORDER_RUNTIME_LEASE_PREFIX}:{normalized}"
+        return CAPTURE_SESSION_RUNTIME_LEASE_PREFIX
+    return f"{CAPTURE_SESSION_RUNTIME_LEASE_PREFIX}:{normalized}"
 
 
 def _market_schedule(calendar_name: str, session_day: date) -> tuple[datetime, datetime] | None:
@@ -31,8 +31,9 @@ def _market_schedule(calendar_name: str, session_day: date) -> tuple[datetime, d
 
 
 def floor_to_interval(now: datetime, minutes: int) -> datetime:
-    minute = (now.minute // minutes) * minutes
-    return now.replace(minute=minute, second=0, microsecond=0)
+    interval_seconds = max(minutes, 1) * 60
+    slot_timestamp = int(now.timestamp()) // interval_seconds * interval_seconds
+    return datetime.fromtimestamp(slot_timestamp, tz=now.tzinfo)
 
 
 def interval_offset_seconds(schedule: dict[str, object], *, minutes: int) -> int:
@@ -63,14 +64,14 @@ def resolve_scheduled_for(
     schedule = dict(definition.get("schedule") or {})
     schedule_type = str(definition["schedule_type"])
 
-    if schedule_type == "interval_minutes":
+    if schedule_type in {"interval", "market_session"}:
         minutes = max(int(schedule.get("minutes", 0)), 1)
         slot = floor_to_interval(current, minutes) + timedelta(seconds=interval_offset_seconds(schedule, minutes=minutes))
         if current < slot:
             return None
-        payload = dict(definition.get("payload") or {})
-        if bool(payload.get("allow_off_hours")):
+        if schedule_type == "interval":
             return slot.astimezone(UTC)
+        payload = dict(definition.get("payload") or {})
         market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
         if market_window is None:
             return None
@@ -84,14 +85,29 @@ def resolve_scheduled_for(
             return None
         return slot.astimezone(UTC)
 
+    if schedule_type == "manual":
+        return None
+
+    if schedule_type == "calendar":
+        days_of_week = {int(value) for value in schedule.get("days_of_week", range(7))}
+        if current.weekday() not in days_of_week:
+            return None
+        target = current.replace(
+            hour=max(min(int(schedule.get("hour", 0)), 23), 0),
+            minute=max(min(int(schedule.get("minute", 0)), 59), 0),
+            second=max(min(int(schedule.get("second", 0)), 59), 0),
+            microsecond=0,
+        )
+        return None if current < target else target.astimezone(UTC)
+
     market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
     if market_window is None:
         return None
     market_open, market_close = market_window
 
-    if schedule_type == "market_open_plus_minutes":
+    if schedule_type == "market_open":
         target = market_open + timedelta(minutes=int(schedule.get("minutes", 0)))
-    elif schedule_type == "market_close_plus_minutes":
+    elif schedule_type == "market_close":
         target = market_close + timedelta(minutes=int(schedule.get("minutes", 0)))
     else:
         raise ValueError(f"Unsupported schedule_type: {schedule_type}")
@@ -99,6 +115,89 @@ def resolve_scheduled_for(
     if current < target:
         return None
     return target.astimezone(UTC)
+
+
+def expected_routine_slots(
+    definition: RecordMapping,
+    *,
+    now: datetime | None = None,
+) -> dict[str, datetime | None]:
+    """Return the previous and next expected slots from the domain schedule."""
+    current = (now or utc_now()).astimezone(NEW_YORK)
+    schedule = dict(definition.get("schedule") or {})
+    schedule_type = str(definition.get("schedule_type") or "manual")
+    calendar_name = str(definition.get("market_calendar") or "NYSE")
+
+    if schedule_type == "manual":
+        return {"previous": None, "next": None}
+
+    if schedule_type == "interval":
+        minutes = max(int(schedule.get("minutes", 1)), 1)
+        offset = interval_offset_seconds(schedule, minutes=minutes)
+        previous = floor_to_interval(current, minutes) + timedelta(seconds=offset)
+        if previous > current:
+            previous -= timedelta(minutes=minutes)
+        return {
+            "previous": previous.astimezone(UTC),
+            "next": (previous + timedelta(minutes=minutes)).astimezone(UTC),
+        }
+
+    if schedule_type == "calendar":
+        days_of_week = {int(value) for value in schedule.get("days_of_week", range(7))}
+        slots: list[datetime] = []
+        for day_offset in range(-7, 8):
+            day = current.date() + timedelta(days=day_offset)
+            if day.weekday() not in days_of_week:
+                continue
+            slots.append(
+                datetime(
+                    day.year,
+                    day.month,
+                    day.day,
+                    max(min(int(schedule.get("hour", 0)), 23), 0),
+                    max(min(int(schedule.get("minute", 0)), 59), 0),
+                    max(min(int(schedule.get("second", 0)), 59), 0),
+                    tzinfo=NEW_YORK,
+                )
+            )
+        previous = max((slot for slot in slots if slot <= current), default=None)
+        next_slot = min((slot for slot in slots if slot > current), default=None)
+        return {
+            "previous": None if previous is None else previous.astimezone(UTC),
+            "next": None if next_slot is None else next_slot.astimezone(UTC),
+        }
+
+    slots: list[datetime] = []
+    for day_offset in range(-7, 9):
+        session_day = current.date() + timedelta(days=day_offset)
+        market_window = _market_schedule(calendar_name, session_day)
+        if market_window is None:
+            continue
+        market_open, market_close = market_window
+        if schedule_type == "market_open":
+            slots.append(market_open + timedelta(minutes=int(schedule.get("minutes", 0))))
+            continue
+        if schedule_type == "market_close":
+            slots.append(market_close + timedelta(minutes=int(schedule.get("minutes", 0))))
+            continue
+        if schedule_type != "market_session":
+            raise ValueError(f"Unsupported schedule_type: {schedule_type}")
+        minutes = max(int(schedule.get("minutes", 1)), 1)
+        offset = interval_offset_seconds(schedule, minutes=minutes)
+        cursor = floor_to_interval(market_open, minutes) + timedelta(seconds=offset)
+        if cursor < market_open:
+            cursor += timedelta(minutes=minutes)
+        payload = dict(definition.get("payload") or {})
+        cutoff = _interval_market_cutoff(payload, market_close=market_close)
+        while cursor < cutoff:
+            slots.append(cursor)
+            cursor += timedelta(minutes=minutes)
+    previous = max((slot for slot in slots if slot <= current), default=None)
+    next_slot = min((slot for slot in slots if slot > current), default=None)
+    return {
+        "previous": None if previous is None else previous.astimezone(UTC),
+        "next": None if next_slot is None else next_slot.astimezone(UTC),
+    }
 
 
 def build_job_run_id(job_key: str, scheduled_for: datetime) -> str:

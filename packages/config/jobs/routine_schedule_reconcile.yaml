@@ -1,0 +1,8 @@
+job_key: routine_schedule_reconcile:scheduled
+job_type: routine_schedule_reconcile
+enabled: true
+schedule:
+  type: interval
+  minutes: 360
+payload: {}
+singleton_scope: routine_schedule_reconcile:global

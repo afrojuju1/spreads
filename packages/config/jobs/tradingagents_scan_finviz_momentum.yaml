@@ -2,7 +2,7 @@ job_key: tradingagents_scan:finviz_momentum
 job_type: tradingagents_scan
 enabled: false
 schedule:
-  type: market_open_plus_minutes
+  type: market_open
   minutes: 20
 payload:
   label: finviz_tradingagents

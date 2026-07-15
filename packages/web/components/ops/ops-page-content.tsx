@@ -71,7 +71,7 @@ export function OpsPageContent() {
   const primaryFlow = readRecord(tradingDetails.primary_trading_flow);
   const entryPosture = readRecord(primaryFlow.entry_posture);
   const brokerExposure = readRecord(tradingDetails.broker_exposure);
-  const taskQueues = readRecordList(tradingDetails.task_queues);
+  const workflowLanes = readRecordList(tradingDetails.workflow_lanes);
   const tradingFlows = readRecordList(tradingDetails.trading_flows);
   const strategyBreadth = readRecord(tradingDetails.strategy_breadth);
   const strategyBreadthSummary = readRecord(strategyBreadth.summary);
@@ -90,7 +90,7 @@ export function OpsPageContent() {
   const attention = [...readRecordList(tradingState?.attention), ...readRecordList(storageState?.attention)];
   const hasQueryError = tradingOpsQuery.isError || storageOpsQuery.isError;
   const marketSessionStatus = tradingSummary.market_session_status;
-  const scheduleStatus = firstPresent(tradingSummary.temporal_schedule_status, readRecord(tradingDetails.schedules).status);
+  const scheduleStatus = firstPresent(tradingSummary.routine_schedule_status, readRecord(tradingDetails.routine_schedules).status);
   const authoredStrategyCount = firstPresent(tradingSummary.strategy_count, strategyBreadthSummary.strategy_count);
   const activeStrategyCount = firstPresent(tradingSummary.active_strategy_count, strategyBreadthSummary.active_strategy_count);
   const availableStrategyCount = firstPresent(tradingSummary.available_strategy_count, strategyBreadthSummary.available_strategy_count);
@@ -171,9 +171,9 @@ export function OpsPageContent() {
           )} managed`}
         />
         <MetricTile
-          label="Task Queues"
-          value={String(readNumber(tradingSummary.task_queue_count, taskQueues.length))}
-          note={`${readNumber(tradingSummary.blocked_task_queue_count)} blocked · ${readNumber(tradingSummary.disabled_task_queue_count)} disabled`}
+          label="Workflow Lanes"
+          value={String(readNumber(tradingSummary.workflow_lane_count, workflowLanes.length))}
+          note={`${readNumber(tradingSummary.blocked_workflow_lane_count)} blocked · ${readNumber(tradingSummary.disabled_workflow_lane_count)} disabled`}
         />
         <MetricTile
           label="Jobs"
@@ -364,17 +364,17 @@ export function OpsPageContent() {
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
           <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             <HardDrive className="size-4" />
-            Temporal Task Queues
+            Workflow Lanes
           </div>
           <div className="grid gap-2 md:grid-cols-2">
-            {taskQueues.map((row) => (
-              <div key={readString(row.task_queue)} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
+            {workflowLanes.map((row) => (
+              <div key={readString(row.lane)} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="truncate font-medium">{humanizeToken(row.worker)}</span>
+                  <span className="truncate font-medium">{humanizeToken(row.lane)}</span>
                   <RuntimeStatusBadge value={row.status ?? "unknown"} />
                 </div>
                 <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {readString(row.task_queue)} · {readNumber(row.running_job_count)} running · {readNumber(row.queued_job_count)} queued
+                  {readNumber(row.poller_count)} pollers · {readNumber(row.running_job_count)} running · {readNumber(row.queued_job_count)} queued
                 </div>
               </div>
             ))}

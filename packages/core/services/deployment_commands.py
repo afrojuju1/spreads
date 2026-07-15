@@ -11,9 +11,9 @@ from core.services.deployment_env import build_host_env_values, render_deploy_en
 from core.services.deployment_targets import DeployTarget, DeploymentConfigError
 
 
-def _run_command(command: list[str], *, cwd: Path | None = None) -> None:
+def _run_command(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     try:
-        subprocess.run(command, cwd=cwd, check=True)
+        subprocess.run(command, cwd=cwd, env=env, check=True)
     except subprocess.CalledProcessError as exc:
         rendered = " ".join(shlex.quote(part) for part in exc.cmd)
         raise RuntimeError(f"Command failed with exit {exc.returncode}: {rendered}") from exc
@@ -51,8 +51,8 @@ def _compose_base_args(target: DeployTarget) -> list[str]:
     ]
     if target.web_enabled:
         args.extend(["--profile", "web"])
-    args.extend(["--profile", "container-valuation"])
-    args.extend(["--profile", "container-research"])
+    args.extend(["--profile", "workflow-valuation"])
+    args.extend(["--profile", "workflow-research"])
     return args
 
 
@@ -61,10 +61,11 @@ def _compose_up_args(target: DeployTarget, *, build: bool) -> list[str]:
     args.extend(["up", "-d", "--remove-orphans"])
     if build:
         args.append("--build")
-    args.extend(["--scale", f"worker-runtime={target.worker_runtime_replicas}"])
-    args.extend(["--scale", f"worker-data={target.worker_data_replicas}"])
-    args.extend(["--scale", f"worker-valuation={target.worker_valuation_replicas}"])
-    args.extend(["--scale", f"worker-research={target.worker_research_replicas}"])
+    args.extend(["--scale", f"workflow-runtime={target.runtime_lane_replicas}"])
+    args.extend(["--scale", f"workflow-data={target.data_lane_replicas}"])
+    args.extend(["--scale", f"workflow-maintenance={target.maintenance_lane_replicas}"])
+    args.extend(["--scale", f"workflow-valuation={target.valuation_lane_replicas}"])
+    args.extend(["--scale", f"workflow-research={target.research_lane_replicas}"])
     return args
 
 
@@ -74,6 +75,30 @@ def _compose_down_args(target: DeployTarget) -> list[str]:
 
 def _compose_ps_args(target: DeployTarget) -> list[str]:
     return _compose_base_args(target) + ["ps"]
+
+
+def _compose_routine_reconcile_args(target: DeployTarget) -> list[str]:
+    return _compose_base_args(target) + ["run", "--rm", "routine-schedules"]
+
+
+def _compose_runtime_verify_args(target: DeployTarget) -> list[str]:
+    return _compose_base_args(target) + [
+        "run",
+        "--rm",
+        "routine-schedules",
+        "uv",
+        "run",
+        "spreads",
+        "runtime",
+        "verify",
+        "--wait-seconds",
+        "60",
+        "--json",
+    ]
+
+
+def _workflow_runtime_verify_args() -> list[str]:
+    return ["uv", "run", "spreads", "runtime", "verify", "--wait-seconds", "60", "--json"]
 
 
 def _render_shell_command(command: list[str]) -> str:
@@ -137,6 +162,8 @@ __all__ = [
     "_compose_base_args",
     "_compose_down_args",
     "_compose_ps_args",
+    "_compose_routine_reconcile_args",
+    "_compose_runtime_verify_args",
     "_compose_up_args",
     "_ensure_local_env_file",
     "_local_target_command_env",
@@ -147,4 +174,5 @@ __all__ = [
     "_run_target_compose_command",
     "_ssh_command",
     "_write_remote_text_file",
+    "_workflow_runtime_verify_args",
 ]
