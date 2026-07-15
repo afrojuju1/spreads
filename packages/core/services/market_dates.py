@@ -33,4 +33,25 @@ def market_session_window(
     return market_open, market_close
 
 
-__all__ = ["NEW_YORK", "market_session_window", "resolve_market_date"]
+@lru_cache(maxsize=32)
+def market_session_windows(
+    calendar_name: str,
+    start_day: date,
+    end_day: date,
+) -> tuple[tuple[date, datetime, datetime], ...]:
+    calendar = mcal.get_calendar(calendar_name)
+    schedule = calendar.schedule(
+        start_date=start_day.isoformat(),
+        end_date=end_day.isoformat(),
+    )
+    return tuple(
+        (
+            session_label.date(),
+            session["market_open"].to_pydatetime().astimezone(NEW_YORK),
+            session["market_close"].to_pydatetime().astimezone(NEW_YORK),
+        )
+        for session_label, session in schedule.iterrows()
+    )
+
+
+__all__ = ["NEW_YORK", "market_session_window", "market_session_windows", "resolve_market_date"]

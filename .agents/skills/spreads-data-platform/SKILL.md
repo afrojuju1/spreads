@@ -1,6 +1,6 @@
 ---
 name: spreads-data-platform
-description: Market-data and storage operations workflow for Spreads. Use for ClickHouse, Postgres, Redis, capture pressure, market-recorder behavior, quote/trade tick quality, retention, rollups, DB sizing, and storage health.
+description: Market-data and storage operations workflow for Spreads. Use for ClickHouse, Postgres, Redis, capture pressure, capture-session behavior, quote/trade tick quality, retention, rollups, DB sizing, and storage health.
 ---
 
 # Spreads Data Platform
@@ -12,7 +12,7 @@ Use this skill from `/home/ade/Projects/spreads` when the task is about:
 - ClickHouse schemas, partitions, TTLs, projections, or rollups
 - Postgres domain facts, trading feature snapshots, capture summaries, and operator state persistence
 - Redis runtime coordination
-- market-recorder behavior and capture targets
+- capture-session behavior and capture targets
 - storage health and retention
 - data quality problems that affect strategy output
 
@@ -50,7 +50,7 @@ uv run spreads ops strategy-ledger --date YYYY-MM-DD --json
 Then inspect logs for the affected lane:
 
 ```bash
-docker compose logs --tail=200 market-recorder worker-data clickhouse
+docker compose logs --tail=200 capture-worker workflow-data clickhouse
 ```
 
 Use direct DB queries only when the CLI cannot answer size, row-rate, partition, or quality questions.
@@ -71,11 +71,11 @@ Use ClickHouse `system.tables`, `system.parts`, and table-specific summaries for
 
 ## Capture Triage
 
-Market-recorder is the sole normal websocket owner. Multiple live option websocket owners can hit provider connection limits and poison capture.
+The workflow-supervised capture session is the sole normal websocket owner. Multiple live option websocket owners can hit provider connection limits and poison capture.
 
 Check:
 
-- recorder service status
+- capture-worker and capture-session status
 - capture target count
 - last event timestamps
 - row rate by symbol or option contract
@@ -83,7 +83,7 @@ Check:
 - provider connection-limit errors
 - off-hours idle state
 
-Market-closed recorder idle is healthy unless storage state says capture is degraded.
+Market-closed capture-session idle is healthy unless storage state says capture is degraded.
 
 ## Architecture Rules
 

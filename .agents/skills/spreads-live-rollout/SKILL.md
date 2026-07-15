@@ -1,6 +1,6 @@
 ---
 name: spreads-live-rollout
-description: Roll out spreads backend or live-ops changes that touch schema, job definitions, workers, scheduler, market-recorder, or trading policy, then verify the live system through the project CLI and Docker services.
+description: Roll out spreads backend or live-ops changes that touch schema, routine definitions, workflow lanes, routine schedules, capture, or trading policy, then verify the live system through the project CLI and Docker services.
 ---
 
 # Spreads Live Rollout
@@ -26,7 +26,7 @@ Prefer the repo's canonical rollout path over ad hoc commands:
 - `docker compose` for service status, logs, and restarts
 - `uv run spreads ...` for operator verification
 
-Do not start duplicate local API, worker, scheduler, or recorder processes if the Docker stack is already running.
+Do not start duplicate local API, workflow lane, routine reconciler, or capture processes if the Docker stack is already running.
 
 Keep this boundary explicit while rolling changes out:
 
@@ -41,10 +41,10 @@ Before rollout, classify what changed:
 - schema or Alembic files changed
 - job definitions, schedules, or policy payloads changed
 - strategy catalog/profile config changed
-- code imported by `worker-runtime`
-- code imported by `worker-data`
-- scheduler enqueue logic changed
-- `market-recorder` code changed
+- code imported by `workflow-runtime`
+- code imported by `workflow-data`
+- routine schedule reconciliation changed
+- `capture-worker` code changed
 - CLI-only code changed
 - API-only or web-only code changed
 
@@ -73,17 +73,17 @@ Apply only the steps that match the change:
   - `uv run alembic upgrade head`
 - job definitions, seeded payloads, schedules, strategy catalog/profiles, or policies changed:
   - `uv run spreads config validate --json`
-  - restart the scheduler and affected workers so they load the current config/code
-- code imported by `worker-runtime` changed:
-  - `docker compose restart worker-runtime`
-- code imported by `worker-data` changed:
-  - `docker compose restart worker-data`
-- scheduler code changed:
-  - `docker compose restart scheduler`
-- recorder code changed:
-  - `docker compose restart market-recorder`
+  - reconcile routine schedules and restart affected workflow lanes so they load the current config/code
+- code imported by `workflow-runtime` changed:
+  - `docker compose restart workflow-runtime`
+- code imported by `workflow-data` changed:
+  - `docker compose restart workflow-data`
+- routine schedule rendering or reconciliation changed:
+  - `docker compose --profile deploy run --rm routine-schedules`
+- capture code changed:
+  - `docker compose restart capture-worker`
 - live data-worker replica count changed:
-  - `docker compose up -d --scale worker-data=<count> --no-deps worker-data`
+  - `docker compose up -d --scale workflow-data=<count> --no-deps workflow-data`
 - CLI-only code:
   - no Docker restart; validate through the CLI or targeted tests
 - API runtime only:
@@ -97,12 +97,12 @@ If multiple backend runtime surfaces changed, restart only the affected services
 
 In practice:
 
-- most changes under ticker sources, candidate building, capture, market data, strategy entry, or shared backend code imported by data jobs require at least `worker-data`
-- most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
-- if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
-- changes limited to `packages/core/cli/` do not require worker or scheduler restarts unless the touched module is imported by runtime services
-- the live deploy target defaults to one `worker-data` container; if this changes, use compose scaling instead of a restart-only rollout
-- `market-recorder` is deployed continuously but should idle outside regular market hours; closed-market `market_recorder_idle` logs are healthy unless other ops state says capture is degraded
+- most changes under ticker sources, candidate building, market data, or shared backend code imported by data routines require at least `workflow-data`
+- most changes under strategy entry, `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `workflow-runtime`
+- if ownership crosses lanes, restart only those lanes and reconcile only when routine definitions or schedule rendering changed
+- changes limited to `packages/core/cli/` do not require workflow-lane restarts unless the touched module is imported by runtime services
+- the live deploy target defaults to one `workflow-data` container; if this changes, use compose scaling instead of a restart-only rollout
+- `capture-worker` is deployed continuously but its capture session should idle outside regular market hours; closed-market `capture_session_idle` logs are healthy unless other ops state says capture is degraded
 
 ## Verification After Rollout
 
@@ -123,7 +123,7 @@ Then drill into impacted labels:
 
 ```bash
 uv run spreads jobs --job-type <job-type> --limit 10 --json
-docker compose logs --since 3m scheduler worker-runtime worker-data market-recorder
+docker compose logs --since 3m workflow-runtime workflow-data workflow-maintenance capture-worker
 ```
 
 For policy or seeded job-definition changes, verify both layers:

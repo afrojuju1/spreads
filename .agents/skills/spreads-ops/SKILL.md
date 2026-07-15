@@ -1,6 +1,6 @@
 ---
 name: spreads-ops
-description: Live and post-market operations workflow for Spreads. Use for system health, market-open readiness, daily performance, blocked or degraded trading, capture or alert issues, worker or scheduler status, and runtime-vs-strategy diagnosis.
+description: Live and post-market operations workflow for Spreads. Use for system health, market-open readiness, daily performance, blocked or degraded trading, capture or alert issues, workflow-lane or routine-schedule status, and runtime-vs-strategy diagnosis.
 ---
 
 # Spreads Ops
@@ -51,7 +51,7 @@ uv run spreads execution positions --date YYYY-MM-DD --json
 Use logs only after the state surfaces point at a lane:
 
 ```bash
-docker compose logs --tail=200 scheduler worker-runtime worker-data market-recorder api
+docker compose logs --tail=200 workflow-lifecycle workflow-runtime workflow-data workflow-maintenance capture-worker api
 ```
 
 ## Interpretation
@@ -76,10 +76,10 @@ Read operator-health fields before raw historical job counts:
 Use these splits:
 
 - `trading_allowed=false` before market open is expected.
-- Market-closed `market_recorder_idle` logs are expected off-hours behavior.
+- Market-closed `capture_session_idle` logs are expected off-hours behavior.
 - `capture_status=healthy` plus blocked trading points at policy, account, broker sync, control, or execution admission, not the recorder.
 - `capture_status=empty`, `baseline_only`, or `recovery_only` is a data capture problem.
-- stale source or candidate state during market hours points at ticker source, data worker, scheduler, or strategy-entry orchestration.
+- stale source or candidate state during market hours points at ticker source, the data workflow lane, routine schedules, or strategy-entry orchestration.
 - healthy source and candidate state with no selected decisions is usually strategy output, not a runtime outage.
 - For strategy-output diagnosis, use `spreads ops strategy-ledger --date YYYY-MM-DD --json` and inspect `candidates.candidate_productivity_state`, `diagnostic_status_counts`, raw/postprocess/runtime/returned counts, and market-context/regime-fit status counts before calling a strategy barren.
 - selected decisions without active or filled intents point at admission, executor lifecycle policy, dispatch, or broker submission.

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
-from core.services.market_dates import market_session_window
+from core.services.market_dates import NEW_YORK, market_session_window
 from core.storage.records import RecordMapping
 
-NEW_YORK = ZoneInfo("America/New_York")
 CAPTURE_SESSION_RUNTIME_LEASE_PREFIX = "runtime:capture_session"
 SINGLETON_LEASE_PREFIX = "singleton:"
 
@@ -55,6 +53,52 @@ def _interval_market_cutoff(payload: dict[str, object], *, market_close: datetim
     return market_close + timedelta(minutes=grace_minutes)
 
 
+def market_boundary_slot(
+    definition: RecordMapping,
+    session_day: date,
+    *,
+    close: bool,
+    market_window: tuple[datetime, datetime] | None = None,
+) -> datetime | None:
+    resolved_window = market_window or _market_schedule(
+        str(definition.get("market_calendar") or "NYSE"),
+        session_day,
+    )
+    if resolved_window is None:
+        return None
+    market_open, market_close = resolved_window
+    schedule = dict(definition.get("schedule") or {})
+    return (market_close if close else market_open) + timedelta(minutes=int(schedule.get("minutes", 0)))
+
+
+def market_session_slots(
+    definition: RecordMapping,
+    session_day: date,
+    *,
+    market_window: tuple[datetime, datetime] | None = None,
+) -> tuple[datetime, ...]:
+    resolved_window = market_window or _market_schedule(
+        str(definition.get("market_calendar") or "NYSE"),
+        session_day,
+    )
+    if resolved_window is None:
+        return ()
+    market_open, market_close = resolved_window
+    schedule = dict(definition.get("schedule") or {})
+    minutes = max(int(schedule.get("minutes", 1)), 1)
+    offset = interval_offset_seconds(schedule, minutes=minutes)
+    cursor = floor_to_interval(market_open, minutes) + timedelta(seconds=offset)
+    if cursor < market_open:
+        cursor += timedelta(minutes=minutes)
+    payload = dict(definition.get("payload") or {})
+    cutoff = _interval_market_cutoff(payload, market_close=market_close)
+    slots: list[datetime] = []
+    while cursor < cutoff:
+        slots.append(cursor)
+        cursor += timedelta(minutes=minutes)
+    return tuple(slots)
+
+
 def resolve_scheduled_for(
     definition: RecordMapping,
     *,
@@ -64,26 +108,27 @@ def resolve_scheduled_for(
     schedule = dict(definition.get("schedule") or {})
     schedule_type = str(definition["schedule_type"])
 
-    if schedule_type in {"interval", "market_session"}:
+    if schedule_type == "interval":
         minutes = max(int(schedule.get("minutes", 0)), 1)
         slot = floor_to_interval(current, minutes) + timedelta(seconds=interval_offset_seconds(schedule, minutes=minutes))
         if current < slot:
             return None
-        if schedule_type == "interval":
-            return slot.astimezone(UTC)
-        payload = dict(definition.get("payload") or {})
+        return slot.astimezone(UTC)
+
+    if schedule_type == "market_session":
         market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
         if market_window is None:
             return None
         market_open, market_close = market_window
+        payload = dict(definition.get("payload") or {})
         market_cutoff = _interval_market_cutoff(payload, market_close=market_close)
         if not (market_open <= current < market_cutoff):
             return None
-        if slot < market_open:
-            slot = market_open.replace(second=0, microsecond=0)
-        if slot >= market_cutoff:
-            return None
-        return slot.astimezone(UTC)
+        previous = max(
+            (slot for slot in market_session_slots(definition, current.date(), market_window=market_window) if slot <= current),
+            default=None,
+        )
+        return None if previous is None else previous.astimezone(UTC)
 
     if schedule_type == "manual":
         return None
@@ -100,18 +145,15 @@ def resolve_scheduled_for(
         )
         return None if current < target else target.astimezone(UTC)
 
-    market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
-    if market_window is None:
-        return None
-    market_open, market_close = market_window
-
     if schedule_type == "market_open":
-        target = market_open + timedelta(minutes=int(schedule.get("minutes", 0)))
+        target = market_boundary_slot(definition, current.date(), close=False)
     elif schedule_type == "market_close":
-        target = market_close + timedelta(minutes=int(schedule.get("minutes", 0)))
+        target = market_boundary_slot(definition, current.date(), close=True)
     else:
         raise ValueError(f"Unsupported schedule_type: {schedule_type}")
 
+    if target is None:
+        return None
     if current < target:
         return None
     return target.astimezone(UTC)
@@ -173,25 +215,19 @@ def expected_routine_slots(
         market_window = _market_schedule(calendar_name, session_day)
         if market_window is None:
             continue
-        market_open, market_close = market_window
         if schedule_type == "market_open":
-            slots.append(market_open + timedelta(minutes=int(schedule.get("minutes", 0))))
+            slot = market_boundary_slot(definition, session_day, close=False, market_window=market_window)
+            if slot is not None:
+                slots.append(slot)
             continue
         if schedule_type == "market_close":
-            slots.append(market_close + timedelta(minutes=int(schedule.get("minutes", 0))))
+            slot = market_boundary_slot(definition, session_day, close=True, market_window=market_window)
+            if slot is not None:
+                slots.append(slot)
             continue
         if schedule_type != "market_session":
             raise ValueError(f"Unsupported schedule_type: {schedule_type}")
-        minutes = max(int(schedule.get("minutes", 1)), 1)
-        offset = interval_offset_seconds(schedule, minutes=minutes)
-        cursor = floor_to_interval(market_open, minutes) + timedelta(seconds=offset)
-        if cursor < market_open:
-            cursor += timedelta(minutes=minutes)
-        payload = dict(definition.get("payload") or {})
-        cutoff = _interval_market_cutoff(payload, market_close=market_close)
-        while cursor < cutoff:
-            slots.append(cursor)
-            cursor += timedelta(minutes=minutes)
+        slots.extend(market_session_slots(definition, session_day, market_window=market_window))
     previous = max((slot for slot in slots if slot <= current), default=None)
     next_slot = min((slot for slot in slots if slot > current), default=None)
     return {
