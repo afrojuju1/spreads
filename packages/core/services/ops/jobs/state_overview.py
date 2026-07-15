@@ -44,7 +44,12 @@ def build_jobs_overview(
     generated_at = utc_iso(now) or utc_now_iso()
     disabled_lanes = disabled_workflow_lanes()
     attention: list[dict[str, str]] = []
-    definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)]
+    routine_schedule_definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=None)]
+    definitions = [
+        row
+        for row in routine_schedule_definitions
+        if job_type is None or str(row.get("job_type") or "") == job_type
+    ]
     disabled_lane_rows = _disabled_workflow_lane_rows(disabled_lanes=disabled_lanes)
     definition_rows = [
         _summarize_job_definition(
@@ -162,6 +167,7 @@ def build_jobs_overview(
     workflow_runtime = _project_workflow_runtime(
         job_store=job_store,
         definitions=definitions,
+        routine_schedule_definitions=routine_schedule_definitions,
         queued_jobs=active_queued_run_rows,
         running_jobs=running_run_rows,
         disabled_lanes=disabled_lanes,

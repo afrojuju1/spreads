@@ -10,15 +10,18 @@ from core.jobs.registry import CALENDAR_EVENT_REFRESH_JOB_TYPE, TICKER_SOURCE_JO
 from core.runtime.config import default_redis_url
 from core.services.sources.dispatch import persist_ticker_source_result, run_ticker_source
 from core.storage.serializers import render_value
+from core.value_coercion import as_mapping, as_text
 
 
 def _ticker_source_projection(result: Mapping[str, Any]) -> dict[str, Any]:
     entries = [dict(item) for item in list(result.get("entries") or []) if isinstance(item, Mapping)]
     observations = list(result.get("observations") or [])
+    degradation = as_mapping(result.get("degradation"))
     return dict(
         render_value(
             {
                 "status": result.get("status"),
+                "reason": degradation.get("reason"),
                 "source_id": result.get("source_id"),
                 "recipe": result.get("recipe"),
                 "generated_at": result.get("generated_at"),
@@ -28,7 +31,7 @@ def _ticker_source_projection(result: Mapping[str, Any]) -> dict[str, Any]:
                 "entry_count": len(entries),
                 "observation_count": len(observations),
                 "summary": result.get("summary"),
-                "degradation": result.get("degradation"),
+                "degradation": degradation,
                 "persistence": result.get("persistence"),
             }
         )
@@ -69,6 +72,7 @@ def _ticker_source(context: RoutineExecutionContext) -> RoutineOutcome:
         recipe=str(context.payload["recipe"]),
         job_run_id=context.job_run_id,
         result=result,
+        config_hash=as_text(context.payload.get("declared_config_hash")),
     )
     enriched = {
         **result,
@@ -76,7 +80,7 @@ def _ticker_source(context: RoutineExecutionContext) -> RoutineOutcome:
         "persistence": persistence,
     }
     projection = _ticker_source_projection(enriched)
-    if result.get("status") == "skipped":
+    if result.get("status") in {"degraded", "skipped"}:
         return RoutineOutcome.skipped(projection)
     return RoutineOutcome.succeeded(projection)
 

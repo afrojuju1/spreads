@@ -37,8 +37,9 @@ docker compose ps
 uv run spreads ops state --json
 uv run spreads ops storage --json
 uv run spreads jobs --json
-uv run spreads jobs lanes
 ```
+
+Read workflow-lane health from `details.workflow_lanes` in the jobs payload.
 
 For a market date:
 

@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping
-import html
 import math
 import os
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from bs4 import BeautifulSoup
 
 from core.common import parse_int, pick
-from core.integrations.alpaca.client import AlpacaRequestError
-from core.integrations.http_client import VendorHttpClient
+from core.integrations.http_client import VendorHttpClient, VendorHttpError
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.sources.dispatch import (
     FinvizScreenerRecipeArgs,
@@ -102,60 +103,86 @@ def _finviz_instrument_exclusion_reason(
     return None
 
 
-def _strip_finviz_html(value: str) -> str:
-    text = re.sub(r"<[^>]+>", "", value)
-    return html.unescape(text).strip()
+_FINVIZ_DEFAULT_HEADERS = (
+    "no",
+    "ticker",
+    "company",
+    "sector",
+    "industry",
+    "country",
+    "market_cap",
+    "p_e",
+    "price",
+    "change",
+    "volume",
+)
 
 
-def _parse_finviz_html_rows(source_text: str) -> list[dict[str, Any]]:
-    table_index = source_text.find("screener_table")
-    if table_index < 0:
-        return []
-    table_text = source_text[table_index:]
-    table_end = table_text.find("</table>")
-    if table_end >= 0:
-        table_text = table_text[:table_end]
-    header_chunks = re.findall(r"<th\b[^>]*>(.*?)</th>", table_text, flags=re.S | re.I)
-    headers = [_normalize_finviz_header(_strip_finviz_html(item)) for item in header_chunks]
-    headers = [item for item in headers if item]
-    if not headers:
-        headers = [
-            "no",
-            "ticker",
-            "company",
-            "sector",
-            "industry",
-            "country",
-            "market_cap",
-            "p_e",
-            "price",
-            "change",
-            "volume",
-        ]
+def _finviz_ticker_cell_value(cell: Any) -> str:
+    explicit_ticker = as_text(cell.get("data-boxover-ticker"))
+    if explicit_ticker is not None:
+        return explicit_ticker
+    ticker_link = cell.select_one("a.tab-link")
+    if ticker_link is not None:
+        link_text = as_text(ticker_link.get_text(strip=True))
+        if link_text is not None:
+            return link_text
+    first_link = cell.find("a", href=True)
+    if first_link is not None:
+        ticker_values = parse_qs(urlparse(str(first_link.get("href") or "")).query).get("t") or []
+        if ticker_values:
+            return str(ticker_values[0])
+    return cell.get_text(strip=True)
+
+
+def _parse_finviz_html_rows(source_text: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    document = BeautifulSoup(source_text, "html.parser")
+    table = document.select_one("table.screener_table")
+    parsed_headers = [] if table is None else [_normalize_finviz_header(item.get_text(" ", strip=True)) for item in table.select("th")]
+    parsed_headers = [item for item in parsed_headers if item]
+    headers = parsed_headers or list(_FINVIZ_DEFAULT_HEADERS)
     rows: list[dict[str, Any]] = []
-    row_chunks = re.findall(
-        r"<tr\b[^>]*class=\"[^\"]*styled-row[^\"]*\"[^>]*>(.*?)</tr>",
-        table_text,
-        flags=re.S | re.I,
-    )
-    for row_chunk in row_chunks:
-        cells = [_strip_finviz_html(item) for item in re.findall(r"<td\b[^>]*>(.*?)</td>", row_chunk, flags=re.S | re.I)]
-        if not cells:
-            continue
-        row = {headers[index] if index < len(headers) else f"column_{index}": value for index, value in enumerate(cells)}
+    row_elements = [] if table is None else table.select("tr.styled-row")
+    for row_element in row_elements:
+        cells = row_element.find_all("td", recursive=False)
+        row: dict[str, Any] = {}
+        for index, cell in enumerate(cells):
+            header = headers[index] if index < len(headers) else f"column_{index}"
+            row[header] = _finviz_ticker_cell_value(cell) if header in {"ticker", "symbol"} else cell.get_text(" ", strip=True)
         rows.append(row)
-    return rows
+    ticker_header_present = bool({"ticker", "symbol"}.intersection(parsed_headers))
+    parse_status = "ok" if table is not None and ticker_header_present else "invalid"
+    parse_reason = None
+    if table is None:
+        parse_reason = "finviz_screener_table_missing"
+    elif not ticker_header_present:
+        parse_reason = "finviz_ticker_column_missing"
+    return rows, {
+        "status": parse_status,
+        "reason": parse_reason,
+        "table_found": table is not None,
+        "headers": headers,
+    }
 
 
-def _parse_finviz_source_rows(source_text: str) -> tuple[list[dict[str, Any]], str]:
+def _parse_finviz_source_rows(source_text: str) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
     stripped = source_text.lstrip()
     if stripped.startswith("<!DOCTYPE") or stripped.startswith("<html"):
-        return _parse_finviz_html_rows(source_text), "html"
+        rows, parse_summary = _parse_finviz_html_rows(source_text)
+        return rows, "html", parse_summary
+    reader = csv.DictReader(source_text.splitlines())
+    headers = [_normalize_finviz_header(item) for item in list(reader.fieldnames or []) if item is not None]
     rows = [
         {_normalize_finviz_header(key): value for key, value in dict(row).items() if key is not None}
-        for row in csv.DictReader(source_text.splitlines())
+        for row in reader
     ]
-    return rows, "csv"
+    ticker_header_present = bool({"ticker", "symbol"}.intersection(headers))
+    return rows, "csv", {
+        "status": "ok" if ticker_header_present else "invalid",
+        "reason": None if ticker_header_present else "finviz_ticker_column_missing",
+        "table_found": None,
+        "headers": headers,
+    }
 
 
 def _load_finviz_csv_text(
@@ -245,13 +272,37 @@ def _run_finviz_screener_feed(
             },
         }
 
-    source_text = _load_finviz_csv_text(
-        source_kind=source_kind,
-        source_value=source_value,
-        cookie_env=cookie_env,
-        timeout_seconds=timeout_seconds,
-    )
-    rows, source_format = _parse_finviz_source_rows(source_text)
+    try:
+        source_text = _load_finviz_csv_text(
+            source_kind=source_kind,
+            source_value=source_value,
+            cookie_env=cookie_env,
+            timeout_seconds=timeout_seconds,
+        )
+    except (OSError, UnicodeError, VendorHttpError) as exc:
+        source_error = as_text(getattr(exc, "reason", None)) or type(exc).__name__
+        return {
+            "status": "degraded",
+            "source_id": str(source_id),
+            "recipe": str(recipe),
+            "generated_at": generated_at,
+            "symbols": [],
+            "entries": [],
+            "observations": [],
+            "summary": {
+                "symbol_count": 0,
+                "candidate_count": 0,
+                "recipe": str(recipe),
+                "source": source_kind,
+                "reason": "finviz_source_fetch_failed",
+                "source_error": source_error,
+            },
+            "degradation": {
+                "status": "degraded",
+                "reason": "finviz_source_fetch_failed",
+            },
+        }
+    rows, source_format, parse_summary = _parse_finviz_source_rows(source_text)
 
     candidates: list[dict[str, Any]] = []
     filtered_observations: list[dict[str, Any]] = []
@@ -262,7 +313,22 @@ def _run_finviz_screener_feed(
     below_min_volume_count = 0
     excluded_instrument_reason_counts: dict[str, int] = {}
     target_option_filter_reason_counts: dict[str, int] = {}
-    target_option_filter_client: Any | None = None
+    target_option_filter_attempt_count = 0
+    asset_validation_attempt_count = 0
+    unknown_asset_count = 0
+    untradable_asset_count = 0
+    active_assets_by_symbol: dict[str, dict[str, Any]] = {}
+    alpaca_client: Any | None = None
+    asset_universe_error: str | None = None
+    if rows:
+        try:
+            alpaca_client = create_alpaca_client_from_env()
+            for asset in alpaca_client.list_active_us_equity_assets():
+                asset_symbol = normalize_symbol(asset.get("symbol"))
+                if asset_symbol is not None:
+                    active_assets_by_symbol[asset_symbol] = dict(asset)
+        except Exception as exc:
+            asset_universe_error = str(exc)
     for index, row in enumerate(rows):
         symbol = normalize_symbol(pick(row, "ticker", "symbol"))
         if symbol is None:
@@ -351,17 +417,64 @@ def _run_finviz_screener_feed(
                 }
             )
             continue
+        asset_validation_attempt_count += 1
+        if asset_universe_error is not None:
+            filtered_observations.append(
+                {
+                    **base_observation,
+                    "observation_state": "filtered_out",
+                    "reason_codes": ["finviz_screen", "alpaca_asset_filter_unavailable"],
+                    "alpaca_error": asset_universe_error,
+                }
+            )
+            continue
+        asset = active_assets_by_symbol.get(symbol)
+        if asset is None:
+            unknown_asset_count += 1
+            filtered_observations.append(
+                {
+                    **base_observation,
+                    "observation_state": "filtered_out",
+                    "reason_codes": ["finviz_screen", "alpaca_asset_unknown"],
+                }
+            )
+            continue
+        if asset.get("tradable") is False:
+            untradable_asset_count += 1
+            filtered_observations.append(
+                {
+                    **base_observation,
+                    "observation_state": "filtered_out",
+                    "reason_codes": ["finviz_screen", "alpaca_asset_not_tradable"],
+                    "alpaca_asset": {
+                        "id": asset.get("id"),
+                        "exchange": asset.get("exchange"),
+                        "name": asset.get("name"),
+                        "status": asset.get("status"),
+                        "tradable": asset.get("tradable"),
+                    },
+                }
+            )
+            continue
+        base_observation["alpaca_asset"] = {
+            "id": asset.get("id"),
+            "asset_class": asset.get("class") or asset.get("asset_class"),
+            "exchange": asset.get("exchange"),
+            "name": asset.get("name"),
+            "status": asset.get("status"),
+            "tradable": asset.get("tradable"),
+        }
+        base_observation["source_tags"] = [*base_observation["source_tags"], "source:alpaca"]
         target_option_filter_result: dict[str, Any] | None = None
         if target_option_filter.enabled:
-            if target_option_filter_client is None:
-                target_option_filter_client = create_alpaca_client_from_env()
+            target_option_filter_attempt_count += 1
             try:
                 target_option_filter_result = _target_dte_option_filter_result(
-                    client=target_option_filter_client,
+                    client=alpaca_client,
                     symbol=symbol,
                     config=target_option_filter,
                 )
-            except AlpacaRequestError as exc:
+            except Exception as exc:
                 target_option_filter_result = {
                     "status": "filtered_out",
                     "reason": "target_dte_option_filter_error",
@@ -459,8 +572,43 @@ def _run_finviz_screener_feed(
         }
         for item in ranked
     ] + filtered_observations
+    invalid_asset_count = unknown_asset_count + untradable_asset_count
+    target_option_filter_error_count = int(target_option_filter_reason_counts.get("target_dte_option_filter_error") or 0)
+    result_status = "completed"
+    degradation_status = "ok" if symbols else "empty"
+    degradation_reason = None if symbols else "no_symbols_after_filters"
+    parse_reason = as_text(parse_summary.get("reason"))
+    if str(parse_summary.get("status") or "").strip().lower() != "ok":
+        result_status = "degraded"
+        degradation_status = "degraded"
+        degradation_reason = parse_reason or "finviz_response_schema_invalid"
+    elif rows and missing_symbol_count == len(rows):
+        result_status = "degraded"
+        degradation_status = "degraded"
+        degradation_reason = "finviz_symbols_unparseable"
+    elif asset_universe_error is not None:
+        result_status = "degraded"
+        degradation_status = "degraded"
+        degradation_reason = "alpaca_asset_filter_unavailable"
+    elif asset_validation_attempt_count > 0 and invalid_asset_count == asset_validation_attempt_count:
+        result_status = "degraded"
+        degradation_status = "degraded"
+        degradation_reason = "finviz_symbols_not_in_asset_universe"
+    elif target_option_filter_attempt_count > 0 and target_option_filter_error_count == target_option_filter_attempt_count:
+        result_status = "degraded"
+        degradation_status = "degraded"
+        degradation_reason = "target_dte_option_filter_unavailable"
+    elif missing_symbol_count > 0:
+        degradation_status = "partial"
+        degradation_reason = "finviz_symbols_partially_unparseable"
+    elif invalid_asset_count > 0:
+        degradation_status = "partial"
+        degradation_reason = "finviz_symbols_partially_invalid"
+    elif target_option_filter_error_count > 0:
+        degradation_status = "partial"
+        degradation_reason = "target_dte_option_filter_partially_unavailable"
     return {
-        "status": "completed",
+        "status": result_status,
         "source_id": str(source_id),
         "recipe": str(recipe),
         "generated_at": generated_at,
@@ -475,6 +623,7 @@ def _run_finviz_screener_feed(
             "recipe": str(recipe),
             "source": source_kind,
             "source_format": source_format,
+            "source_parse": parse_summary,
             "source_symbol_limit": source_symbol_limit,
             "min_price": min_price,
             "min_market_cap": min_market_cap,
@@ -486,6 +635,11 @@ def _run_finviz_screener_feed(
             "below_min_volume_count": below_min_volume_count,
             "excluded_instrument_count": sum(excluded_instrument_reason_counts.values()),
             "excluded_instrument_reason_counts": dict(sorted(excluded_instrument_reason_counts.items())),
+            "asset_validation_attempt_count": asset_validation_attempt_count,
+            "active_asset_count": len(active_assets_by_symbol),
+            "unknown_asset_count": unknown_asset_count,
+            "untradable_asset_count": untradable_asset_count,
+            "asset_universe_error": asset_universe_error,
             "target_dte_option_filter": {
                 "enabled": target_option_filter.enabled,
                 "min_dte": target_option_filter.min_dte,
@@ -493,12 +647,14 @@ def _run_finviz_screener_feed(
                 "feed": target_option_filter.feed,
                 "require_expected_move": target_option_filter.require_expected_move,
                 "min_expected_move_count": target_option_filter.min_expected_move_count,
+                "attempt_count": target_option_filter_attempt_count,
+                "error_count": target_option_filter_error_count,
                 "filtered_count": sum(target_option_filter_reason_counts.values()),
                 "reason_counts": dict(sorted(target_option_filter_reason_counts.items())),
             },
         },
         "degradation": {
-            "status": "ok" if symbols else "empty",
-            "reason": None if symbols else "no_symbols_after_filters",
+            "status": degradation_status,
+            "reason": degradation_reason,
         },
     }

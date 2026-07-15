@@ -666,6 +666,7 @@ def _project_workflow_runtime(
     *,
     job_store: Any,
     definitions: list[dict[str, Any]],
+    routine_schedule_definitions: list[dict[str, Any]],
     queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
     disabled_lanes: set[str],
@@ -675,7 +676,11 @@ def _project_workflow_runtime(
 ) -> _WorkflowRuntimeProjection:
     attention: list[dict[str, str]] = []
     statuses: list[str] = []
-    schedules_payload = _routine_schedules_payload(job_store=job_store, definitions=definitions, now=now)
+    schedules_payload = _routine_schedules_payload(
+        job_store=job_store,
+        definitions=routine_schedule_definitions,
+        now=now,
+    )
     workflow_lane_rows = _workflow_lane_rows(
         queued_jobs=queued_jobs,
         running_jobs=running_jobs,

@@ -9,6 +9,7 @@ description = "Spreads trading engine and operator tools"
 requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.16.5",
+  "beautifulsoup4>=4.14.0",
   "fastapi>=0.118.0",
   "msgpack>=1.1.0",
   "pandas-market-calendars>=4.4.1",

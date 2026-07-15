@@ -95,6 +95,7 @@ def build_jobs_compact_state(
     workflow_runtime = _project_workflow_runtime(
         job_store=job_store,
         definitions=definitions,
+        routine_schedule_definitions=definitions,
         queued_jobs=active_queued_runs,
         running_jobs=running_runs,
         disabled_lanes=disabled_lanes,

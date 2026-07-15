@@ -208,6 +208,20 @@ class EngineFactSourceMixin:
         if max_age_seconds is not None and age_seconds > max(int(max_age_seconds), 0):
             snapshot_status = "stale"
         symbols = [str(row.get("symbol") or "").upper() for row in observation_rows if str(row.get("symbol") or "").strip()]
+        evidence = dict(run_row.get("evidence") or {})
+        persisted_degradation = dict(evidence.get("degradation") or {})
+        degradation_reason = as_text(persisted_degradation.get("reason"))
+        if snapshot_status == "stale":
+            degradation = {"status": "stale", "reason": "snapshot_stale"}
+        elif persisted_degradation:
+            degradation = persisted_degradation
+        else:
+            degradation = {
+                "status": snapshot_status,
+                "reason": None if snapshot_status in {"ready", "empty"} else snapshot_status,
+            }
+        if degradation_reason is not None and degradation.get("reason") is None:
+            degradation["reason"] = degradation_reason
         return {
             "status": snapshot_status,
             "ticker_source_id": ticker_source_id,
@@ -219,10 +233,7 @@ class EngineFactSourceMixin:
             "symbols": symbols if snapshot_status != "stale" else [],
             "entries": observation_rows if snapshot_status != "stale" else [],
             "summary": dict(run_row.get("summary") or {}),
-            "degradation": {
-                "status": snapshot_status,
-                "reason": None if snapshot_status in {"ready", "empty"} else "snapshot_stale" if snapshot_status == "stale" else snapshot_status,
-            },
+            "degradation": degradation,
         }
 
     def list_ticker_source_state(

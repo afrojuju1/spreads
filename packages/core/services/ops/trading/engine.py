@@ -44,6 +44,7 @@ def _count_rows(rows: list[Mapping[str, Any]], field_name: str) -> dict[str, int
 
 
 def _ticker_source_run_row(row: TickerSourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
+    evidence = dict(row.evidence_json or {})
     return {
         "ticker_source_run_id": row.ticker_source_run_id,
         "ticker_source_type": row.ticker_source_type,
@@ -58,6 +59,7 @@ def _ticker_source_run_row(row: TickerSourceRunModel, *, symbols: list[str]) -> 
         "excluded_count": row.excluded_count,
         "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
         "summary": dict(row.summary_json or {}),
+        "degradation": dict(evidence.get("degradation") or {}),
         "created_at": utc_iso(row.created_at),
         "updated_at": utc_iso(row.updated_at),
     }

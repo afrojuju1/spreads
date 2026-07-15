@@ -46,6 +46,7 @@ def _normalized_symbols(symbols: tuple[str, ...] | list[str]) -> list[str]:
     return list(dict.fromkeys(normalized))
 
 def _ticker_source_run_payload(row: TickerSourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
+    evidence = dict(row.evidence_json or {})
     return {
         "ticker_source_run_id": row.ticker_source_run_id,
         "ticker_source_type": row.ticker_source_type,
@@ -60,6 +61,7 @@ def _ticker_source_run_payload(row: TickerSourceRunModel, *, symbols: list[str])
         "excluded_count": row.excluded_count,
         "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
         "summary": dict(row.summary_json or {}),
+        "degradation": dict(evidence.get("degradation") or {}),
         "created_at": utc_iso(row.created_at),
         "updated_at": utc_iso(row.updated_at),
     }
@@ -374,9 +376,14 @@ def _source_state(
             "reason": "no_recent_source_run",
         }
     raw_status = str(ticker_source_run.get("status") or "unknown")
+    degradation = as_mapping(ticker_source_run.get("degradation"))
+    degradation_status = str(degradation.get("status") or "").strip().lower()
+    degradation_reason = as_text(degradation.get("reason"))
     age_seconds = _age_seconds(ticker_source_run.get("generated_at") or ticker_source_run.get("completed_at"), now=now)
     stale = bool(market_open and max_age_seconds is not None and age_seconds is not None and age_seconds > max_age_seconds)
     status = "healthy" if raw_status in {"ready", "fallback", "completed", "ok"} else "degraded"
+    if degradation_status in {"degraded", "failed", "missing", "partial"}:
+        status = "degraded"
     if stale and status == "healthy":
         status = "degraded"
     symbols = _symbols_from_ticker_source_run(ticker_source_run)
@@ -385,6 +392,17 @@ def _source_state(
     source_evidence_state = "source_symbols_available" if symbol_count > 0 else "no_source_symbols"
     if stale:
         source_evidence_state = "source_stale"
+    elif degradation_status == "partial":
+        source_evidence_state = "source_partial"
+    elif status == "degraded":
+        source_evidence_state = "source_degraded"
+    reason = None
+    if stale:
+        reason = "source_stale"
+    elif empty:
+        reason = "source_empty"
+    elif status == "degraded":
+        reason = degradation_reason or "source_degraded"
     return {
         "status": status,
         "raw_status": raw_status,
@@ -397,7 +415,7 @@ def _source_state(
         "symbol_count": symbol_count,
         "symbols": symbols[:25],
         "latest_run": dict(ticker_source_run),
-        "reason": "source_stale" if stale else "source_empty" if empty else (None if status == "healthy" else "source_degraded"),
+        "reason": reason,
     }
 
 def _candidate_state(
