@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 
 @workflow.defn
@@ -18,4 +19,5 @@ class ScheduledJobWorkflow:
             payload,
             start_to_close_timeout=timedelta(hours=8),
             heartbeat_timeout=timedelta(minutes=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
         )

@@ -12,12 +12,13 @@ from core.activities import (
     create_repriced_execution_intent_activity,
     ensure_execution_attempt_for_intent_activity,
     refresh_execution_attempt_activity,
-    run_scheduled_job_activity,
     submit_execution_attempt_to_broker_activity,
 )
-from core.jobs.registry import LIFECYCLE_WORKFLOW_LANE, WORKFLOW_LANES, get_workflow_lane
+from core.jobs.handlers import build_lane_handlers
+from core.jobs.registry import CAPTURE_WORKFLOW_LANE, LIFECYCLE_WORKFLOW_LANE, WORKFLOW_LANES, get_workflow_lane
 from core.runtime.config import default_lifecycle_workflow_lane, default_workflow_address, default_workflow_namespace
 from core.workflow_runtime.provider import connect_provider, provider_queue_for_lane
+from core.workflow_runtime.routine_activity import build_routine_activity
 from core.workflows.close_lifecycle import CloseLifecycleWorkflow
 from core.workflows.scheduled_job import ScheduledJobWorkflow
 from core.workflows.trade_lifecycle import TradeLifecycleWorkflow
@@ -28,7 +29,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--lane",
         default=default_lifecycle_workflow_lane(),
-        choices=tuple(spec.lane for spec in WORKFLOW_LANES),
+        choices=tuple(spec.lane for spec in WORKFLOW_LANES if spec.lane != CAPTURE_WORKFLOW_LANE),
         help="Workflow lane to poll.",
     )
     return parser.parse_args(argv)
@@ -41,17 +42,17 @@ async def run_worker(*, lane: str) -> None:
     client = await connect_provider(address=default_workflow_address(), namespace=default_workflow_namespace())
     lifecycle = lane == LIFECYCLE_WORKFLOW_LANE
     workflows = [TradeLifecycleWorkflow, CloseLifecycleWorkflow] if lifecycle else [ScheduledJobWorkflow]
-    activities = (
-        [
+    if lifecycle:
+        activities = [
             ensure_execution_attempt_for_intent_activity,
             submit_execution_attempt_to_broker_activity,
             refresh_execution_attempt_activity,
             cancel_execution_attempt_activity,
             create_repriced_execution_intent_activity,
         ]
-        if lifecycle
-        else [run_scheduled_job_activity]
-    )
+    else:
+        handlers = build_lane_handlers(lane)
+        activities = [build_routine_activity(expected_lane=lane, handlers=handlers)]
     with ThreadPoolExecutor(max_workers=lane_spec.max_concurrency, thread_name_prefix=f"{lane}-activity") as activity_executor:
         worker = Worker(
             client,
