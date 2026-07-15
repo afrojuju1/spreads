@@ -21,4 +21,3 @@ payload:
     - Sell
     - Underweight
   allow_off_hours: false
-singleton_scope: finviz_momentum

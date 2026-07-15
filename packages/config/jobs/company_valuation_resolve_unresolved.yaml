@@ -11,4 +11,3 @@ payload:
   limit_rows: 20000
   batch_cusips: 50
   max_attempts: 5
-singleton_scope: resolve_unresolved:global

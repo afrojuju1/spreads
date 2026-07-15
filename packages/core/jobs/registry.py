@@ -41,6 +41,7 @@ COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_KEY = "company_valuation_resolve_unreso
 class JobSpec:
     job_type: str
     workflow_lane: str
+    activity_maximum_attempts: int = 3
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,7 @@ JOB_SPECS = {
     for spec in (
         JobSpec(BROKER_SYNC_JOB_TYPE, RUNTIME_WORKFLOW_LANE),
         JobSpec(ENGINE_OUTBOX_PUBLISH_JOB_TYPE, RUNTIME_WORKFLOW_LANE),
-        JobSpec(ALERT_DELIVERY_JOB_TYPE, RUNTIME_WORKFLOW_LANE),
+        JobSpec(ALERT_DELIVERY_JOB_TYPE, RUNTIME_WORKFLOW_LANE, activity_maximum_attempts=1),
         JobSpec(ALERT_RECONCILE_JOB_TYPE, RUNTIME_WORKFLOW_LANE),
         JobSpec(TICKER_SOURCE_JOB_TYPE, DATA_WORKFLOW_LANE),
         JobSpec(CALENDAR_EVENT_REFRESH_JOB_TYPE, DATA_WORKFLOW_LANE),

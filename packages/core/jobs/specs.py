@@ -14,7 +14,6 @@ from core.jobs.registry import get_workflow_lane_for_job_type
 from core.services.config_inheritance import load_yaml_mapping as _load_yaml_mapping
 from core.services.payload_validation import (
     normalize_mapping,
-    normalize_optional_text,
     normalize_required_text,
     validate_payload_model,
 )
@@ -70,7 +69,6 @@ class DeclaredJobYamlPayload(DomainModel):
     schedule: ScheduleYamlPayload
     payload: dict[str, Any] = Field(default_factory=dict)
     market_calendar: str = "NYSE"
-    singleton_scope: str | None = None
 
     @field_validator("job_key", "job_type", mode="before")
     @classmethod
@@ -87,12 +85,6 @@ class DeclaredJobYamlPayload(DomainModel):
     def _normalize_market_calendar(cls, value: Any) -> str:
         return normalize_required_text(value or "NYSE")
 
-    @field_validator("singleton_scope", mode="before")
-    @classmethod
-    def _normalize_singleton_scope(cls, value: Any) -> str | None:
-        return normalize_optional_text(value)
-
-
 class TickerSourceYamlPayload(DomainModel):
     ticker_source_id: str
     job_key: str
@@ -102,7 +94,6 @@ class TickerSourceYamlPayload(DomainModel):
     allow_off_hours: bool = False
     recipe: str
     recipe_args: dict[str, Any] = Field(default_factory=dict)
-    singleton_scope: str | None = None
 
     @field_validator("ticker_source_id", "job_key", mode="before")
     @classmethod
@@ -131,12 +122,6 @@ class TickerSourceYamlPayload(DomainModel):
     def _normalize_market_calendar(cls, value: Any) -> str:
         return normalize_required_text(value or "NYSE")
 
-    @field_validator("singleton_scope", mode="before")
-    @classmethod
-    def _normalize_singleton_scope(cls, value: Any) -> str | None:
-        return normalize_optional_text(value)
-
-
 def _schedule_payload(payload: ScheduleYamlPayload) -> tuple[str, dict[str, Any]]:
     return payload.schedule_type, payload.schedule_args()
 
@@ -150,7 +135,6 @@ class DeclaredJobSpec:
     schedule: dict[str, Any]
     payload: dict[str, Any]
     market_calendar: str
-    singleton_scope: str | None
     config_path: Path | None
     config_hash: str
 
@@ -163,7 +147,6 @@ class DeclaredJobSpec:
             "schedule": dict(self.schedule),
             "payload": dict(self.payload),
             "market_calendar": self.market_calendar,
-            "singleton_scope": self.singleton_scope,
             "updated_at": None,
             "config_hash": self.config_hash,
             "config_path": None if self.config_path is None else str(self.config_path),
@@ -181,7 +164,6 @@ class TickerSourceConfig:
     market_calendar: str
     allow_off_hours: bool
     recipe_args: dict[str, Any]
-    singleton_scope: str | None
     config_path: Path
     config_hash: str
 
@@ -216,7 +198,6 @@ class TickerSourceSpec:
             schedule=dict(self.config.schedule),
             payload=self.payload(),
             market_calendar=self.config.market_calendar,
-            singleton_scope=self.config.singleton_scope,
             config_path=self.config.config_path,
             config_hash=self.config.config_hash,
         )
@@ -239,7 +220,6 @@ def _load_job_specs(config_root: str | Path | None = None) -> list[DeclaredJobSp
             schedule=schedule,
             payload=payload,
             market_calendar=raw.market_calendar,
-            singleton_scope=raw.singleton_scope,
             config_path=path,
             config_hash=_canonical_hash(
                 {
@@ -250,7 +230,6 @@ def _load_job_specs(config_root: str | Path | None = None) -> list[DeclaredJobSp
                     "schedule": schedule,
                     "payload": payload,
                     "market_calendar": raw.market_calendar,
-                    "singleton_scope": raw.singleton_scope,
                 }
             ),
         )
@@ -281,7 +260,6 @@ def _load_ticker_source_configs(
                 market_calendar=raw.market_calendar,
                 allow_off_hours=raw.allow_off_hours,
                 recipe_args=recipe_args,
-                singleton_scope=raw.singleton_scope,
                 config_path=path,
                 config_hash=_canonical_hash(
                     {
@@ -294,7 +272,6 @@ def _load_ticker_source_configs(
                         "market_calendar": raw.market_calendar,
                         "allow_off_hours": raw.allow_off_hours,
                         "recipe_args": recipe_args,
-                        "singleton_scope": raw.singleton_scope,
                     }
                 ),
             )
@@ -351,7 +328,6 @@ def _trading_strategy_job_specs(
                         "declared_config_hash": strategy.config_hash,
                     },
                     market_calendar="NYSE",
-                    singleton_scope=f"{strategy.trading_strategy_id}:{routine_name}",
                     config_path=strategy.config_path,
                     config_hash=strategy.config_hash,
                 )

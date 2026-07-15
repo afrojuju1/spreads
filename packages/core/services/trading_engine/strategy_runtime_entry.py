@@ -338,7 +338,7 @@ def _run_trading_strategy_entry(
             execution_store.append_execution_intent_event(
                 execution_intent_id=str(selected_intent["execution_intent_id"]),
                 event_type=(
-                    "lifecycle_start_requested" if str(lifecycle_start_request.get("status") or "") == "queued" else "lifecycle_start_failed"
+                    "lifecycle_start_requested" if str(lifecycle_start_request.get("status") or "") == "started" else "lifecycle_start_failed"
                 ),
                 event_at=_utc_now(),
                 payload={
@@ -354,7 +354,6 @@ def _run_trading_strategy_entry(
         try:
             runtime_alert = plan_runtime_entry_selected_alert(
                 alert_store=getattr(storage, "alerts", None),
-                job_store=getattr(storage, "jobs", None),
                 trading_strategy_id=runtime.trading_strategy_id,
                 market_date=resolved_market_date,
                 run_key=run_key,

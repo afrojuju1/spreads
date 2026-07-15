@@ -24,4 +24,3 @@ recipe_args:
     stock_feed: sip
     require_expected_move: true
     min_expected_move_count: 1
-singleton_scope: earnings_event_window

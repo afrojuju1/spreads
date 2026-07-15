@@ -11,7 +11,6 @@ from core.services.ops.jobs.state_support import (
     _summarize_job_run,
     as_text,
     get_declared_job_row,
-    singleton_lease_key,
     utc_iso,
     utc_now,
     utc_now_iso,
@@ -87,22 +86,6 @@ def build_job_run_view(
                 )
             )
 
-    singleton_scope = as_text((run.get("payload") or {}).get("singleton_scope"))
-    singleton_lease = None
-    if singleton_scope is not None and as_text(run.get("job_type")) is not None:
-        singleton_lease = job_store.get_lease(singleton_lease_key(str(run["job_type"]), singleton_scope))
-        if singleton_lease is not None and singleton_lease.get("job_run_id") != run_summary["job_run_id"]:
-            statuses.append("degraded")
-            attention.append(
-                _attention(
-                    severity="medium",
-                    code="singleton_lease_held_elsewhere",
-                    message=(
-                        f"Singleton lease for {run.get('job_type')}:{singleton_scope} is currently held by {singleton_lease.get('job_run_id')}."
-                    ),
-                )
-            )
-
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
     if str(run.get("status") or "") == "failed" and as_text(run.get("error_text")) is None:
         result_reason = as_text(result.get("reason"))
@@ -143,7 +126,6 @@ def build_job_run_view(
             "result": dict(result),
             "quote_capture": dict(run.get("quote_capture") or {}),
             "trade_capture": dict(run.get("trade_capture") or {}),
-            "singleton_lease": None if singleton_lease is None else dict(singleton_lease),
         },
     }
 

@@ -6,4 +6,3 @@ schedule:
   minutes: 1
 payload:
   limit: 25
-singleton_scope: global

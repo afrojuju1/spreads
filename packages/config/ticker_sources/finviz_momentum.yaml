@@ -39,4 +39,3 @@ recipe_args:
     - Daily Bull
     - Daily Bear
   timeout_seconds: 20
-singleton_scope: finviz_momentum

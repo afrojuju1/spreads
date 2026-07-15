@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
-
 from temporalio.client import Client
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
@@ -22,7 +20,7 @@ from core.value_coercion import as_text, utc_now_iso
 from core.workflows.close_lifecycle import CloseLifecycleWorkflow
 from core.workflows.contracts import CloseLifecycleWorkflowInput, TradeLifecycleWorkflowInput
 from core.workflows.trade_lifecycle import TradeLifecycleWorkflow
-from core.workflow_runtime.provider import connect_provider, provider_queue_for_lane
+from core.workflow_runtime.provider import connect_provider, provider_queue_for_lane, routine_workflow_id
 
 PRE_WORKFLOW_START_EXPIRE_REASON = "workflow_start_window_elapsed"
 
@@ -149,13 +147,11 @@ def request_execution_lifecycle_start(
     if hasattr(job_store, "schema_ready") and not job_store.schema_ready():
         return None
     scheduled_for = datetime.now(UTC)
-    job_run_id = f"{EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY}:{uuid4().hex}"
     payload: dict[str, Any] = {
         "limit": max(int(limit), 1),
         "job_key": EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY,
         "job_type": EXECUTION_LIFECYCLE_START_JOB_TYPE,
         "scheduled_for": scheduled_for.isoformat().replace("+00:00", "Z"),
-        "singleton_scope": "global",
     }
     if requested_by:
         payload["requested_by"] = dict(requested_by)
@@ -164,19 +160,20 @@ def request_execution_lifecycle_start(
         started = start_ad_hoc_job_workflow(
             job_type=EXECUTION_LIFECYCLE_START_JOB_TYPE,
             job_key=EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY,
-            job_run_id=job_run_id,
-            orchestration_id=job_run_id,
+            workflow_id=routine_workflow_id("execution_lifecycle_start:global"),
             payload=payload,
         )
     except Exception as exc:
-        return {"status": "failed", "job_run_id": job_run_id, "error": str(exc)}
+        return {"status": "failed", "error": str(exc)}
     if started is None:
         message = "Execution lifecycle start workflow was not started."
-        return {"status": "failed", "job_run_id": job_run_id, "error": message}
+        return {"status": "failed", "error": message}
     return {
         "status": "started",
-        "job_run_id": job_run_id,
+        "job_run_id": started.job_run_id,
         "job_key": EXECUTION_LIFECYCLE_START_ADHOC_JOB_KEY,
+        "workflow_id": started.workflow_id,
+        "workflow_run_id": started.workflow_run_id,
     }
 
 

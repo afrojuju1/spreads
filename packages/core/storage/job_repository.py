@@ -14,7 +14,10 @@ from core.storage.serializers import parse_datetime
 
 class JobRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        return self.schema_has_tables("job_runs", "job_leases")
+        return self.schema_has_tables("job_runs")
+
+    def lease_schema_ready(self) -> bool:
+        return self.schema_has_tables("job_leases")
 
     def create_job_run(
         self,
@@ -273,28 +276,30 @@ class JobRepository(RepositoryBase):
             worker_name=worker_name,
         )
 
-    def requeue_job_run(
+    def begin_job_run_attempt(
         self,
         *,
         job_run_id: str,
-        orchestration_id: str,
-        payload: dict[str, Any] | None = None,
-    ) -> JobRunRecord:
+        expected_orchestration_id: str,
+        worker_name: str,
+        provider_attempt: int,
+        started_at: str | datetime,
+    ) -> JobRunRecord | None:
         with self.session_scope() as session:
             row = session.get(JobRunModel, job_run_id)
             if row is None:
                 raise ValueError(f"Unknown job_run_id: {job_run_id}")
-            row.orchestration_id = orchestration_id
-            row.status = "queued"
-            row.retry_count = int(row.retry_count) + 1
-            row.started_at = None
+            if row.orchestration_id != expected_orchestration_id:
+                return None
+            now = parse_datetime(started_at) or datetime.now(UTC)
+            row.status = "running"
+            row.retry_count = max(int(row.retry_count), max(int(provider_attempt) - 1, 0))
+            row.started_at = row.started_at or now
             row.finished_at = None
-            row.heartbeat_at = None
-            row.worker_name = None
+            row.heartbeat_at = now
+            row.worker_name = worker_name
             row.result_json = None
             row.error_text = None
-            if payload is not None:
-                row.payload_json = payload
             session.flush()
             session.refresh(row)
             return self.row(row)
@@ -329,28 +334,6 @@ class JobRepository(RepositoryBase):
         except IntegrityError:
             return False
 
-    def renew_lease(
-        self,
-        *,
-        lease_key: str,
-        owner: str,
-        expires_in_seconds: int,
-        state: dict[str, Any] | None = None,
-    ) -> JobLeaseRecord | None:
-        now = datetime.now(UTC)
-        expires_at = now + timedelta(seconds=max(expires_in_seconds, 1))
-        with self.session_scope() as session:
-            statement = select(JobLeaseModel).where(JobLeaseModel.lease_key == lease_key).with_for_update()
-            row = session.scalar(statement)
-            if row is None or row.owner != owner:
-                return None
-            row.expires_at = expires_at
-            if state is not None:
-                row.lease_state_json = state
-            session.flush()
-            session.refresh(row)
-            return self.row(row)
-
     def release_lease(self, lease_key: str, *, owner: str | None = None) -> None:
         with self.session_scope() as session:
             row = session.get(JobLeaseModel, lease_key)
@@ -366,16 +349,6 @@ class JobRepository(RepositoryBase):
         if row is None:
             return None
         return self.row(row)
-
-    def list_active_leases(self, *, prefix: str | None = None) -> list[JobLeaseRecord]:
-        now = datetime.now(UTC)
-        statement = select(JobLeaseModel).where(JobLeaseModel.expires_at > now)
-        if prefix:
-            statement = statement.where(JobLeaseModel.lease_key.like(f"{prefix}%"))
-        statement = statement.order_by(JobLeaseModel.expires_at.desc())
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:

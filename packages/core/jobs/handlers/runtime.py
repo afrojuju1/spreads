@@ -102,7 +102,6 @@ def _alert_reconcile(context: RoutineExecutionContext) -> RoutineOutcome:
     context.heartbeat()
     result = reconcile_alert_delivery(
         alert_store=context.storage.alerts,
-        job_store=context.storage.jobs,
         limit=int(context.payload.get("limit", 200)),
         stale_after_seconds=int(context.payload.get("stale_after_seconds", ALERT_DELIVERY_STALE_SECONDS)),
     )

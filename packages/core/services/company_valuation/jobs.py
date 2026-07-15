@@ -21,6 +21,7 @@ from core.services.company_valuation.unresolved import (
     ResolveUnresolvedInstitutionalPositionsRequest,
 )
 from core.storage.serializers import parse_date, parse_datetime
+from core.workflow_runtime.provider import routine_workflow_id
 
 
 class CompanyValuationScreenRefreshRequest(CompanyValuationContractModel):
@@ -37,7 +38,8 @@ class QueuedCompanyValuationJob(CompanyValuationContractModel):
     job_run_id: str
     job_key: str
     job_type: str
-    orchestration_id: str
+    workflow_id: str
+    workflow_run_id: str
     status: str
     scheduled_for: str
     payload: dict[str, Any]
@@ -81,10 +83,6 @@ def _scope_hash(payload: dict[str, Any]) -> str:
     ).hexdigest()[:10]
 
 
-def _job_run_id(job_key: str, scheduled_for: datetime) -> str:
-    return f"{job_key}:{scheduled_for.astimezone(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
-
-
 def _queue_job(
     *,
     job_type: str,
@@ -103,14 +101,12 @@ def _queue_job(
         "job_type": job_type,
         "scheduled_for": scheduled_for_iso,
     }
-    job_run_id = _job_run_id(job_key, scheduled_for)
-    orchestration_id = job_run_id
+    workflow_id = routine_workflow_id(job_key)
     try:
         started = start_ad_hoc_job_workflow(
             job_type=job_type,
             job_key=job_key,
-            job_run_id=job_run_id,
-            orchestration_id=orchestration_id,
+            workflow_id=workflow_id,
             payload=full_payload,
         )
     except Exception as exc:
@@ -118,10 +114,11 @@ def _queue_job(
     if started is None:
         raise RuntimeError("Company valuation workflow was not started.")
     return QueuedCompanyValuationJob(
-        job_run_id=job_run_id,
+        job_run_id=started.job_run_id,
         job_key=job_key,
         job_type=job_type,
-        orchestration_id=orchestration_id,
+        workflow_id=workflow_id,
+        workflow_run_id=started.workflow_run_id,
         status="started",
         scheduled_for=scheduled_for_iso,
         payload=full_payload,
@@ -166,7 +163,6 @@ def enqueue_company_valuation_bootstrap_job(
         "materialize_screen": bool(request.materialize_screen),
         "continue_on_error": bool(request.continue_on_error),
         "config_root": request.config_root,
-        "singleton_scope": f"bootstrap:{scope_hash}",
     }
     return _queue_job(
         job_type=COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
@@ -200,7 +196,6 @@ def enqueue_company_valuation_screen_materialize_job(
         "supported_only": bool(request.supported_only),
         "stressed_operator_only": bool(request.stressed_operator_only),
         "config_root": request.config_root,
-        "singleton_scope": f"screen:{scope_hash}",
     }
     return _queue_job(
         job_type=COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
@@ -238,11 +233,6 @@ def enqueue_company_valuation_resolve_unresolved_job(
         "batch_cusips": int(request.batch_cusips),
         "max_attempts": int(request.max_attempts),
         "allow_off_hours": True,
-        "singleton_scope": (
-            "resolve_unresolved:global"
-            if resolved_report_period is None
-            else f"resolve_unresolved:{scope_hash}"
-        ),
     }
     return _queue_job(
         job_type=COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,

@@ -7,4 +7,3 @@ schedule:
 payload:
   limit: 100
   allow_off_hours: true
-singleton_scope: global

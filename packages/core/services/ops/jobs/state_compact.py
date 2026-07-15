@@ -100,7 +100,6 @@ def build_jobs_compact_state(
         running_jobs=running_runs,
         disabled_lanes=disabled_lanes,
         now=now,
-        include_singletons=False,
         include_blocked_workflow_lane_status=True,
     )
     run_health = _project_job_run_health(

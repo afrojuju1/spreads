@@ -7,4 +7,3 @@ schedule:
   minute: 0
 payload:
   allow_off_hours: true
-singleton_scope: postgres_backup:global

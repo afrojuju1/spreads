@@ -81,14 +81,12 @@ def build_jobs_overview(
                 "enabled_definition_count": sum(1 for row in definition_rows if bool(row.get("enabled"))),
                 "disabled_workflow_lane_count": len(disabled_lane_rows),
                 "run_count": 0,
-                "singleton_lease_count": 0,
             },
             "attention": attention,
             "details": {
                 "view": "list",
                 "routine_schedules": None,
                 "workflow_lanes": [],
-                "singleton_leases": [],
                 "disabled_workflow_lanes": disabled_lane_rows,
                 "declared_jobs": definition_rows,
                 "job_runs": [],
@@ -172,7 +170,6 @@ def build_jobs_overview(
         running_jobs=running_run_rows,
         disabled_lanes=disabled_lanes,
         now=now,
-        include_singletons=True,
         include_blocked_workflow_lane_status=True,
     )
     run_health = _project_job_run_health(
@@ -208,7 +205,6 @@ def build_jobs_overview(
                 if actionable_definition_status_counts.get("degraded", 0) or actionable_definition_status_counts.get("blocked", 0)
                 else "healthy"
             ),
-            "degraded" if workflow_runtime.stale_singleton_leases else "healthy",
         )
     )
 
@@ -226,7 +222,6 @@ def build_jobs_overview(
             "status_counts": dict(run_health.status_counts),
             "operator_status_counts": dict(run_health.operator_status_counts),
             "job_type_counts": dict(run_health.job_type_counts),
-            "singleton_lease_count": len(workflow_runtime.singleton_leases),
             "workflow_lane_count": len(workflow_runtime.workflow_lane_rows),
             "disabled_workflow_lane_count": len(disabled_lane_rows),
             "blocked_workflow_lane_count": workflow_runtime.blocked_workflow_lane_count,
@@ -243,8 +238,6 @@ def build_jobs_overview(
             "workflow_lanes": workflow_runtime.workflow_lane_rows,
             "disabled_workflow_lanes": disabled_lane_rows,
             "due_routines_missing": workflow_runtime.due_routines_missing,
-            "singleton_leases": workflow_runtime.singleton_leases,
-            "stale_singleton_leases": workflow_runtime.stale_singleton_leases,
             "stale_queued_job_runs": stale_queued_run_rows,
             "declared_jobs": definition_rows,
             "job_runs": run_rows,

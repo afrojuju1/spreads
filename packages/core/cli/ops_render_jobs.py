@@ -69,7 +69,6 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
             f"{_render_value(schedules.get('declared_schedule_count'))}"
         ),
     )
-    overview.add_row("Singleton Leases", _render_value(summary.get("singleton_lease_count")))
     overview.add_row("Workflow Lanes", _render_value(summary.get("workflow_lane_count")))
     overview.add_row("Disabled Workflow Lanes", _render_value(summary.get("disabled_workflow_lane_count")))
     if summary.get("status_filter") == "failed" or summary.get("actionable_failed_count"):
@@ -127,7 +126,6 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Latest")
         table.add_column("Expected")
         table.add_column("Capture")
-        table.add_column("Scope")
         for row in definition_rows:
             latest = row.get("latest_run_at")
             latest_status = row.get("latest_run_status")
@@ -144,7 +142,6 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
                 latest_text,
                 _render_expected_slot(row.get("session_schedule")),
                 _render_value(row.get("latest_capture_status")),
-                _render_value(row.get("singleton_scope")),
             )
         console.print(table)
 
@@ -178,23 +175,6 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
             table.add_row(*values)
         console.print(table)
 
-    singleton_leases = list(details.get("singleton_leases") or [])
-    if singleton_leases:
-        table = Table(title="Singleton Leases", header_style="bold")
-        table.add_column("Lease")
-        table.add_column("Owner")
-        table.add_column("Job Run")
-        table.add_column("Expires")
-        for row in singleton_leases:
-            table.add_row(
-                str(row.get("lease_key") or "-"),
-                str(row.get("owner") or "-"),
-                str(row.get("job_run_id") or "-"),
-                str(row.get("expires_at") or "-"),
-            )
-        console.print(table)
-
-
 def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
@@ -215,7 +195,7 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Heartbeat", _render_value(run.get("heartbeat_at")))
     overview.add_row("Duration", _render_duration(run.get("duration_seconds")))
     overview.add_row("Worker", _render_value(summary.get("worker_name")))
-    overview.add_row("Retry", _render_value(summary.get("retry_count")))
+    overview.add_row("Activity Retries", _render_value(summary.get("retry_count")))
     overview.add_row("Capture", _render_value(summary.get("capture_status")))
     overview.add_row("Result", _render_value(summary.get("result_status")))
     overview.add_row("Reason", _render_value(summary.get("result_reason")))
@@ -239,7 +219,6 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_row("Session", _render_session_state(definition.get("session_schedule")))
         table.add_row("Expected Slot", _render_expected_slot(definition.get("session_schedule")))
         table.add_row("Calendar", _render_value(definition.get("market_calendar")))
-        table.add_row("Scope", _render_value(definition.get("singleton_scope")))
         table.add_row("Latest Run", _render_value(definition.get("latest_run_id")))
         console.print(table)
 

@@ -5,25 +5,26 @@ import asyncio
 from datetime import UTC, datetime
 import hashlib
 import json
-import re
 from typing import Any
 
 from temporalio.client import Client, ScheduleUpdate
 
 from core.db import open_storage
-from core.jobs.registry import ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE, get_workflow_lane_for_job_type
+from core.jobs.registry import ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE, get_job_spec, get_workflow_lane_for_job_type
 from core.jobs.specs import list_declared_job_rows
 from core.runtime.config import default_database_url, default_workflow_address, default_workflow_namespace
-from core.workflow_runtime.provider import PROVIDER_NAME, build_provider_schedule, connect_provider, provider_queue_for_lane
+from core.workflow_runtime.provider import (
+    PROVIDER_NAME,
+    ROUTINE_WORKFLOW_PREFIX,
+    build_provider_schedule,
+    connect_provider,
+    provider_queue_for_lane,
+    routine_workflow_id,
+)
 
 ROUTINE_RECONCILIATION_JOB_KEY = "workflow_runtime:routine_schedules"
-ROUTINE_SCHEDULE_PREFIX = "spreads-routine-"
+ROUTINE_SCHEDULE_PREFIX = ROUTINE_WORKFLOW_PREFIX
 RETIRED_SCHEDULE_PREFIX = "spreads-job-"
-
-
-def schedule_id_for_job_key(job_key: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(job_key).strip()).strip("-")
-    return f"{ROUTINE_SCHEDULE_PREFIX}{normalized}"
 
 
 def routine_config_hash(rows: list[dict[str, Any]]) -> str:
@@ -34,6 +35,11 @@ def routine_config_hash(rows: list[dict[str, Any]]) -> str:
             "enabled": bool(row.get("enabled")),
             "schedule_type": row.get("schedule_type"),
             "schedule": row.get("schedule"),
+            "activity_maximum_attempts": (
+                job_spec.activity_maximum_attempts
+                if (job_spec := get_job_spec(str(row.get("job_type") or ""))) is not None
+                else None
+            ),
         }
         for row in rows
     ]
@@ -59,7 +65,7 @@ async def reconcile_routine_schedules(
     deleted = 0
     existing_ids = set() if dry_run else await _existing_schedule_ids(client) if client is not None else set()
     for definition in rows:
-        schedule_id = schedule_id_for_job_key(str(definition["job_key"]))
+        schedule_id = routine_workflow_id(str(definition["job_key"]))
         schedule_type = str(definition.get("schedule_type") or "manual")
         lane = get_workflow_lane_for_job_type(str(definition.get("job_type") or ""))
         if lane is None:
@@ -130,7 +136,7 @@ def record_reconciliation(result: dict[str, Any]) -> None:
         storage.jobs.create_job_run(
             job_run_id=job_run_id,
             job_key=ROUTINE_RECONCILIATION_JOB_KEY,
-            orchestration_id=job_run_id,
+            orchestration_id=None,
             job_type=ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE,
             status="succeeded",
             scheduled_for=reconciled_at,
@@ -141,7 +147,6 @@ def record_reconciliation(result: dict[str, Any]) -> None:
         storage.jobs.update_job_run_status(
             job_run_id=job_run_id,
             status="succeeded",
-            expected_orchestration_id=job_run_id,
             finished_at=reconciled_at,
             result=result,
         )

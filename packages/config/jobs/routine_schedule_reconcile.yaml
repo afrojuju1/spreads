@@ -5,4 +5,3 @@ schedule:
   type: interval
   minutes: 360
 payload: {}
-singleton_scope: routine_schedule_reconcile:global

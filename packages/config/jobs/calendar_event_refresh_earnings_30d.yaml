@@ -15,4 +15,3 @@ payload:
   provider_backoff_seconds: 3600
   finviz_max_symbols: 10
   finviz_near_term_days: 7
-singleton_scope: earnings_30d

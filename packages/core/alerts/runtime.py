@@ -132,7 +132,6 @@ def _alert_description(
 def plan_runtime_entry_selected_alert(
     *,
     alert_store: Any,
-    job_store: Any,
     trading_strategy_id: str,
     market_date: str,
     run_key: str,
@@ -144,11 +143,9 @@ def plan_runtime_entry_selected_alert(
     planner_job_run_id: str | None = None,
     lifecycle_start_job_run_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if alert_store is None or job_store is None:
+    if alert_store is None:
         return None
     if hasattr(alert_store, "schema_ready") and not alert_store.schema_ready():
-        return None
-    if hasattr(job_store, "schema_ready") and not job_store.schema_ready():
         return None
 
     trade_signal_id = _as_text(trade_signal.get("trade_signal_id")) or _as_text(decision.get("trade_signal_id"))
@@ -205,7 +202,6 @@ def plan_runtime_entry_selected_alert(
 
     record, created = plan_alert_delivery(
         alert_store=alert_store,
-        job_store=job_store,
         payload=payload,
         dedupe_key=runtime_entry_selected_key(
             market_date=market_date,

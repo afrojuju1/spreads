@@ -5,19 +5,21 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.jobs.contracts import ResolvedRoutineRequest, RoutineExecutionContext, RoutineHandler
-from core.jobs.orchestration import singleton_lease_key
 from core.storage.factory import build_storage_context
 from core.storage.job_repository import JobRepository
 
-JOB_LEASE_TTL_SECONDS = 600
-TERMINAL_JOB_STATUSES = {"succeeded", "skipped", "failed"}
+COMPLETED_JOB_STATUSES = {"succeeded", "skipped"}
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class JobRunExecutor:
+class RoutineProjectionConflict(RuntimeError):
+    pass
+
+
+class RoutineActivityRunner:
     def __init__(
         self,
         *,
@@ -42,72 +44,34 @@ class JobRunExecutor:
             job_type=request.job_type,
             status="queued",
             scheduled_for=request.scheduled_for,
+            retry_count=max(request.provider_attempt - 1, 0),
             session_id=payload.get("session_id") if isinstance(payload.get("session_id"), str) else None,
             payload=payload,
         )
         if created:
             return None
         row_orchestration_id = str(row.get("orchestration_id") or "")
-        row_status = str(row.get("status") or "")
-        if request.source == "scheduled" and row_status in TERMINAL_JOB_STATUSES:
-            return {
-                "status": "skipped",
-                "reason": "job_run_already_terminal",
-                "job_run_id": request.job_run_id,
-            }
-        if request.source == "adhoc" and row_orchestration_id != request.orchestration_id:
-            job_store.requeue_job_run(
-                job_run_id=request.job_run_id,
-                orchestration_id=request.orchestration_id,
-                payload=payload,
+        if row_orchestration_id != request.orchestration_id:
+            raise RoutineProjectionConflict(
+                f"Job run {request.job_run_id} belongs to Temporal run {row_orchestration_id}, "
+                f"not {request.orchestration_id}."
             )
-            return None
-        if request.source == "adhoc" and row_status in TERMINAL_JOB_STATUSES:
+        row_status = str(row.get("status") or "")
+        if row_status in COMPLETED_JOB_STATUSES:
+            persisted_result = row.get("result")
+            if isinstance(persisted_result, Mapping):
+                return dict(persisted_result)
             return {
-                "status": "skipped",
+                "status": row_status,
                 "reason": "job_run_already_terminal",
                 "job_run_id": request.job_run_id,
             }
         return None
 
-    def _acquire_singleton_lease(
-        self,
-        job_store: JobRepository,
-        request: ResolvedRoutineRequest,
-    ) -> tuple[str | None, dict[str, Any] | None]:
-        if not request.singleton_scope:
-            return None, None
-        lease_key = singleton_lease_key(request.job_type, request.singleton_scope)
-        acquired = job_store.acquire_lease(
-            lease_key=lease_key,
-            owner=request.job_run_id,
-            job_run_id=request.job_run_id,
-            expires_in_seconds=JOB_LEASE_TTL_SECONDS,
-            state={
-                "kind": "temporal_singleton_job",
-                "job_key": request.job_key,
-                "orchestration_id": request.orchestration_id,
-            },
-        )
-        if acquired:
-            return lease_key, None
-        result = {"status": "skipped", "reason": "singleton_lease_unavailable"}
-        job_store.update_job_run_status(
-            job_run_id=request.job_run_id,
-            status="skipped",
-            expected_orchestration_id=request.orchestration_id,
-            worker_name=self._worker_name,
-            finished_at=_utc_now(),
-            heartbeat_at=_utc_now(),
-            result=result,
-        )
-        return None, result
-
     def _heartbeat_callback(
         self,
         job_store: JobRepository,
         request: ResolvedRoutineRequest,
-        lease_key: str | None,
     ) -> Callable[[], None]:
         def heartbeat() -> None:
             now = _utc_now()
@@ -119,22 +83,11 @@ class JobRunExecutor:
             )
             if run_record is None:
                 raise RuntimeError(f"Job run {request.job_run_id} was superseded during execution.")
-            if lease_key is not None:
-                renewed = job_store.renew_lease(
-                    lease_key=lease_key,
-                    owner=request.job_run_id,
-                    expires_in_seconds=JOB_LEASE_TTL_SECONDS,
-                    state={
-                        "kind": "temporal_singleton_job",
-                        "orchestration_id": request.orchestration_id,
-                    },
-                )
-                if renewed is None:
-                    raise RuntimeError(f"Job run {request.job_run_id} lost its singleton lease.")
             self._provider_heartbeat(
                 {
                     "job_run_id": request.job_run_id,
                     "heartbeat_at": now.isoformat(),
+                    "provider_attempt": request.provider_attempt,
                 }
             )
 
@@ -147,7 +100,6 @@ class JobRunExecutor:
     ) -> dict[str, Any]:
         storage = build_storage_context(self._database_url)
         job_store = storage.jobs
-        lease_key: str | None = None
         job_row_ready = False
         try:
             payload = dict(request.payload)
@@ -156,22 +108,17 @@ class JobRunExecutor:
             if early_result is not None:
                 return early_result
 
-            lease_key, early_result = self._acquire_singleton_lease(job_store, request)
-            if early_result is not None:
-                return early_result
-
-            running = job_store.update_job_run_status(
+            running = job_store.begin_job_run_attempt(
                 job_run_id=request.job_run_id,
-                status="running",
                 expected_orchestration_id=request.orchestration_id,
                 worker_name=self._worker_name,
+                provider_attempt=request.provider_attempt,
                 started_at=_utc_now(),
-                heartbeat_at=_utc_now(),
             )
             if running is None:
                 raise RuntimeError(f"Job run {request.job_run_id} was superseded before execution.")
 
-            heartbeat = self._heartbeat_callback(job_store, request, lease_key)
+            heartbeat = self._heartbeat_callback(job_store, request)
 
             outcome = handler(
                 RoutineExecutionContext(
@@ -180,6 +127,7 @@ class JobRunExecutor:
                     job_type=request.job_type,
                     workflow_lane=request.workflow_lane,
                     scheduled_for=request.scheduled_for,
+                    provider_attempt=request.provider_attempt,
                     worker_name=self._worker_name,
                     database_url=storage.database_url,
                     storage=storage,
@@ -212,9 +160,7 @@ class JobRunExecutor:
                 )
             raise
         finally:
-            if lease_key is not None:
-                job_store.release_lease(lease_key, owner=request.job_run_id)
             storage.close()
 
 
-__all__ = ["JOB_LEASE_TTL_SECONDS", "JobRunExecutor"]
+__all__ = ["RoutineActivityRunner", "RoutineProjectionConflict"]

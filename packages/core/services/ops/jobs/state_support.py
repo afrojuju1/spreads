@@ -7,12 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from core.db.decorators import with_storage
-from core.jobs.orchestration import (
-    SINGLETON_LEASE_PREFIX,
-    expected_routine_slots,
-    resolve_scheduled_for,
-    singleton_lease_key,
-)
+from core.jobs.orchestration import expected_routine_slots, resolve_scheduled_for
 from core.jobs.registry import (
     ROUTINE_SCHEDULE_RECONCILE_JOB_TYPE,
     WORKFLOW_LANES,
@@ -84,8 +79,6 @@ class _JobRunHealthProjection:
 class _WorkflowRuntimeProjection:
     routine_schedules_payload: dict[str, Any]
     workflow_lane_rows: list[dict[str, Any]]
-    singleton_leases: list[dict[str, Any]]
-    stale_singleton_leases: list[dict[str, Any]]
     blocked_workflow_lane_count: int
     due_routines_missing: list[dict[str, Any]]
     statuses: tuple[str, ...]
@@ -269,8 +262,6 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
     reason = str(_skip_reason_text(run) or "").strip().lower()
     if str(run.get("job_type") or "") == "trading_strategy_manage" and reason in TRADING_STRATEGY_MANAGE_BROKER_SYNC_SKIP_REASONS:
         return True
-    if reason == "singleton_lease_unavailable":
-        return True
     if reason == "outside_schedule_window":
         return True
     if reason == "superseded_by_newer_scheduled_run":
@@ -334,11 +325,6 @@ def _job_run_operator_status(
         result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
         reason = as_text(result.get("reason"))
         if _skip_is_benign(run):
-            if reason == "singleton_lease_unavailable":
-                return (
-                    "healthy",
-                    "Job run was skipped because another singleton run already covered the slot.",
-                )
             if reason == "outside_schedule_window":
                 return (
                     "healthy",
@@ -402,7 +388,6 @@ def _summarize_job_run(
     operator_status, operator_note = _job_run_operator_status(enriched, now=now)
     quote_capture = enriched.get("quote_capture") if isinstance(enriched.get("quote_capture"), Mapping) else {}
     trade_capture = enriched.get("trade_capture") if isinstance(enriched.get("trade_capture"), Mapping) else {}
-    payload = enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
     result = enriched.get("result") if isinstance(enriched.get("result"), Mapping) else {}
     stream_quote_ticks_saved = _stream_quote_ticks_saved(quote_capture)
     stream_trade_ticks_saved = _stream_trade_ticks_saved(trade_capture)
@@ -426,7 +411,6 @@ def _summarize_job_run(
         "orchestration_id": enriched.get("orchestration_id"),
         "error_text": enriched.get("error_text"),
         "capture_status": enriched.get("capture_status"),
-        "singleton_scope": payload.get("singleton_scope"),
         "result_status": result.get("status"),
         "result_reason": result.get("reason"),
         "stream_quote_ticks_saved": stream_quote_ticks_saved,
@@ -484,7 +468,6 @@ def _summarize_job_definition(
         "schedule": dict(definition.get("schedule") or {}),
         "session_schedule": session_schedule,
         "market_calendar": definition.get("market_calendar"),
-        "singleton_scope": definition.get("singleton_scope"),
         "updated_at": definition.get("updated_at"),
         "operator_status": _job_definition_status(
             definition,
@@ -671,7 +654,6 @@ def _project_workflow_runtime(
     running_jobs: list[dict[str, Any]],
     disabled_lanes: set[str],
     now: datetime,
-    include_singletons: bool,
     include_blocked_workflow_lane_status: bool,
 ) -> _WorkflowRuntimeProjection:
     attention: list[dict[str, str]] = []
@@ -737,34 +719,9 @@ def _project_workflow_runtime(
             )
         )
 
-    singleton_leases: list[dict[str, Any]] = []
-    stale_singleton_leases: list[dict[str, Any]] = []
-    if include_singletons:
-        singleton_leases = [dict(row) for row in job_store.list_active_leases(prefix=SINGLETON_LEASE_PREFIX)]
-        for lease in singleton_leases:
-            lease_run_id = as_text(lease.get("job_run_id"))
-            if lease_run_id is None:
-                continue
-            run_record = job_store.get_job_run(lease_run_id)
-            if run_record is None or str(run_record.get("status") or "") not in {
-                "queued",
-                "running",
-            }:
-                stale_singleton_leases.append(dict(lease))
-        if stale_singleton_leases:
-            attention.append(
-                _attention(
-                    severity="medium",
-                    code="stale_singleton_leases",
-                    message=f"{len(stale_singleton_leases)} singleton lease(s) point at inactive job runs.",
-                )
-            )
-
     return _WorkflowRuntimeProjection(
         routine_schedules_payload=schedules_payload,
         workflow_lane_rows=workflow_lane_rows,
-        singleton_leases=singleton_leases,
-        stale_singleton_leases=stale_singleton_leases,
         blocked_workflow_lane_count=blocked_workflow_lane_count,
         due_routines_missing=due_routines_missing,
         statuses=tuple(statuses),
@@ -803,7 +760,6 @@ __all__ = [
     "disabled_workflow_lanes",
     "get_declared_job_row",
     "list_declared_job_rows",
-    "singleton_lease_key",
     "utc_iso",
     "utc_now",
     "utc_now_iso",

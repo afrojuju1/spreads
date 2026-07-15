@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
+import re
 from typing import Any
 
 from temporalio.client import (
@@ -18,13 +19,14 @@ from temporalio.client import (
     ScheduleState,
 )
 
-from core.jobs.registry import get_workflow_lane_for_job_type
+from core.jobs.registry import get_job_spec
 from core.jobs.orchestration import market_boundary_slot, market_session_slots
 from core.services.market_dates import NEW_YORK, market_session_windows
 from core.workflows.scheduled_job import ScheduledJobWorkflow
 
 PROVIDER_NAME = "temporal"
 MARKET_SCHEDULE_HORIZON_DAYS = 400
+ROUTINE_WORKFLOW_PREFIX = "spreads-routine-"
 
 
 def provider_queue_for_lane(lane: str) -> str:
@@ -32,6 +34,13 @@ def provider_queue_for_lane(lane: str) -> str:
     if not normalized:
         raise ValueError("workflow lane is required")
     return f"spreads-{normalized}-workflows"
+
+
+def routine_workflow_id(job_key: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(job_key).strip()).strip("-")
+    if not normalized:
+        raise ValueError("job_key is required")
+    return f"{ROUTINE_WORKFLOW_PREFIX}{normalized}"
 
 
 def _range(start: int, end: int | None = None, step: int = 1) -> ScheduleRange:
@@ -140,9 +149,10 @@ def _calendar_schedule(definition: dict[str, Any]) -> Sequence[ScheduleCalendarS
 
 def build_provider_schedule(definition: dict[str, Any], *, schedule_id: str) -> Schedule:
     job_type = str(definition["job_type"])
-    lane = get_workflow_lane_for_job_type(job_type)
-    if lane is None:
+    job_spec = get_job_spec(job_type)
+    if job_spec is None:
         raise RuntimeError(f"Job type is not registered to a workflow lane: {job_type}")
+    lane = job_spec.workflow_lane
     schedule_type = str(definition.get("schedule_type") or "manual")
     schedule_payload = dict(definition.get("schedule") or {})
     if schedule_type == "manual":
@@ -167,7 +177,15 @@ def build_provider_schedule(definition: dict[str, Any], *, schedule_id: str) -> 
     return Schedule(
         action=ScheduleActionStartWorkflow(
             ScheduledJobWorkflow.run,
-            {"job_key": str(definition["job_key"])},
+            {
+                "job_key": str(definition["job_key"]),
+                "job_type": job_type,
+                "payload": dict(definition.get("payload") or {}),
+                "config_hash": definition.get("config_hash"),
+                "activity_retry": {
+                    "maximum_attempts": job_spec.activity_maximum_attempts,
+                },
+            },
             id=schedule_id,
             task_queue=provider_queue_for_lane(lane),
         ),
@@ -189,4 +207,5 @@ __all__ = [
     "build_provider_schedule",
     "connect_provider",
     "provider_queue_for_lane",
+    "routine_workflow_id",
 ]

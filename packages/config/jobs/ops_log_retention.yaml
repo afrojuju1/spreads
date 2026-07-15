@@ -8,4 +8,3 @@ schedule:
 payload:
   allow_off_hours: true
   retention_days: 14
-singleton_scope: ops_log_retention:global

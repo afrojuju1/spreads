@@ -9,10 +9,9 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from core.jobs.contracts import ResolvedRoutineRequest, RoutineHandler
-from core.jobs.execution import JobRunExecutor
-from core.jobs.orchestration import due_job_payload
+from core.jobs.execution import RoutineActivityRunner, RoutineProjectionConflict
+from core.jobs.orchestration import build_job_run_id
 from core.jobs.registry import get_job_spec
-from core.jobs.specs import get_declared_job_row
 from core.runtime.config import default_database_url
 from core.storage.serializers import parse_datetime
 
@@ -81,8 +80,10 @@ def _resolve_request(
     *,
     expected_lane: str,
     workflow_id: str,
-) -> ResolvedRoutineRequest | None:
-    base_orchestration_id = str(request.get("orchestration_id") or workflow_id)
+    workflow_run_id: str,
+    provider_attempt: int,
+) -> ResolvedRoutineRequest:
+    orchestration_id = str(request.get("orchestration_id") or workflow_run_id)
     if bool(request.get("adhoc")):
         job_key = _required_text(request, "job_key")
         job_type = _required_text(request, "job_type")
@@ -91,7 +92,7 @@ def _resolve_request(
             expected_lane=expected_lane,
             job_key=job_key,
             job_type=job_type,
-            orchestration_id=base_orchestration_id,
+            orchestration_id=orchestration_id,
         )
         raw_payload = request.get("payload") or {}
         if not isinstance(raw_payload, Mapping):
@@ -101,51 +102,58 @@ def _resolve_request(
                 details={"field": "payload", "job_key": job_key, "job_type": job_type},
             )
         payload = dict(raw_payload)
+        payload.setdefault("workflow_id", workflow_id)
         scheduled_for = parse_datetime(request.get("scheduled_for")) or _utc_now()
         return ResolvedRoutineRequest(
-            source="adhoc",
             job_run_id=job_run_id,
             job_key=job_key,
             job_type=job_type,
             workflow_lane=workflow_lane,
-            orchestration_id=base_orchestration_id,
+            orchestration_id=orchestration_id,
             scheduled_for=scheduled_for,
-            singleton_scope=str(payload.get("singleton_scope") or "").strip() or None,
+            provider_attempt=provider_attempt,
             payload=payload,
         )
 
     job_key = _required_text(request, "job_key")
-    definition = get_declared_job_row(job_key)
-    if definition is None:
-        raise _non_retryable(
-            f"Declared routine definition was not found: {job_key}",
-            error_type="RoutineDefinitionNotFound",
-            details={"job_key": job_key, "orchestration_id": base_orchestration_id},
-        )
-    job_type = str(definition.get("job_type") or "").strip()
+    job_type = _required_text(request, "job_type")
     workflow_lane = _validate_lane(
         expected_lane=expected_lane,
         job_key=job_key,
         job_type=job_type,
-        orchestration_id=base_orchestration_id,
+        orchestration_id=orchestration_id,
     )
-    if not bool(definition.get("enabled")):
-        return None
-    observed_at = parse_datetime(request.get("scheduled_for")) or _utc_now()
-    due = due_job_payload(definition, now=observed_at)
-    if due is None:
-        return None
-    job_run_id, scheduled_for, payload = due
+    raw_payload = request.get("payload") or {}
+    if not isinstance(raw_payload, Mapping):
+        raise _non_retryable(
+            "Scheduled routine payload must be a mapping",
+            error_type="RoutineRequestInvalid",
+            details={"field": "payload", "job_key": job_key, "job_type": job_type},
+        )
+    scheduled_for = parse_datetime(request.get("scheduled_for"))
+    if scheduled_for is None:
+        raise _non_retryable(
+            "Scheduled routine request requires scheduled_for",
+            error_type="RoutineRequestInvalid",
+            details={"field": "scheduled_for", "job_key": job_key, "job_type": job_type},
+        )
+    payload = dict(raw_payload)
+    payload["job_key"] = job_key
+    payload["scheduled_for"] = scheduled_for.isoformat().replace("+00:00", "Z")
+    payload["workflow_id"] = workflow_id
+    config_hash = str(request.get("config_hash") or "").strip()
+    if config_hash:
+        payload.setdefault("declared_config_hash", config_hash)
+    job_run_id = build_job_run_id(job_key, scheduled_for)
     return ResolvedRoutineRequest(
-        source="scheduled",
-        job_run_id=str(job_run_id),
+        job_run_id=job_run_id,
         job_key=job_key,
         job_type=job_type,
         workflow_lane=workflow_lane,
-        orchestration_id=f"{base_orchestration_id}:{job_run_id}",
+        orchestration_id=orchestration_id,
         scheduled_for=scheduled_for,
-        singleton_scope=str(definition.get("singleton_scope") or "").strip() or None,
-        payload=dict(payload),
+        provider_attempt=provider_attempt,
+        payload=payload,
     )
 
 
@@ -158,17 +166,14 @@ def build_routine_activity(
     def run_routine_activity(request: dict[str, Any]) -> dict[str, Any]:
         info = activity.info()
         workflow_id = str(info.workflow_id or "").strip()
+        workflow_run_id = str(info.workflow_run_id or "").strip()
         resolved = _resolve_request(
             request,
             expected_lane=expected_lane,
             workflow_id=workflow_id,
+            workflow_run_id=workflow_run_id,
+            provider_attempt=max(int(info.attempt), 1),
         )
-        if resolved is None:
-            return {
-                "status": "skipped",
-                "reason": "not_due_or_disabled",
-                "job_key": request.get("job_key"),
-            }
         handler = handlers.get(resolved.job_type)
         if handler is None:
             raise _non_retryable(
@@ -181,12 +186,23 @@ def build_routine_activity(
                     "orchestration_id": resolved.orchestration_id,
                 },
             )
-        executor = JobRunExecutor(
+        executor = RoutineActivityRunner(
             database_url=default_database_url(),
             worker_name=socket.gethostname(),
             provider_heartbeat=lambda details: activity.heartbeat(dict(details)),
         )
-        return executor.execute(resolved, handler)
+        try:
+            return executor.execute(resolved, handler)
+        except RoutineProjectionConflict as exc:
+            raise _non_retryable(
+                str(exc),
+                error_type="RoutineProjectionConflict",
+                details={
+                    "job_run_id": resolved.job_run_id,
+                    "job_key": resolved.job_key,
+                    "orchestration_id": resolved.orchestration_id,
+                },
+            ) from exc
 
     return run_routine_activity
 

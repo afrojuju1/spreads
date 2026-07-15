@@ -418,7 +418,6 @@ def _result_summary_line(result: Mapping[str, Any]) -> dict[str, Any]:
 def _plan_actionable_alert(
     *,
     storage: Any,
-    job_store: Any,
     session_date: str,
     session_id: str,
     label: str,
@@ -450,7 +449,6 @@ def _plan_actionable_alert(
     dedupe_key = "research_tradingagents_actionable|" f"{session_date}|{source_id}|{ticker}|{signal}"
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
-        job_store=job_store,
         payload=payload,
         dedupe_key=dedupe_key,
         dedupe_state={
@@ -475,7 +473,6 @@ def _plan_actionable_alert(
 def _plan_batch_alert(
     *,
     storage: Any,
-    job_store: Any,
     session_date: str,
     session_id: str,
     label: str,
@@ -519,7 +516,6 @@ def _plan_batch_alert(
     dedupe_key = "research_tradingagents_batch_summary|" f"{session_date}|{source_id}|{ticker_scope}"
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
-        job_store=job_store,
         payload=payload,
         dedupe_key=dedupe_key,
         dedupe_state={
@@ -545,7 +541,6 @@ def _plan_batch_alert(
 def run_tradingagents_scan(
     *,
     storage: Any,
-    job_store: Any,
     job_run_id: str,
     payload: Mapping[str, Any],
     heartbeat: Callable[[], None],
@@ -612,7 +607,6 @@ def run_tradingagents_scan(
             alert_results.append(
                 _plan_actionable_alert(
                     storage=storage,
-                    job_store=job_store,
                     session_date=session_date,
                     session_id=session_id,
                     label=label,
@@ -625,7 +619,6 @@ def run_tradingagents_scan(
 
     batch_alert = _plan_batch_alert(
         storage=storage,
-        job_store=job_store,
         session_date=session_date,
         session_id=session_id,
         label=label,

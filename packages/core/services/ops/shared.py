@@ -116,17 +116,6 @@ def _is_recent(
     return age_seconds is not None and age_seconds <= within_seconds
 
 
-def _lease_status(lease: Mapping[str, Any] | None, *, now: datetime) -> str:
-    if lease is None:
-        return "blocked"
-    remaining = _seconds_until(lease.get("expires_at"), now=now)
-    if remaining is None or remaining <= 0:
-        return "blocked"
-    if remaining <= 30:
-        return "degraded"
-    return "healthy"
-
-
 def _activity_at(row: Mapping[str, Any]) -> str | None:
     for key in (
         "finished_at",

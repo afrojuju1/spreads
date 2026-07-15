@@ -8,7 +8,6 @@ from typing import Any, Mapping
 from core.alerts.discord import build_discord_payload, send_discord_webhook
 from core.events.bus import publish_global_event_sync
 from core.jobs.adhoc import start_ad_hoc_job_workflow
-from core.jobs.orchestration import build_job_attempt_id
 from core.jobs.registry import (
     ALERT_DELIVERY_ADHOC_JOB_KEY,
     ALERT_DELIVERY_JOB_TYPE,
@@ -19,8 +18,8 @@ from core.storage.alert_repository import (
     ALERT_RECORD_KIND_DELIVERY,
     AlertRepository,
 )
-from core.storage.job_repository import JobRepository
 from core.value_coercion import as_text as _as_text, utc_now as _utc_now
+from core.workflow_runtime.provider import routine_workflow_id
 
 DISCORD_DELIVERY_TARGET = "discord_webhook"
 ALERT_DELIVERY_MAX_ATTEMPTS = 5
@@ -46,8 +45,8 @@ def resolve_delivery_webhook_url(webhook_url: str | None = None) -> str | None:
     return _as_text(os.environ.get("SPREADS_DISCORD_WEBHOOK_URL") or os.environ.get("DISCORD_WEBHOOK_URL"))
 
 
-def alert_delivery_job_run_id(alert_id: int) -> str:
-    return f"alert_delivery:{alert_id}"
+def alert_delivery_attempt_id(alert_id: int, *, attempt_number: int = 1) -> str:
+    return f"alert_delivery:{alert_id}:attempt:{max(int(attempt_number), 1)}"
 
 
 def _resolve_session_id(row: Mapping[str, Any], session_id: str | None = None) -> str:
@@ -84,10 +83,8 @@ def publish_alert_event(
 def enqueue_alert_delivery_job(
     *,
     alert_store: AlertRepository,
-    job_store: JobRepository,
     alert_id: int,
     session_id: str | None = None,
-    force_requeue: bool = False,
 ) -> dict[str, Any]:
     row = alert_store.get_delivery_event(alert_id)
     if row is None:
@@ -95,7 +92,8 @@ def enqueue_alert_delivery_job(
     if row["record_kind"] != ALERT_RECORD_KIND_DELIVERY:
         raise ValueError(f"Alert {alert_id} is not a delivery row")
 
-    job_run_id = alert_delivery_job_run_id(alert_id)
+    attempt_number = int(row.get("attempt_count") or 0) + 1
+    delivery_attempt_id = alert_delivery_attempt_id(alert_id, attempt_number=attempt_number)
     resolved_session_id = _resolve_session_id(row, session_id=session_id)
     scheduled_for = _utc_now()
     payload = {
@@ -103,26 +101,17 @@ def enqueue_alert_delivery_job(
         "session_id": resolved_session_id,
         "job_key": ALERT_DELIVERY_ADHOC_JOB_KEY,
         "job_type": ALERT_DELIVERY_JOB_TYPE,
+        "delivery_attempt": attempt_number,
         "scheduled_for": scheduled_for.isoformat().replace("+00:00", "Z"),
     }
 
-    existing = job_store.get_job_run(job_run_id)
-    if existing is not None and not force_requeue and existing["status"] in {"queued", "running"}:
-        alert_store.mark_delivery_job_queued(
-            alert_id=alert_id,
-            delivery_job_run_id=job_run_id,
-            queued_at=scheduled_for,
-        )
-        return dict(existing)
-    next_retry_count = 0 if existing is None else int(existing.get("retry_count", 0)) + 1
-    orchestration_id = job_run_id if next_retry_count == 0 else build_job_attempt_id(job_run_id, next_retry_count)
+    workflow_id = routine_workflow_id(delivery_attempt_id)
 
     try:
         started = start_ad_hoc_job_workflow(
             job_type=ALERT_DELIVERY_JOB_TYPE,
             job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
-            job_run_id=job_run_id,
-            orchestration_id=orchestration_id,
+            workflow_id=workflow_id,
             payload=payload,
         )
     except Exception as exc:
@@ -131,14 +120,15 @@ def enqueue_alert_delivery_job(
         raise RuntimeError("Alert delivery workflow start failed.")
     alert_store.mark_delivery_job_queued(
         alert_id=alert_id,
-        delivery_job_run_id=job_run_id,
+        delivery_job_run_id=started.job_run_id,
         queued_at=scheduled_for,
     )
     return {
-        "job_run_id": job_run_id,
+        "job_run_id": started.job_run_id,
         "job_key": ALERT_DELIVERY_ADHOC_JOB_KEY,
         "job_type": ALERT_DELIVERY_JOB_TYPE,
-        "orchestration_id": orchestration_id,
+        "workflow_id": workflow_id,
+        "workflow_run_id": started.workflow_run_id,
         "status": "started",
         "scheduled_for": payload["scheduled_for"],
         "payload": payload,
@@ -148,7 +138,6 @@ def enqueue_alert_delivery_job(
 def plan_alert_delivery(
     *,
     alert_store: AlertRepository,
-    job_store: JobRepository,
     payload: dict[str, Any],
     dedupe_key: str,
     dedupe_state: dict[str, Any] | None,
@@ -185,7 +174,6 @@ def plan_alert_delivery(
         try:
             enqueue_alert_delivery_job(
                 alert_store=alert_store,
-                job_store=job_store,
                 alert_id=int(row["alert_id"]),
                 session_id=resolved_session_id,
             )
@@ -298,7 +286,6 @@ def run_alert_delivery(
 def reconcile_alert_delivery(
     *,
     alert_store: AlertRepository,
-    job_store: JobRepository,
     limit: int = 200,
     stale_after_seconds: int = ALERT_DELIVERY_STALE_SECONDS,
 ) -> dict[str, Any]:
@@ -317,7 +304,6 @@ def reconcile_alert_delivery(
 
     for row in due_rows:
         current = dict(row)
-        force_requeue = False
         if current["status"] == "dispatching":
             reset = alert_store.reset_stale_dispatching_event(
                 alert_id=int(current["alert_id"]),
@@ -327,21 +313,13 @@ def reconcile_alert_delivery(
                 skipped.append(int(current["alert_id"]))
                 continue
             current = dict(reset)
-            force_requeue = True
             reconciled.append(int(current["alert_id"]))
 
-        job_run_id = _as_text(current.get("delivery_job_run_id")) or alert_delivery_job_run_id(int(current["alert_id"]))
-        existing_job_run = job_store.get_job_run(job_run_id)
-        if not force_requeue and existing_job_run is not None and existing_job_run["status"] in {"queued", "running"}:
-            skipped.append(int(current["alert_id"]))
-            continue
         try:
             enqueue_alert_delivery_job(
                 alert_store=alert_store,
-                job_store=job_store,
                 alert_id=int(current["alert_id"]),
                 session_id=_as_text(current.get("session_id")),
-                force_requeue=force_requeue,
             )
             restarted.append(int(current["alert_id"]))
         except Exception as exc:

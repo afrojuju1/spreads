@@ -13,7 +13,6 @@ def _tradingagents_scan(context: RoutineExecutionContext) -> RoutineOutcome:
     context.heartbeat()
     result = run_tradingagents_scan(
         storage=context.storage,
-        job_store=context.storage.jobs,
         job_run_id=context.job_run_id,
         payload=dict(context.payload),
         heartbeat=context.heartbeat,

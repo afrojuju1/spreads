@@ -8,4 +8,3 @@ payload:
   limit: 200
   stale_after_seconds: 300
   allow_off_hours: true
-singleton_scope: global

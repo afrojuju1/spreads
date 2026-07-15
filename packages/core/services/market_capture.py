@@ -441,33 +441,39 @@ async def run_capture_iteration(
         jobs_store = storage.jobs
         capture_store = storage.capture
         market_data = storage.market_data
-        if jobs_store.schema_ready():
-            lease_seconds = _capture_session_lease_seconds(
-                poll_seconds=poll_seconds,
-                quote_duration_seconds=quote_duration_seconds,
-                trade_duration_seconds=trade_duration_seconds,
-            )
-            lease_state = {
-                "deploy_env": _current_deploy_env(),
-                "configured_owner_target": _configured_capture_owner_target(),
-                "hostname": socket.gethostname(),
-                "pid": os.getpid(),
+        if not jobs_store.lease_schema_ready():
+            return {
+                "status": "skipped",
+                "reason": "capture_owner_lease_schema_unavailable",
+                "lease_key": lease_key,
+                "message": "Capture cannot run without its exclusive websocket-owner lease.",
             }
-            acquired = jobs_store.acquire_lease(
-                lease_key=lease_key,
-                owner=lease_owner,
-                expires_in_seconds=lease_seconds,
-                state=lease_state,
-            )
-            if not acquired:
-                existing_lease = jobs_store.get_lease(lease_key)
-                return {
-                    "status": "skipped",
-                    "reason": "lease_unavailable",
-                    "lease_key": lease_key,
-                    "lease_owner": existing_lease.get("owner") if isinstance(existing_lease, Mapping) else None,
-                    "message": "Another market recorder already owns the live options stream lease.",
-                }
+        lease_seconds = _capture_session_lease_seconds(
+            poll_seconds=poll_seconds,
+            quote_duration_seconds=quote_duration_seconds,
+            trade_duration_seconds=trade_duration_seconds,
+        )
+        lease_state = {
+            "deploy_env": _current_deploy_env(),
+            "configured_owner_target": _configured_capture_owner_target(),
+            "hostname": socket.gethostname(),
+            "pid": os.getpid(),
+        }
+        acquired = jobs_store.acquire_lease(
+            lease_key=lease_key,
+            owner=lease_owner,
+            expires_in_seconds=lease_seconds,
+            state=lease_state,
+        )
+        if not acquired:
+            existing_lease = jobs_store.get_lease(lease_key)
+            return {
+                "status": "skipped",
+                "reason": "lease_unavailable",
+                "lease_key": lease_key,
+                "lease_owner": existing_lease.get("owner") if isinstance(existing_lease, Mapping) else None,
+                "message": "Another capture session already owns the live options stream lease.",
+            }
         if not capture_store.target_schema_ready():
             return {
                 "status": "skipped",
@@ -606,7 +612,7 @@ async def run_capture_session(args: argparse.Namespace, *, heartbeat: Callable[[
         try:
             with build_storage_context(args.db) as storage:
                 jobs_store = storage.jobs
-                if jobs_store.schema_ready():
+                if jobs_store.lease_schema_ready():
                     jobs_store.release_lease(lease_key, owner=lease_owner)
         except Exception as exc:
             log_event(

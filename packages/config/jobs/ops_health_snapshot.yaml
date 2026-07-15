@@ -6,4 +6,3 @@ schedule:
   minutes: 5
 payload:
   allow_off_hours: true
-singleton_scope: ops_health_snapshot:global

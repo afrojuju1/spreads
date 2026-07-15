@@ -6,15 +6,10 @@ from core.services.market_dates import NEW_YORK, market_session_window
 from core.storage.records import RecordMapping
 
 CAPTURE_SESSION_RUNTIME_LEASE_PREFIX = "runtime:capture_session"
-SINGLETON_LEASE_PREFIX = "singleton:"
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def singleton_lease_key(job_type: str, scope: str) -> str:
-    return f"{SINGLETON_LEASE_PREFIX}{job_type}:{scope}"
 
 
 def capture_session_runtime_lease_key(scope: str | None = None) -> str:
@@ -239,21 +234,3 @@ def expected_routine_slots(
 def build_job_run_id(job_key: str, scheduled_for: datetime) -> str:
     slot = scheduled_for.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{job_key}:{slot}"
-
-
-def build_job_attempt_id(job_run_id: str, retry_count: int) -> str:
-    if retry_count <= 0:
-        return job_run_id
-    return f"{job_run_id}:retry:{retry_count}"
-
-
-def due_job_payload(definition: RecordMapping, *, now: datetime | None = None) -> tuple[str, datetime, dict[str, object]] | None:
-    scheduled_for = resolve_scheduled_for(definition, now=now)
-    if scheduled_for is None:
-        return None
-    job_run_id = build_job_run_id(str(definition["job_key"]), scheduled_for)
-    payload = dict(definition.get("payload") or {})
-    payload["job_key"] = str(definition["job_key"])
-    payload["scheduled_for"] = scheduled_for.isoformat().replace("+00:00", "Z")
-    payload["singleton_scope"] = definition.get("singleton_scope")
-    return job_run_id, scheduled_for, payload
