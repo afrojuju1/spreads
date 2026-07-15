@@ -4,7 +4,16 @@ Date: 2026-06-03
 
 Bead: `spr-g9s.3`
 
-Status: target schema implemented; 0043 strategy ownership cleanup applied; live writers are not cut over yet.
+Status: historical abandoned-target implementation note. The parallel schema
+was created, but its live cutover did not occur. Current ownership remains in
+[`docs/current_system_state.md`](../current_system_state.md). The proposed
+single-authority replacement decision is
+[`2026-07-15_single_authority_execution_lifecycle_storage.md`](./2026-07-15_single_authority_execution_lifecycle_storage.md).
+
+Do not use this document to revive the `trade_*` attempt, order, fill,
+position, close, reconciliation, or event tables. `spr-n65` records why the
+working runtime tables are the proposed target and `spr-0jf` tracks removal of
+the abandoned schema after approval.
 
 ## Purpose
 

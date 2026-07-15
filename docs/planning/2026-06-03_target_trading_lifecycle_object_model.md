@@ -4,6 +4,12 @@ Date: 2026-06-03
 
 Status: target-state decision for `spr-g9s.1`.
 
+Storage refinement: the object boundaries and invariants remain useful, but
+the table stance is refined by the proposed
+[`spr-n65` single-authority storage ADR](./2026-07-15_single_authority_execution_lifecycle_storage.md).
+That ADR uses the option already allowed by this record to reuse current table
+names where they cleanly fit the target.
+
 Related:
 
 - [Trading Lifecycle Bead Plan](./2026-06-03_trading_lifecycle_bead_plan.md)

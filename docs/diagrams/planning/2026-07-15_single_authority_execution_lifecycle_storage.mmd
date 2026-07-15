@@ -1,0 +1,23 @@
+flowchart LR
+    S["StrategyRuntime / ExitEngine"] --> D["TradeDecision / CloseDecision"]
+    D --> A["Admission service"]
+    A -->|"blocked or unknown"| AT["trade_admissions terminal fact"]
+    A -->|"approved: one transaction"| I["execution_intents"]
+    A --> AT
+    I --> T["Temporal lifecycle workflow"]
+    T --> X["execution_attempts"]
+    X --> B["Alpaca broker"]
+    B --> O["execution_orders / execution_fills"]
+    O --> P["portfolio_positions / position_closes"]
+    P --> D
+    I --> E["engine_events + engine_outbox"]
+    X --> E
+    O --> E
+    P --> E
+    E --> N["NATS projection fanout"]
+    I --> R["TradingOpsState / backtests / ledgers"]
+    X --> R
+    O --> R
+    P --> R
+    T -. "workflow authority" .-> R
+    B -. "broker authority" .-> R
