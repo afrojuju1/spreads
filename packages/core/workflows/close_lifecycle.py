@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from temporalio import workflow
 
@@ -160,7 +161,7 @@ async def _apply_stale_close_policy(
 @workflow.defn
 class CloseLifecycleWorkflow:
     @workflow.run
-    async def run(self, request_payload: dict[str, object]) -> dict[str, object]:
+    async def run(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         request = dict(request_payload)
         database_url = str(request["database_url"])
         position_id = str(request["position_id"])
@@ -191,7 +192,23 @@ class CloseLifecycleWorkflow:
             activity_payload,
             start_to_close_timeout=timedelta(minutes=2),
         )
-        execution_attempt_id = str(prepared["execution_attempt_id"])
+        prepared_attempt_id = prepared.get("execution_attempt_id")
+        if prepared_attempt_id is None:
+            now = workflow.now().astimezone(timezone.utc)
+            return {
+                "workflow_id": workflow_id,
+                "state": str(prepared.get("status") or "failed"),
+                "aggregate_type": "execution_intent",
+                "aggregate_id": execution_intent_id,
+                "completed_at": now.isoformat().replace("+00:00", "Z"),
+                "payload": {
+                    "execution_intent_id": execution_intent_id,
+                    "execution_attempt_id": None,
+                    "position_id": position_id,
+                    "prepare": prepared,
+                },
+            }
+        execution_attempt_id = str(prepared_attempt_id)
         submitted = await workflow.execute_activity(
             "submit_execution_attempt_to_broker",
             {

@@ -9,8 +9,15 @@ from core.engine import EngineAggregateType, EngineEvent, EngineEventType
 from core.services.execution.attempts import _get_attempt_payload, _sync_linked_execution_intent
 from core.services.execution.direct_orders import submit_option_order, submit_option_structure_order
 from core.services.execution.position_close import submit_position_close_by_id
-from core.services.execution_intents.shared import _append_event, _intent_action_type, _intent_payload
-from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int
+from core.services.execution_intents.shared import (
+    TERMINAL_INTENT_STATES,
+    _append_event,
+    _intent_action_type,
+    _intent_payload,
+    _update_intent,
+)
+from core.storage.serializers import parse_datetime
+from core.value_coercion import as_mapping, as_text, coerce_float, coerce_int, utc_now_iso
 
 
 def _nested_mapping(*values: Any) -> dict[str, Any]:
@@ -174,6 +181,67 @@ def ensure_execution_attempt_for_intent(
                 payload={"status": "attempt_already_prepared"},
             )
             return existing
+
+    current_state = as_text(intent.get("state"))
+    if current_state in TERMINAL_INTENT_STATES:
+        return {
+            "status": current_state,
+            "changed": False,
+            "execution_intent_id": execution_intent_id,
+            "execution_attempt_id": None,
+            "reason": "execution_intent_terminal_before_attempt",
+        }
+
+    expires_at = parse_datetime(intent.get("expires_at"))
+    if expires_at is not None and expires_at <= datetime.now(UTC):
+        _update_intent(
+            execution_store,
+            dict(intent),
+            state="expired",
+            payload_updates={
+                "broker_activity_status": "intent_expired_before_attempt",
+                "expire_reason": "execution_intent_window_elapsed",
+                "workflow_id": workflow_id,
+            },
+            updated_at=utc_now_iso(),
+        )
+        _append_event(
+            execution_store,
+            execution_intent_id=execution_intent_id,
+            event_type="expired",
+            payload={
+                "reason": "execution_intent_window_elapsed",
+                "workflow_id": workflow_id,
+            },
+        )
+        engine_events = getattr(storage, "engine_events", None)
+        if engine_events is not None and engine_events.schema_ready():
+            engine_events.append_engine_event(
+                EngineEvent(
+                    event_type=EngineEventType.STATE_TRANSITIONED,
+                    aggregate_type=EngineAggregateType.EXECUTION_INTENT,
+                    aggregate_id=execution_intent_id,
+                    lifecycle_object="execution_intent",
+                    from_state=current_state,
+                    to_state="expired",
+                    trading_strategy_id=as_text(intent.get("trading_strategy_id")),
+                    trade_signal_id=as_text(intent.get("trade_signal_id")),
+                    trade_decision_id=as_text(intent.get("trade_decision_id")),
+                    execution_intent_id=execution_intent_id,
+                    workflow_id=workflow_id,
+                    correlation_id=execution_intent_id,
+                    idempotency_key=f"intent_expired_before_attempt:{execution_intent_id}:{workflow_id or 'unassigned'}",
+                    payload={"reason": "execution_intent_window_elapsed"},
+                    occurred_at=datetime.now(UTC),
+                )
+            )
+        return {
+            "status": "expired",
+            "changed": True,
+            "execution_intent_id": execution_intent_id,
+            "execution_attempt_id": None,
+            "reason": "execution_intent_window_elapsed",
+        }
 
     metadata = _intent_metadata(intent, payload)
     action_type = _intent_action_type(dict(intent))

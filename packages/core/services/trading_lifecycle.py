@@ -329,6 +329,7 @@ ALLOWED_TRANSITIONS: dict[LifecycleObject, dict[StrEnum, frozenset[StrEnum]]] = 
                 ExecutionIntentState.CANCELED,
                 ExecutionIntentState.FAILED,
                 ExecutionIntentState.REVOKED,
+                ExecutionIntentState.EXPIRED,
             }
         ),
         ExecutionIntentState.SUBMITTED: frozenset(
