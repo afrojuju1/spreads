@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
@@ -27,6 +28,7 @@ from core.services.risk.candidates import (
 )
 from core.services.risk.policy import (
     ACTIVE_PORTFOLIO_INTENT_STATES,
+    ALLOCATION_CONTENDER_WINDOW_SECONDS,
     ALLOCATION_DECISION_LIMIT,
     ALLOCATION_PLAN_BOUNDARY,
     MARKET_CONTEXT_FILTER_ID,
@@ -161,6 +163,39 @@ def _allocation_rank_key(row: Mapping[str, Any]) -> tuple[int, float, float, int
         -decided_timestamp,
         as_text(row.get("trade_decision_id")) or "",
     )
+
+
+def _allocation_contender_exclusion_reason(
+    *,
+    decision: Mapping[str, Any],
+    current_trade_decision_id: str | None,
+    lifecycle: Mapping[str, Any],
+    evaluated_at: str,
+) -> str | None:
+    decision_id = as_text(decision.get("trade_decision_id"))
+    if decision_id == current_trade_decision_id:
+        return None
+
+    intent = as_mapping(lifecycle.get("intent"))
+    if intent:
+        intent_state = as_text(intent.get("state")) or "unknown"
+        if intent_state in ACTIVE_PORTFOLIO_INTENT_STATES:
+            return "active_intent_exposure_authority"
+        return f"terminal_intent_{intent_state}"
+
+    admission = as_mapping(lifecycle.get("admission"))
+    if admission:
+        admission_state = as_text(admission.get("admission_state")) or "unknown"
+        return f"terminal_admission_{admission_state}"
+
+    decided_at = coerce_utc_datetime(decision.get("decided_at"))
+    evaluated_dt = coerce_utc_datetime(evaluated_at)
+    if decided_at is None or evaluated_dt is None:
+        return "unadmitted_decision_timestamp_unavailable"
+    age_seconds = max((evaluated_dt - decided_at).total_seconds(), 0.0)
+    if age_seconds > ALLOCATION_CONTENDER_WINDOW_SECONDS:
+        return "stale_unadmitted_decision"
+    return None
 
 
 def _allocation_decision_candidate(
@@ -500,6 +535,50 @@ def build_allocation_plan_snapshot(
             "trade_signal": dict(selected_signal),
         }
 
+    lifecycle_reader = getattr(execution_store, "list_trade_decision_lifecycle_states", None)
+    if not callable(lifecycle_reader):
+        return _allocation_unavailable_plan(
+            selected_decision=selected_decision,
+            selected_signal=selected_signal,
+            session_date=session_date,
+            active_strategy_ids=active_strategy_ids,
+            reason="allocation_decision_lifecycle_unavailable",
+            message="AllocationPlan could not resolve prior decision admission and intent authority.",
+        )
+    lifecycle_rows = lifecycle_reader(
+        trade_decision_ids=list(rows_by_decision_id),
+        limit=ALLOCATION_DECISION_LIMIT,
+    )
+    lifecycle_by_decision_id = {
+        str(row["trade_decision_id"]): dict(row)
+        for row in lifecycle_rows
+        if isinstance(row, Mapping) and as_text(row.get("trade_decision_id")) is not None
+    }
+    eligible_rows_by_decision_id: dict[str, dict[str, Mapping[str, Any]]] = {}
+    excluded_decisions: list[dict[str, Any]] = []
+    exclusion_reason_counts: Counter[str] = Counter()
+    for decision_id, row in rows_by_decision_id.items():
+        decision = row["trade_decision"]
+        exclusion_reason = _allocation_contender_exclusion_reason(
+            decision=decision,
+            current_trade_decision_id=trade_decision_id,
+            lifecycle=lifecycle_by_decision_id.get(decision_id, {}),
+            evaluated_at=evaluated_at,
+        )
+        if exclusion_reason is None:
+            eligible_rows_by_decision_id[decision_id] = row
+            continue
+        exclusion_reason_counts[exclusion_reason] += 1
+        excluded_decisions.append(
+            {
+                "trade_decision_id": decision_id,
+                "trading_strategy_id": as_text(decision.get("trading_strategy_id")),
+                "decided_at": as_text(decision.get("decided_at")),
+                "reason": exclusion_reason,
+            }
+        )
+    rows_by_decision_id = eligible_rows_by_decision_id
+
     contenders = [
         _allocation_decision_candidate(
             decision=row["trade_decision"],
@@ -735,6 +814,15 @@ def build_allocation_plan_snapshot(
             "active_strategy_count": len(active_strategy_ids),
             "selected_strategy_count": len(selected_strategy_ids),
             "selected_decision_count": len(ranked_decisions),
+            "eligible_decision_count": len(ranked_decisions),
+            "excluded_decision_count": len(excluded_decisions),
+            "excluded_terminal_decision_count": sum(
+                count
+                for reason, count in exclusion_reason_counts.items()
+                if reason.startswith("terminal_")
+            ),
+            "excluded_active_intent_decision_count": exclusion_reason_counts.get("active_intent_exposure_authority", 0),
+            "excluded_stale_unadmitted_decision_count": exclusion_reason_counts.get("stale_unadmitted_decision", 0),
             "allocated_count": sum(1 for row in ranked_decisions if row.get("status") == "allocated"),
             "blocked_count": sum(1 for row in ranked_decisions if row.get("status") == "blocked"),
             "unknown_count": sum(1 for row in ranked_decisions if row.get("status") == "unknown"),
@@ -749,6 +837,13 @@ def build_allocation_plan_snapshot(
             ),
         },
         "market_context": market_context_summary,
+        "contender_eligibility": {
+            "window_seconds": ALLOCATION_CONTENDER_WINDOW_SECONDS,
+            "eligible_decision_count": len(ranked_decisions),
+            "excluded_decision_count": len(excluded_decisions),
+            "excluded_reason_counts": dict(sorted(exclusion_reason_counts.items())),
+            "excluded_decisions": excluded_decisions[:20],
+        },
         "capital": {
             "broker_buying_power_status": broker_status,
             "available_buying_power": coerce_float(broker_buying_power.get("available_buying_power")),
@@ -764,6 +859,7 @@ def build_allocation_plan_snapshot(
             "selected_strategy_ids": selected_strategy_ids,
             "missing_selected_strategy_ids": [strategy_id for strategy_id in active_strategy_ids if strategy_id not in selected_strategy_ids],
             "decision_limit": ALLOCATION_DECISION_LIMIT,
+            "contender_window_seconds": ALLOCATION_CONTENDER_WINDOW_SECONDS,
         },
         "evaluated_at": evaluated_at,
     }

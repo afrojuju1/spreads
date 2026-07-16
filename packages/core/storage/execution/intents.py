@@ -352,6 +352,42 @@ class ExecutionIntentRepositoryMixin:
         with self.session_factory() as session:
             return self.rows(list(session.scalars(statement).all()))
 
+    def list_trade_decision_lifecycle_states(
+        self,
+        *,
+        trade_decision_ids: list[str],
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        normalized_ids = sorted({str(value).strip() for value in trade_decision_ids if str(value).strip()})
+        if not normalized_ids:
+            return []
+        statement = (
+            select(TradeAdmissionModel, ExecutionIntentModel)
+            .outerjoin(
+                ExecutionIntentModel,
+                ExecutionIntentModel.admission_decision_id == TradeAdmissionModel.admission_decision_id,
+            )
+            .where(TradeAdmissionModel.trade_decision_id.in_(normalized_ids))
+            .order_by(
+                TradeAdmissionModel.decided_at.desc(),
+                TradeAdmissionModel.admission_decision_id.asc(),
+            )
+            .limit(max(int(limit), 1))
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        lifecycle_by_decision: dict[str, dict[str, Any]] = {}
+        for admission, intent in rows:
+            decision_id = str(admission.trade_decision_id or "").strip()
+            if not decision_id or decision_id in lifecycle_by_decision:
+                continue
+            lifecycle_by_decision[decision_id] = {
+                "trade_decision_id": decision_id,
+                "admission": self.row(admission),
+                "intent": None if intent is None else self.row(intent),
+            }
+        return list(lifecycle_by_decision.values())
+
     def list_approved_admissions_missing_execution_intents(
         self,
         *,

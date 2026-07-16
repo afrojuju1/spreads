@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.services.candidate_fields import candidate_economics, candidate_limit_price
 from core.services.admission_lifecycle import admission_allows_attempt, normalize_lifecycle_admission
 from core.services.candidate_identity import resolve_candidate_identity
 from core.services.trading_engine.entry_signals import (
@@ -29,6 +30,7 @@ def _persist_trade_admission_handoff(
     execution_intent_created_event_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidate = candidate_payload(signal)
+    economics = dict(signal.get("economics") or candidate_economics(candidate))
     candidate_identity = str(signal.get("candidate_identity") or resolve_candidate_identity(candidate, strategy=candidate.get("strategy"))).strip()
     normalized = normalize_lifecycle_admission(
         admission_snapshot,
@@ -54,6 +56,9 @@ def _persist_trade_admission_handoff(
             "slot_key": slot_key,
             "underlying_symbol": signal.get("underlying_symbol"),
             "candidate_identity": candidate_identity,
+            "expiration_date": signal.get("expiration_date") or candidate.get("expiration_date"),
+            "limit_price": candidate_limit_price(signal) or candidate_limit_price(candidate),
+            "economics": economics,
             "admission_boundary": admission_snapshot.get("admission_boundary"),
             "capacity_admission_kind": admission_snapshot.get("capacity_admission_kind"),
             "capacity_admission_status": admission_snapshot.get("capacity_admission_status"),

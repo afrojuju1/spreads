@@ -13,6 +13,7 @@ from core.services.runtime_identity import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
 from core.services.trading_engine.entry_admission import build_selected_entry_admission_snapshot
 from core.services.candidate_identity import resolve_candidate_identity
+from core.services.candidate_fields import candidate_limit_price
 from core.services.trading_engine.entry_signals import (
     NATURAL_ENTRY_PROVENANCE,
     OBSERVATION_ENTRY_PROVENANCE,
@@ -243,12 +244,9 @@ def _run_trading_strategy_entry(
             signal_order_payload = dict(signal.get("order_payload") or signal_execution_shape.get("order_payload") or {})
             signal_legs = list(signal.get("legs") or signal_execution_shape.get("legs") or [])
             signal_economics = dict(signal.get("economics") or {})
-            intent_limit_price = (
-                signal_order_payload.get("limit_price")
-                or signal_economics.get("midpoint_credit")
-                or signal_economics.get("midpoint_value")
-                or signal.get("limit_price")
-            )
+            intent_limit_price = candidate_limit_price(signal)
+            if intent_limit_price is None:
+                raise ValueError("Selected entry signal is missing a positive domain limit_price")
             requested_quantity = coerce_int(selected_execution_admission.get("requested_quantity") or 1)
             if requested_quantity is None or requested_quantity <= 0:
                 requested_quantity = 1
@@ -269,9 +267,11 @@ def _run_trading_strategy_entry(
                 "trade_structure": runtime.trade_structure,
                 "strategy_family": runtime.trade_structure,
                 "candidate_identity": candidate_identity,
+                "expiration_date": signal.get("expiration_date") or signal_execution_shape.get("expiration_date"),
                 "legs": signal_legs,
                 "execution_shape": signal_execution_shape,
                 "order_payload": signal_order_payload,
+                "economics": signal_economics,
                 "quantity": intent_quantity,
                 "limit_price": intent_limit_price,
                 "execution_mode": runtime.strategy.execution.mode,

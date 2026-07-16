@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from core.money import decimal_value, option_limit_price
 from core.services.option_structures import (
     candidate_legs,
     payload_display_fields,
@@ -11,7 +12,12 @@ from core.services.option_structures import (
 
 
 _CANDIDATE_ECONOMICS_FIELDS = (
+    "limit_price",
     "midpoint_credit",
+    "midpoint_debit",
+    "midpoint_value",
+    "net_credit",
+    "net_debit",
     "natural_credit",
     "max_profit",
     "max_loss",
@@ -20,6 +26,15 @@ _CANDIDATE_ECONOMICS_FIELDS = (
     "expected_value_dollars",
     "slippage_adjusted_expected_value_dollars",
     "entry_slippage_dollars",
+)
+
+_CANDIDATE_LIMIT_PRICE_FIELDS = (
+    "limit_price",
+    "midpoint_credit",
+    "midpoint_debit",
+    "midpoint_value",
+    "net_credit",
+    "net_debit",
 )
 
 _CANDIDATE_STRATEGY_METRIC_FIELDS = (
@@ -102,7 +117,26 @@ def _candidate_slice(candidate: Mapping[str, Any], *, fields: tuple[str, ...]) -
 
 
 def candidate_economics(candidate: Mapping[str, Any]) -> dict[str, Any]:
-    return _candidate_slice(candidate, fields=_CANDIDATE_ECONOMICS_FIELDS)
+    economics = _candidate_slice(candidate, fields=_CANDIDATE_ECONOMICS_FIELDS)
+    limit_price = candidate_limit_price(candidate)
+    if limit_price is not None:
+        economics["limit_price"] = limit_price
+    return economics
+
+
+def candidate_limit_price(candidate: Mapping[str, Any]) -> float | None:
+    nested_economics = candidate.get("economics")
+    sources = (
+        nested_economics if isinstance(nested_economics, Mapping) else {},
+        candidate,
+    )
+    for source in sources:
+        for field in _CANDIDATE_LIMIT_PRICE_FIELDS:
+            raw_value = decimal_value(source.get(field))
+            if raw_value is None or raw_value <= 0:
+                continue
+            return option_limit_price(raw_value)
+    return None
 
 
 def candidate_strategy_metrics(candidate: Mapping[str, Any]) -> dict[str, Any]:
@@ -157,5 +191,6 @@ __all__ = [
     "candidate_ranking_summary_row",
     "candidate_ranking_vector",
     "candidate_strategy_metrics",
+    "candidate_limit_price",
     "risk_hints",
 ]

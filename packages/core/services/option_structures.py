@@ -4,6 +4,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from core.money import option_limit_price
 from core.value_coercion import as_text as _as_text, coerce_float as _as_float
 
 NET_CREDIT_FAMILIES = {
@@ -679,13 +680,19 @@ def build_single_leg_order_payload(
     if len(rendered_legs) != 1:
         raise ValueError("Single-leg order payload requires exactly one normalized leg")
     rendered_leg = rendered_legs[0]
+    raw_limit = _as_float(limit_price)
+    if raw_limit is None or raw_limit <= 0:
+        raise ValueError("Single-leg order payload requires a positive domain limit price")
+    normalized_limit = option_limit_price(raw_limit)
+    if normalized_limit is None:
+        raise ValueError("Single-leg order payload requires a valid limit price")
     return {
         "symbol": rendered_leg["symbol"],
         "side": str(rendered_leg["side"]),
         "position_intent": str(rendered_leg["position_intent"]),
         "qty": str(max(int(quantity), 1)),
         "type": "limit",
-        "limit_price": f"{abs(float(limit_price)):.2f}",
+        "limit_price": f"{normalized_limit:.2f}",
         "time_in_force": "day",
     }
 
@@ -703,8 +710,14 @@ def build_multileg_order_payload(
     if not rendered_legs:
         raise ValueError("Order payload requires at least one normalized leg")
 
+    raw_limit = _as_float(limit_price)
+    if raw_limit is None or raw_limit <= 0:
+        raise ValueError("Multi-leg order payload requires a positive domain limit price")
+    normalized_limit = option_limit_price(raw_limit)
+    if normalized_limit is None:
+        raise ValueError("Multi-leg order payload requires a valid limit price")
     signed_limit = signed_net_limit_price(
-        limit_price=limit_price,
+        limit_price=normalized_limit,
         strategy_family=strategy_family,
         trade_intent=intent,
     )

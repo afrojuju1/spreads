@@ -6,6 +6,7 @@ from typing import Any
 from core.services.candidate_fields import (
     candidate_economics,
     candidate_evidence_metrics,
+    candidate_limit_price,
     candidate_policy_context,
     candidate_strategy_metrics,
     risk_hints,
@@ -69,6 +70,7 @@ def execution_shape(candidate: Mapping[str, Any]) -> dict[str, Any]:
     payload = dict(candidate)
     order_payload = dict(payload.get("order_payload") or {})
     legs = candidate_legs(payload)
+    economics = candidate_economics(payload)
     return {
         "underlying_symbol": payload.get("underlying_symbol"),
         "trade_structure": payload.get("trade_structure") or payload.get("strategy_family") or payload.get("strategy"),
@@ -77,13 +79,11 @@ def execution_shape(candidate: Mapping[str, Any]) -> dict[str, Any]:
         "expiration_date": payload.get("expiration_date"),
         "structure_identity": resolve_candidate_identity(payload, strategy=payload.get("strategy")),
         "legs": legs,
+        "economics": economics,
         "order_payload": order_payload,
         "order_class": order_payload.get("order_class") or ("mleg" if len(legs) > 1 else "single"),
         "quantity": payload.get("quantity") or order_payload.get("qty"),
-        "limit_price": order_payload.get("limit_price")
-        or payload.get("limit_price")
-        or payload.get("midpoint_credit")
-        or payload.get("midpoint_value"),
+        "limit_price": candidate_limit_price(payload),
     }
 
 

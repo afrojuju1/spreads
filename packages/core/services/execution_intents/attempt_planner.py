@@ -46,12 +46,10 @@ def _resolved_quantity(payload: Mapping[str, Any], order_payload: Mapping[str, A
 
 def _resolved_limit_price(
     payload: Mapping[str, Any],
-    order_payload: Mapping[str, Any],
     economics: Mapping[str, Any],
 ) -> float:
     candidates = (
         payload.get("limit_price"),
-        order_payload.get("limit_price"),
         economics.get("limit_price"),
         economics.get("midpoint_credit"),
         economics.get("midpoint_debit"),
@@ -232,7 +230,7 @@ def ensure_execution_attempt_for_intent(
         economics = _nested_mapping(payload.get("economics"), execution_shape.get("economics"))
         candidate = _nested_mapping(payload.get("candidate"), payload.get("candidate_payload"))
         legs = _nested_list(payload.get("legs"), execution_shape.get("legs"), order_payload.get("legs"), candidate.get("legs"))
-        limit_price = _resolved_limit_price(payload, order_payload, economics)
+        limit_price = _resolved_limit_price(payload, economics)
         quantity = _resolved_quantity(payload, order_payload)
         underlying_symbol = (
             as_text(payload.get("underlying_symbol"))

@@ -690,11 +690,11 @@ def submit_option_structure_order(
     source_order_payload = dict(order_payload or {})
     resolved_trade_intent = resolve_trade_intent(as_text(metadata.get("trade_intent")) or OPEN_TRADE_INTENT)
     resolved_expiration = as_text(expiration_date) or as_text(candidate_payload.get("expiration_date")) or as_text(metadata.get("expiration_date"))
-    resolved_legs = order_payload_legs(
-        source_order_payload,
-        expiration_date=resolved_expiration,
-    ) or normalize_legs(
+    resolved_legs = normalize_legs(
         legs,
+        expiration_date=resolved_expiration,
+    ) or order_payload_legs(
+        source_order_payload,
         expiration_date=resolved_expiration,
     )
     if not resolved_legs:
