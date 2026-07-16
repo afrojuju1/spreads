@@ -5,6 +5,12 @@ from typing import Any
 
 from temporalio import workflow
 
+from core.workflows.contracts import (
+    CloseLifecycleWorkflowInput,
+    LifecycleActivityResult,
+    LifecycleWorkflowResult,
+)
+
 TERMINAL_ATTEMPT_STATUSES = frozenset({"canceled", "cancelled", "done_for_day", "expired", "failed", "filled", "rejected"})
 WORKING_ATTEMPT_STATUSES = frozenset(
     {
@@ -25,31 +31,14 @@ WORKING_ATTEMPT_STATUSES = frozenset(
 )
 
 
-def _as_mapping(value: object) -> dict[str, object]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _positive_int(value: object, default: int) -> int:
-    try:
-        parsed = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _attempt_from_result(result: object) -> dict[str, object]:
-    payload = _as_mapping(result)
-    attempt = payload.get("attempt")
-    return dict(attempt) if isinstance(attempt, dict) else payload
-
-
-def _status(attempt: dict[str, object]) -> str:
-    return str(attempt.get("status") or "").strip().lower()
-
-
 def _parse_time(value: object) -> datetime | None:
     if value in (None, ""):
         return None
+    if isinstance(value, datetime):
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     text = str(value)
     if text.endswith("Z"):
         text = f"{text[:-1]}+00:00"
@@ -66,33 +55,24 @@ def _workflow_result(
     *,
     workflow_id: str,
     state: str,
-    execution_intent_id: str | None,
+    execution_intent_id: str,
     position_id: str,
     execution_attempt_id: str,
-    prepared: object,
-    submitted: object,
-    latest: object,
-    replacement: object | None = None,
+    reason: str | None = None,
+    replacement_execution_intent_id: str | None = None,
 ) -> dict[str, object]:
-    now = workflow.now().astimezone(timezone.utc)
-    payload: dict[str, object] = {
-        "position_id": position_id,
-        "execution_intent_id": execution_intent_id,
-        "execution_attempt_id": execution_attempt_id,
-        "prepare": prepared,
-        "submit": submitted,
-        "latest": latest,
-    }
-    if replacement is not None:
-        payload["replacement"] = replacement
-    return {
-        "workflow_id": workflow_id,
-        "state": state,
-        "aggregate_type": "execution_attempt",
-        "aggregate_id": execution_attempt_id,
-        "completed_at": now.isoformat().replace("+00:00", "Z"),
-        "payload": payload,
-    }
+    return LifecycleWorkflowResult(
+        workflow_id=workflow_id,
+        state=state,
+        aggregate_type="execution_attempt",
+        aggregate_id=execution_attempt_id,
+        execution_intent_id=execution_intent_id,
+        execution_attempt_id=execution_attempt_id,
+        replacement_execution_intent_id=replacement_execution_intent_id,
+        position_id=position_id,
+        reason=reason,
+        completed_at=workflow.now().astimezone(timezone.utc),
+    ).to_payload()
 
 
 async def _apply_stale_close_policy(
@@ -100,12 +80,9 @@ async def _apply_stale_close_policy(
     activity_payload: dict[str, object],
     workflow_id: str,
     position_id: str,
-    execution_intent_id: str | None,
+    execution_intent_id: str,
     execution_attempt_id: str,
     stale_order_action: str,
-    prepared: object,
-    submitted: object,
-    latest: object,
 ) -> dict[str, object]:
     if stale_order_action == "leave_working":
         return _workflow_result(
@@ -114,47 +91,46 @@ async def _apply_stale_close_policy(
             execution_intent_id=execution_intent_id,
             position_id=position_id,
             execution_attempt_id=execution_attempt_id,
-            prepared=prepared,
-            submitted=submitted,
-            latest=latest,
+            reason="stale_order_left_working",
         )
-    canceled = await workflow.execute_activity(
-        "cancel_execution_attempt",
-        {
-            **activity_payload,
-            "execution_attempt_id": execution_attempt_id,
-        },
-        start_to_close_timeout=timedelta(minutes=2),
+    canceled = LifecycleActivityResult.model_validate(
+        await workflow.execute_activity(
+            "cancel_execution_attempt",
+            {
+                **activity_payload,
+                "execution_attempt_id": execution_attempt_id,
+            },
+            start_to_close_timeout=timedelta(minutes=2),
+        )
     )
     if stale_order_action == "fail_closed":
         return _workflow_result(
             workflow_id=workflow_id,
-            state="canceled",
+            state=canceled.attempt_status or "canceled",
             execution_intent_id=execution_intent_id,
             position_id=position_id,
             execution_attempt_id=execution_attempt_id,
-            prepared=prepared,
-            submitted=submitted,
-            latest=canceled,
+            reason=canceled.reason or "stale_order_canceled_fail_closed",
         )
-    replacement = await workflow.execute_activity(
-        "create_repriced_execution_intent",
-        {
-            **activity_payload,
-            "execution_attempt_id": execution_attempt_id,
-        },
-        start_to_close_timeout=timedelta(minutes=2),
+    replacement = LifecycleActivityResult.model_validate(
+        await workflow.execute_activity(
+            "create_repriced_execution_intent",
+            {
+                **activity_payload,
+                "execution_attempt_id": execution_attempt_id,
+            },
+            start_to_close_timeout=timedelta(minutes=2),
+        )
     )
+    replacement_id = replacement.replacement_execution_intent_id
     return _workflow_result(
         workflow_id=workflow_id,
-        state="superseded",
+        state="superseded" if replacement_id is not None else replacement.status,
         execution_intent_id=execution_intent_id,
         position_id=position_id,
         execution_attempt_id=execution_attempt_id,
-        prepared=prepared,
-        submitted=submitted,
-        latest=canceled,
-        replacement=replacement,
+        reason=replacement.reason,
+        replacement_execution_intent_id=replacement_id,
     )
 
 
@@ -162,67 +138,53 @@ async def _apply_stale_close_policy(
 class CloseLifecycleWorkflow:
     @workflow.run
     async def run(self, request_payload: dict[str, Any]) -> dict[str, Any]:
-        request = dict(request_payload)
-        database_url = str(request["database_url"])
-        position_id = str(request["position_id"])
-        execution_intent_id = None if request.get("execution_intent_id") is None else str(request["execution_intent_id"])
-        workflow_id = str(request["workflow_id"])
-        correlation_id = str(request["correlation_id"])
-        payload = _as_mapping(request.get("payload"))
-        execution_policy = _as_mapping(payload.get("execution_policy"))
-        repricing_policy = _as_mapping(payload.get("repricing_policy"))
-        if not repricing_policy:
-            repricing_policy = _as_mapping(execution_policy.get("repricing_policy"))
-        submit_ttl_seconds = _positive_int(execution_policy.get("submit_ttl_minutes"), 5) * 60
-        stale_after_seconds = _positive_int(repricing_policy.get("stale_after_seconds"), 75)
-        stale_order_action = str(
-            execution_policy.get("stale_order_action") or repricing_policy.get("stale_order_action") or "cancel_and_reprice"
-        ).strip().lower()
-        if stale_order_action not in {"cancel_and_reprice", "fail_closed", "leave_working"}:
-            stale_order_action = "cancel_and_reprice"
+        request = CloseLifecycleWorkflowInput.model_validate(request_payload)
+        execution_intent_id = request.execution_intent_id
+        workflow_id = workflow.info().workflow_id
         activity_payload = {
-            "database_url": database_url,
             "execution_intent_id": execution_intent_id,
-            "position_id": position_id,
             "workflow_id": workflow_id,
-            "correlation_id": correlation_id,
         }
-        prepared = await workflow.execute_activity(
-            "ensure_execution_attempt_for_intent",
-            activity_payload,
-            start_to_close_timeout=timedelta(minutes=2),
+        prepared = LifecycleActivityResult.model_validate(
+            await workflow.execute_activity(
+                "ensure_execution_attempt_for_intent",
+                activity_payload,
+                start_to_close_timeout=timedelta(minutes=2),
+            )
         )
-        prepared_attempt_id = prepared.get("execution_attempt_id")
-        if prepared_attempt_id is None:
-            now = workflow.now().astimezone(timezone.utc)
-            return {
-                "workflow_id": workflow_id,
-                "state": str(prepared.get("status") or "failed"),
-                "aggregate_type": "execution_intent",
-                "aggregate_id": execution_intent_id,
-                "completed_at": now.isoformat().replace("+00:00", "Z"),
-                "payload": {
-                    "execution_intent_id": execution_intent_id,
-                    "execution_attempt_id": None,
-                    "position_id": position_id,
-                    "prepare": prepared,
+        if prepared.execution_attempt_id is None:
+            return LifecycleWorkflowResult(
+                workflow_id=workflow_id,
+                state=prepared.status,
+                aggregate_type="execution_intent",
+                aggregate_id=execution_intent_id,
+                execution_intent_id=execution_intent_id,
+                position_id=prepared.position_id,
+                reason=prepared.reason,
+                completed_at=workflow.now().astimezone(timezone.utc),
+            ).to_payload()
+        execution_attempt_id = prepared.execution_attempt_id
+        position_id = prepared.position_id
+        if position_id is None:
+            raise ValueError(f"Close lifecycle attempt {execution_attempt_id} is missing position_id")
+        submit_ttl_seconds = prepared.submit_ttl_seconds or 300
+        stale_after_seconds = prepared.stale_after_seconds or 75
+        stale_order_action = prepared.stale_order_action or "cancel_and_reprice"
+        submitted = LifecycleActivityResult.model_validate(
+            await workflow.execute_activity(
+                "submit_execution_attempt_to_broker",
+                {
+                    **activity_payload,
+                    "execution_attempt_id": execution_attempt_id,
                 },
-            }
-        execution_attempt_id = str(prepared_attempt_id)
-        submitted = await workflow.execute_activity(
-            "submit_execution_attempt_to_broker",
-            {
-                **activity_payload,
-                "execution_attempt_id": execution_attempt_id,
-            },
-            start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=5),
+            )
         )
-        attempt = _attempt_from_result(submitted)
         started_at = workflow.now().astimezone(timezone.utc)
         deadline = started_at + timedelta(seconds=submit_ttl_seconds)
-        latest: object = submitted
+        latest = submitted
         while True:
-            attempt_status = _status(attempt)
+            attempt_status = str(latest.attempt_status or "").strip().lower()
             if attempt_status in TERMINAL_ATTEMPT_STATUSES:
                 return _workflow_result(
                     workflow_id=workflow_id,
@@ -230,13 +192,11 @@ class CloseLifecycleWorkflow:
                     execution_intent_id=execution_intent_id,
                     position_id=position_id,
                     execution_attempt_id=execution_attempt_id,
-                    prepared=prepared,
-                    submitted=submitted,
-                    latest=latest,
+                    reason=latest.reason,
                 )
 
             now = workflow.now().astimezone(timezone.utc)
-            submitted_at = _parse_time(attempt.get("submitted_at")) or _parse_time(attempt.get("requested_at")) or started_at
+            submitted_at = _parse_time(latest.submitted_at) or _parse_time(latest.requested_at) or started_at
             stale_at = submitted_at + timedelta(seconds=stale_after_seconds)
             policy_due_at = min(deadline, stale_at)
             if now >= policy_due_at and (attempt_status in WORKING_ATTEMPT_STATUSES or now >= deadline):
@@ -247,22 +207,20 @@ class CloseLifecycleWorkflow:
                     execution_intent_id=execution_intent_id,
                     execution_attempt_id=execution_attempt_id,
                     stale_order_action=stale_order_action,
-                    prepared=prepared,
-                    submitted=submitted,
-                    latest=latest,
                 )
 
             sleep_seconds = max(min((policy_due_at - now).total_seconds(), 15.0), 1.0)
             await workflow.sleep(timedelta(seconds=sleep_seconds))
-            latest = await workflow.execute_activity(
-                "refresh_execution_attempt",
-                {
-                    **activity_payload,
-                    "execution_attempt_id": execution_attempt_id,
-                },
-                start_to_close_timeout=timedelta(minutes=2),
+            latest = LifecycleActivityResult.model_validate(
+                await workflow.execute_activity(
+                    "refresh_execution_attempt",
+                    {
+                        **activity_payload,
+                        "execution_attempt_id": execution_attempt_id,
+                    },
+                    start_to_close_timeout=timedelta(minutes=2),
+                )
             )
-            attempt = _attempt_from_result(latest)
 
 
 __all__ = ["CloseLifecycleWorkflow"]

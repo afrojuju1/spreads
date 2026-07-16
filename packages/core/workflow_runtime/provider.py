@@ -22,6 +22,7 @@ from temporalio.client import (
 from core.jobs.registry import get_job_spec
 from core.jobs.orchestration import market_boundary_slot, market_session_slots
 from core.services.market_dates import NEW_YORK, market_session_windows
+from core.workflow_runtime.wire import TEMPORAL_WORKFLOW_INPUT_LIMIT_BYTES, require_temporal_payload_budget
 from core.workflows.scheduled_job import ScheduledJobWorkflow
 
 PROVIDER_NAME = "temporal"
@@ -174,18 +175,24 @@ def build_provider_schedule(definition: dict[str, Any], *, schedule_id: str) -> 
         spec = ScheduleSpec(calendars=_calendar_schedule(definition), time_zone_name="America/New_York")
     else:
         raise ValueError(f"Unsupported routine schedule type: {schedule_type}")
+    workflow_input = {
+        "job_key": str(definition["job_key"]),
+        "job_type": job_type,
+        "payload": dict(definition.get("payload") or {}),
+        "config_hash": definition.get("config_hash"),
+        "activity_retry": {
+            "maximum_attempts": job_spec.activity_maximum_attempts,
+        },
+    }
+    require_temporal_payload_budget(
+        workflow_input,
+        label=f"Routine schedule {schedule_id} workflow input",
+        limit_bytes=TEMPORAL_WORKFLOW_INPUT_LIMIT_BYTES,
+    )
     return Schedule(
         action=ScheduleActionStartWorkflow(
             ScheduledJobWorkflow.run,
-            {
-                "job_key": str(definition["job_key"]),
-                "job_type": job_type,
-                "payload": dict(definition.get("payload") or {}),
-                "config_hash": definition.get("config_hash"),
-                "activity_retry": {
-                    "maximum_attempts": job_spec.activity_maximum_attempts,
-                },
-            },
+            workflow_input,
             id=schedule_id,
             task_queue=provider_queue_for_lane(lane),
         ),

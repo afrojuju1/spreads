@@ -5,10 +5,25 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, TYPE_CHECKING
 
+from pydantic import Field
+
+from core.model_contracts import DomainModel
+
 if TYPE_CHECKING:
     from core.storage.factory import StorageContext
 
 RoutineJobStatus = Literal["succeeded", "skipped"]
+
+
+class RoutineWorkflowResult(DomainModel):
+    schema_version: Literal[2] = 2
+    job_run_id: str = Field(min_length=1, max_length=512)
+    orchestration_id: str = Field(min_length=1, max_length=512)
+    job_status: RoutineJobStatus
+    provider_attempt: int = Field(ge=1)
+    result_store: Literal["job_runs"] = "job_runs"
+    result_ref: str = Field(min_length=1, max_length=512)
+    reason: str | None = Field(default=None, max_length=512)
 
 
 def build_ad_hoc_job_run_id(job_key: str, workflow_run_id: str) -> str:
@@ -68,5 +83,6 @@ __all__ = [
     "RoutineHandler",
     "RoutineJobStatus",
     "RoutineOutcome",
+    "RoutineWorkflowResult",
     "build_ad_hoc_job_run_id",
 ]

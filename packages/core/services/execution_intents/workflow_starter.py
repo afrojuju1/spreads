@@ -43,7 +43,6 @@ async def _start_lifecycle_workflow(
     *,
     client: Client,
     intent: dict[str, Any],
-    database_url: str,
     workflow_kind: str,
     workflow_id: str,
     provider_queue: str,
@@ -51,17 +50,8 @@ async def _start_lifecycle_workflow(
     execution_intent_id = str(intent["execution_intent_id"])
     requested_at = datetime.now(UTC)
     if workflow_kind == "close":
-        position_id = as_text(intent.get("position_id")) or as_text(_intent_payload(intent).get("position_id"))
-        if position_id is None:
-            raise ValueError(f"Close lifecycle intent {execution_intent_id} is missing position_id")
         request = CloseLifecycleWorkflowInput(
-            database_url=database_url,
-            position_id=position_id,
             execution_intent_id=execution_intent_id,
-            workflow_id=workflow_id,
-            correlation_id=execution_intent_id,
-            requested_at=requested_at,
-            payload=_intent_payload(intent),
         )
         handle = await client.start_workflow(
             CloseLifecycleWorkflow.run,
@@ -73,12 +63,7 @@ async def _start_lifecycle_workflow(
         )
     else:
         request = TradeLifecycleWorkflowInput(
-            database_url=database_url,
             execution_intent_id=execution_intent_id,
-            workflow_id=workflow_id,
-            correlation_id=execution_intent_id,
-            requested_at=requested_at,
-            payload=_intent_payload(intent),
         )
         handle = await client.start_workflow(
             TradeLifecycleWorkflow.run,
@@ -149,7 +134,7 @@ def start_pending_execution_lifecycle_workflows(
     limit: int = 25,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    database_url = str(getattr(storage, "database_url", db_target))
+    _ = db_target
     execution_store = storage.execution
     if not execution_store.intent_schema_ready():
         return {"status": "skipped", "reason": "execution_intent_schema_unavailable"}
@@ -227,7 +212,6 @@ def start_pending_execution_lifecycle_workflows(
                 _start_lifecycle_workflow(
                     client=workflow_client,
                     intent=intent,
-                    database_url=database_url,
                     workflow_kind=workflow_kind,
                     workflow_id=workflow_id,
                     provider_queue=provider_queue,

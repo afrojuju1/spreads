@@ -4,7 +4,13 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from core.jobs.contracts import ResolvedRoutineRequest, RoutineExecutionContext, RoutineHandler, RoutineOutcome
+from core.jobs.contracts import (
+    ResolvedRoutineRequest,
+    RoutineExecutionContext,
+    RoutineHandler,
+    RoutineOutcome,
+    RoutineWorkflowResult,
+)
 from core.storage.factory import build_storage_context
 from core.storage.job_repository import JobRepository
 
@@ -80,14 +86,17 @@ class RoutineActivityRunner:
 
     @staticmethod
     def _provider_result(request: ResolvedRoutineRequest, outcome: RoutineOutcome) -> dict[str, Any]:
-        return {
-            "schema_version": 1,
-            "job_run_id": request.job_run_id,
-            "orchestration_id": request.orchestration_id,
-            "job_status": outcome.job_status,
-            "provider_attempt": request.provider_attempt,
-            "result": dict(outcome.persisted_result),
-        }
+        reason = str(outcome.persisted_result.get("reason") or "").strip() or None
+        if reason is not None:
+            reason = reason[:512]
+        return RoutineWorkflowResult(
+            job_run_id=request.job_run_id,
+            orchestration_id=request.orchestration_id,
+            job_status=outcome.job_status,
+            provider_attempt=request.provider_attempt,
+            result_ref=request.job_run_id,
+            reason=reason,
+        ).to_payload()
 
     def _heartbeat_callback(
         self,

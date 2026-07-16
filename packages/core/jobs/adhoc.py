@@ -10,6 +10,7 @@ from core.jobs.contracts import build_ad_hoc_job_run_id
 from core.jobs.registry import get_job_spec
 from core.runtime.config import default_workflow_address, default_workflow_namespace
 from core.workflow_runtime.provider import connect_provider, provider_queue_for_lane
+from core.workflow_runtime.wire import TEMPORAL_WORKFLOW_INPUT_LIMIT_BYTES, require_temporal_payload_budget
 from core.workflows.scheduled_job import ScheduledJobWorkflow
 
 
@@ -38,18 +39,24 @@ def start_ad_hoc_job_workflow(
             address=workflow_address or default_workflow_address(),
             namespace=workflow_namespace or default_workflow_namespace(),
         )
+        workflow_input = {
+            "adhoc": True,
+            "job_type": job_type,
+            "job_key": job_key,
+            "scheduled_for": payload.get("scheduled_for"),
+            "payload": dict(payload),
+            "activity_retry": {
+                "maximum_attempts": spec.activity_maximum_attempts,
+            },
+        }
+        require_temporal_payload_budget(
+            workflow_input,
+            label=f"Ad-hoc routine {job_key} workflow input",
+            limit_bytes=TEMPORAL_WORKFLOW_INPUT_LIMIT_BYTES,
+        )
         handle = await client.start_workflow(
             ScheduledJobWorkflow.run,
-            {
-                "adhoc": True,
-                "job_type": job_type,
-                "job_key": job_key,
-                "scheduled_for": payload.get("scheduled_for"),
-                "payload": dict(payload),
-                "activity_retry": {
-                    "maximum_attempts": spec.activity_maximum_attempts,
-                },
-            },
+            workflow_input,
             id=workflow_id,
             task_queue=provider_queue_for_lane(spec.workflow_lane),
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,

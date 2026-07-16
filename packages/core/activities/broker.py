@@ -13,14 +13,78 @@ from core.services.execution.submit import submit_execution_attempt_to_broker
 from core.services.execution.sync import cancel_execution_attempt, refresh_execution_attempt
 from core.services.execution_intents.attempt_planner import ensure_execution_attempt_for_intent
 from core.services.execution_intents.repricing import create_repriced_execution_intent
-from core.value_coercion import as_text
+from core.runtime.config import default_database_url
+from core.value_coercion import as_mapping, as_text, coerce_int
+from core.workflows.contracts import LifecycleActivityResult
 
 
-def _database_url(payload: Mapping[str, Any]) -> str:
-    database_url = as_text(payload.get("database_url")) or as_text(payload.get("db_target"))
-    if database_url is None:
-        raise ValueError("Broker activity payload is missing database_url")
-    return database_url
+def _database_url() -> str:
+    return default_database_url()
+
+
+def _bounded_text(value: Any, *, limit: int = 512) -> str | None:
+    text = as_text(value)
+    return None if text is None else text[:limit]
+
+
+def _positive_int(value: Any, default: int) -> int:
+    parsed = coerce_int(value)
+    return default if parsed is None or parsed <= 0 else parsed
+
+
+def _compact_lifecycle_result(
+    result: Mapping[str, Any],
+    *,
+    attempt: Mapping[str, Any] | None = None,
+    execution_intent_id: str | None = None,
+    execution_attempt_id: str | None = None,
+) -> dict[str, Any]:
+    attempt_payload = dict(attempt or as_mapping(result.get("attempt")))
+    request = as_mapping(attempt_payload.get("request"))
+    execution_policy = as_mapping(request.get("execution_policy"))
+    repricing_policy = as_mapping(request.get("repricing_policy"))
+    if not repricing_policy:
+        repricing_policy = as_mapping(execution_policy.get("repricing_policy"))
+    stale_order_action = str(
+        execution_policy.get("stale_order_action")
+        or repricing_policy.get("stale_order_action")
+        or "cancel_and_reprice"
+    ).strip().lower()
+    if stale_order_action not in {"cancel_and_reprice", "fail_closed", "leave_working"}:
+        stale_order_action = "cancel_and_reprice"
+    resolved_intent_id = (
+        as_text(result.get("execution_intent_id"))
+        or as_text(attempt_payload.get("execution_intent_id"))
+        or as_text(request.get("execution_intent_id"))
+        or execution_intent_id
+    )
+    resolved_attempt_id = (
+        as_text(result.get("execution_attempt_id"))
+        or as_text(attempt_payload.get("execution_attempt_id"))
+        or execution_attempt_id
+    )
+    attempt_status = as_text(result.get("attempt_status")) or as_text(attempt_payload.get("status"))
+    if resolved_intent_id is None:
+        raise ValueError("Lifecycle Activity result is missing execution_intent_id")
+    return LifecycleActivityResult(
+        status=_bounded_text(result.get("status") or result.get("action") or attempt_status or "ok", limit=64) or "ok",
+        execution_intent_id=resolved_intent_id,
+        execution_attempt_id=resolved_attempt_id,
+        replacement_execution_intent_id=as_text(result.get("replacement_execution_intent_id")),
+        position_id=(
+            as_text(result.get("position_id"))
+            or as_text(attempt_payload.get("position_id"))
+            or as_text(request.get("position_id"))
+        ),
+        attempt_status=_bounded_text(attempt_status, limit=64),
+        requested_at=attempt_payload.get("requested_at"),
+        submitted_at=attempt_payload.get("submitted_at"),
+        completed_at=attempt_payload.get("completed_at"),
+        reason=_bounded_text(result.get("reason")),
+        submit_ttl_seconds=min(_positive_int(execution_policy.get("submit_ttl_minutes"), 5) * 60, 86_400),
+        stale_after_seconds=min(_positive_int(repricing_policy.get("stale_after_seconds"), 75), 86_400),
+        stale_order_action=stale_order_action,
+    ).to_payload()
 
 
 def _execution_attempt_id(payload: Mapping[str, Any]) -> str:
@@ -82,21 +146,22 @@ def _load_attempt(*, db_target: str, execution_attempt_id: str) -> dict[str, Any
 
 @activity.defn(name="ensure_execution_attempt_for_intent")
 async def ensure_execution_attempt_for_intent_activity(payload: dict[str, Any]) -> dict[str, Any]:
-    database_url = _database_url(payload)
+    database_url = _database_url()
     execution_intent_id = as_text(payload.get("execution_intent_id"))
     if execution_intent_id is None:
         raise ValueError("Broker activity payload is missing execution_intent_id")
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         ensure_execution_attempt_for_intent,
         db_target=database_url,
         execution_intent_id=execution_intent_id,
         workflow_id=as_text(payload.get("workflow_id")),
     )
+    return _compact_lifecycle_result(result, execution_intent_id=execution_intent_id)
 
 
 @activity.defn(name="submit_execution_attempt_to_broker")
 async def submit_execution_attempt_to_broker_activity(payload: dict[str, Any]) -> dict[str, Any]:
-    database_url = _database_url(payload)
+    database_url = _database_url()
     execution_attempt_id = _execution_attempt_id(payload)
     workflow_id = as_text(payload.get("workflow_id"))
     attempt_before = await asyncio.to_thread(_load_attempt, db_target=database_url, execution_attempt_id=execution_attempt_id)
@@ -142,12 +207,12 @@ async def submit_execution_attempt_to_broker_activity(payload: dict[str, Any]) -
         workflow_id=workflow_id,
         payload={"status": result.get("status"), "message": result.get("message"), "reason": result.get("reason")},
     )
-    return result
+    return _compact_lifecycle_result(result, attempt=attempt, execution_attempt_id=execution_attempt_id)
 
 
 @activity.defn(name="refresh_execution_attempt")
 async def refresh_execution_attempt_activity(payload: dict[str, Any]) -> dict[str, Any]:
-    database_url = _database_url(payload)
+    database_url = _database_url()
     execution_attempt_id = _execution_attempt_id(payload)
     result = await asyncio.to_thread(
         refresh_execution_attempt,
@@ -164,12 +229,12 @@ async def refresh_execution_attempt_activity(payload: dict[str, Any]) -> dict[st
             workflow_id=as_text(payload.get("workflow_id")),
             payload={"status": "refresh_activity_completed", "changed": result.get("changed")},
         )
-    return result
+    return _compact_lifecycle_result(result, attempt=attempt, execution_attempt_id=execution_attempt_id)
 
 
 @activity.defn(name="cancel_execution_attempt")
 async def cancel_execution_attempt_activity(payload: dict[str, Any]) -> dict[str, Any]:
-    database_url = _database_url(payload)
+    database_url = _database_url()
     execution_attempt_id = _execution_attempt_id(payload)
     result = await asyncio.to_thread(
         cancel_execution_attempt,
@@ -186,19 +251,24 @@ async def cancel_execution_attempt_activity(payload: dict[str, Any]) -> dict[str
             workflow_id=as_text(payload.get("workflow_id")),
             payload={"status": "cancel_activity_completed", "changed": result.get("changed")},
         )
-    return result
+    return _compact_lifecycle_result(result, attempt=attempt, execution_attempt_id=execution_attempt_id)
 
 
 @activity.defn(name="create_repriced_execution_intent")
 async def create_repriced_execution_intent_activity(payload: dict[str, Any]) -> dict[str, Any]:
-    database_url = _database_url(payload)
+    database_url = _database_url()
     execution_intent_id = as_text(payload.get("execution_intent_id"))
     if execution_intent_id is None:
         raise ValueError("Broker activity payload is missing execution_intent_id")
     execution_attempt_id = _execution_attempt_id(payload)
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         create_repriced_execution_intent,
         db_target=database_url,
+        execution_intent_id=execution_intent_id,
+        execution_attempt_id=execution_attempt_id,
+    )
+    return _compact_lifecycle_result(
+        result,
         execution_intent_id=execution_intent_id,
         execution_attempt_id=execution_attempt_id,
     )

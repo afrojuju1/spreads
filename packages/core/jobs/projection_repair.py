@@ -109,11 +109,11 @@ def _validate_completed_result(
     job_run_id: str,
     orchestration_id: str,
     provider_attempt: int,
-) -> tuple[str, dict[str, Any]]:
+) -> str:
     if not isinstance(value, Mapping):
         raise ValueError("Temporal workflow result is not a routine projection envelope.")
     envelope = dict(value)
-    if int(envelope.get("schema_version") or 0) != 1:
+    if int(envelope.get("schema_version") or 0) != 2:
         raise ValueError("Temporal workflow result predates the repair-safe projection contract.")
     if str(envelope.get("job_run_id") or "") != job_run_id:
         raise ValueError("Temporal workflow result belongs to a different job run.")
@@ -127,10 +127,11 @@ def _validate_completed_result(
         raise ValueError(
             f"Temporal result attempt {envelope_attempt} does not match history attempt {provider_attempt}."
         )
-    result = envelope.get("result")
-    if not isinstance(result, Mapping):
-        raise ValueError("Temporal workflow result envelope is missing the persisted result.")
-    return job_status, dict(result)
+    if str(envelope.get("result_store") or "") != "job_runs":
+        raise ValueError("Temporal workflow result references an unsupported result store.")
+    if str(envelope.get("result_ref") or "") != job_run_id:
+        raise ValueError("Temporal workflow result references a different persisted job result.")
+    return job_status
 
 
 async def _read_terminal_projection(
@@ -177,12 +178,19 @@ async def _read_terminal_projection(
 
     error_text: str | None = None
     if provider_status == "completed":
-        job_status, result = _validate_completed_result(
+        job_status = _validate_completed_result(
             await handle.result(),
             job_run_id=job_run_id,
             orchestration_id=orchestration_id,
             provider_attempt=provider_attempt,
         )
+        persisted_result = job_row.get("result")
+        if not isinstance(persisted_result, Mapping):
+            raise ValueError(
+                f"Job run {job_run_id} has no persisted Postgres result; Temporal history "
+                "does not duplicate rich job evidence."
+            )
+        result = dict(persisted_result)
     else:
         job_status = "failed"
         failure_message = _failure_message(terminal_failure)
