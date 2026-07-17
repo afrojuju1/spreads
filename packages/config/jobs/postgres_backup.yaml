@@ -7,3 +7,7 @@ schedule:
   minute: 0
 payload:
   allow_off_hours: true
+  databases:
+    - spreads
+    - temporal
+    - temporal_visibility

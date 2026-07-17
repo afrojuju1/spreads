@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
+import os
 import re
 from typing import Any
 
@@ -18,6 +20,7 @@ from temporalio.client import (
     ScheduleSpec,
     ScheduleState,
 )
+from temporalio.runtime import PrometheusConfig, Runtime, TelemetryConfig
 
 from core.jobs.registry import get_job_spec
 from core.jobs.orchestration import market_boundary_slot, market_session_slots
@@ -206,7 +209,19 @@ def build_provider_schedule(definition: dict[str, Any], *, schedule_id: str) -> 
 
 
 async def connect_provider(*, address: str, namespace: str) -> Client:
-    return await Client.connect(address, namespace=namespace)
+    return await Client.connect(address, namespace=namespace, runtime=_provider_runtime())
+
+
+@lru_cache(maxsize=1)
+def _provider_runtime() -> Runtime | None:
+    metrics_bind_address = os.environ.get("SPREADS_TEMPORAL_METRICS_BIND_ADDRESS")
+    if not metrics_bind_address:
+        return None
+    return Runtime(
+        telemetry=TelemetryConfig(
+            metrics=PrometheusConfig(bind_address=metrics_bind_address),
+        )
+    )
 
 
 __all__ = [

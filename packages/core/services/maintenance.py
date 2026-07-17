@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-import gzip
 import os
 from pathlib import Path
-import shutil
 import subprocess
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -19,49 +17,68 @@ def run_postgres_backup(*, database_url: str, payload: dict[str, Any]) -> dict[s
     backup_root = Path(str(payload.get("backup_root") or os.environ.get("SPREADS_BACKUP_ROOT") or "/app/backups/postgres"))
     backup_root.mkdir(parents=True, exist_ok=True)
     created_at = datetime.now(UTC)
-    destination = backup_root / f"spreads-{created_at.strftime('%Y%m%dT%H%M%SZ')}.sql.gz"
-    temporary_destination = destination.with_name(f"{destination.name}.tmp")
-    command = [
-        "pg_dump",
-        "--host", parsed.hostname or "postgres",
-        "--port", str(parsed.port or 5432),
-        "--username", unquote(parsed.username or "spreads"),
-        "--dbname", (parsed.path or "/spreads").lstrip("/"),
-        "--no-owner",
-        "--no-privileges",
-    ]
+    configured_databases = payload.get("databases")
+    databases = (
+        tuple(str(value).strip() for value in configured_databases if str(value).strip())
+        if isinstance(configured_databases, list)
+        else ((parsed.path or "/spreads").lstrip("/"),)
+    )
+    if not databases:
+        raise ValueError("At least one PostgreSQL database is required for backup")
+    if len(set(databases)) != len(databases):
+        raise ValueError("PostgreSQL backup database names must be unique")
+
     env = {**os.environ, "PGPASSWORD": unquote(parsed.password or "")}
-    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE)
-    try:
-        if process.stdout is None:
-            raise RuntimeError("pg_dump did not expose a stdout stream")
-        with process.stdout, gzip.open(temporary_destination, "wb") as output:
-            shutil.copyfileobj(process.stdout, output, length=1024 * 1024)
-        return_code = process.wait()
-        if return_code:
-            raise subprocess.CalledProcessError(return_code, command)
-        temporary_destination.chmod(0o600)
-        if os.geteuid() == 0:
-            backup_owner = backup_root.stat()
-            os.chown(temporary_destination, backup_owner.st_uid, backup_owner.st_gid)
-        temporary_destination.replace(destination)
-    except Exception:
-        process.kill()
-        process.wait()
-        temporary_destination.unlink(missing_ok=True)
-        raise
+    timestamp = created_at.strftime("%Y%m%dT%H%M%SZ")
+    artifacts: list[dict[str, Any]] = []
+    for database in databases:
+        destination = backup_root / f"{database}-{timestamp}.dump"
+        temporary_destination = destination.with_name(f"{destination.name}.tmp")
+        command = [
+            "pg_dump",
+            "--host",
+            parsed.hostname or "postgres",
+            "--port",
+            str(parsed.port or 5432),
+            "--username",
+            unquote(parsed.username or "spreads"),
+            "--dbname",
+            database,
+            "--format=custom",
+            "--compress=9",
+            "--no-owner",
+            "--no-privileges",
+            f"--file={temporary_destination}",
+        ]
+        try:
+            subprocess.run(command, env=env, check=True)
+            temporary_destination.chmod(0o600)
+            if os.geteuid() == 0:
+                backup_owner = backup_root.stat()
+                os.chown(temporary_destination, backup_owner.st_uid, backup_owner.st_gid)
+            temporary_destination.replace(destination)
+        except Exception:
+            temporary_destination.unlink(missing_ok=True)
+            raise
+        artifacts.append(
+            {
+                "database": database,
+                "artifact": str(destination),
+                "size_bytes": destination.stat().st_size,
+            }
+        )
 
     retention_days = max(int(payload.get("retention_days") or os.environ.get("SPREADS_BACKUP_RETENTION_DAYS") or 14), 1)
     cutoff = created_at - timedelta(days=retention_days)
     removed: list[str] = []
-    for path in backup_root.glob("spreads-*.sql.gz"):
-        if datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff:
-            path.unlink()
-            removed.append(path.name)
+    for database in databases:
+        for path in backup_root.glob(f"{database}-*.dump"):
+            if datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < cutoff:
+                path.unlink()
+                removed.append(path.name)
     return {
         "status": "succeeded",
-        "artifact": str(destination),
-        "size_bytes": destination.stat().st_size,
+        "artifacts": artifacts,
         "retention_days": retention_days,
         "removed_artifacts": removed,
     }

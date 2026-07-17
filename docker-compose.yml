@@ -1,3 +1,6 @@
+x-temporal-sdk-metrics: &temporal-sdk-metrics
+  SPREADS_TEMPORAL_METRICS_BIND_ADDRESS: "0.0.0.0:9464"
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -56,9 +59,9 @@ services:
       - "8222:8222"
     volumes:
       - spreads_nats_data:/data
-  temporal:
-    image: temporalio/auto-setup:1.25.2
-    restart: unless-stopped
+  temporal-schema:
+    image: temporalio/admin-tools:1.31.2
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,20 +71,61 @@ services:
       POSTGRES_USER: spreads
       POSTGRES_PWD: spreads
       POSTGRES_SEEDS: postgres
-      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
-    ports:
-      - "57233:7233"
-  temporal-ui:
-    image: temporalio/ui:2.31.2
+      SQL_PASSWORD: spreads
+    entrypoint: ["/bin/sh"]
+    command: ["/scripts/setup-postgres.sh"]
+    volumes:
+      - ./ops/temporal:/scripts:ro
+  temporal:
+    image: temporalio/server:1.31.2
     restart: unless-stopped
     depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: spreads
+      POSTGRES_PWD: spreads
+      POSTGRES_SEEDS: postgres
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/production.yaml
+      PROMETHEUS_ENDPOINT: 0.0.0.0:8000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    volumes:
+      - ./ops/temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/production.yaml:ro
+    ports:
+      - "127.0.0.1:57233:7233"
+  temporal-namespace:
+    image: temporalio/admin-tools:1.31.2
+    restart: "no"
+    depends_on:
       temporal:
-        condition: service_started
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_NAMESPACE_RETENTION: 7d
+    entrypoint: ["/bin/sh"]
+    command: ["/scripts/ensure-namespace.sh"]
+    volumes:
+      - ./ops/temporal:/scripts:ro
+  temporal-ui:
+    image: temporalio/ui:2.52.1
+    restart: unless-stopped
+    depends_on:
+      temporal-namespace:
+        condition: service_completed_successfully
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: http://localhost:53000,http://localhost:58080
     ports:
-      - "58088:8080"
+      - "127.0.0.1:58088:8080"
   runtime-init:
     build:
       context: .
@@ -148,13 +192,14 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
       nats:
         condition: service_started
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
@@ -171,11 +216,12 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
@@ -193,11 +239,12 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
@@ -213,11 +260,12 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
@@ -239,13 +287,14 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
       api:
         condition: service_started
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
@@ -263,13 +312,14 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
       api:
         condition: service_started
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       REDIS_URL: redis://redis:6379/0
@@ -293,8 +343,8 @@ services:
     depends_on:
       runtime-init:
         condition: service_completed_successfully
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
@@ -314,11 +364,12 @@ services:
         condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
-      temporal:
-        condition: service_started
+      temporal-namespace:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
+      <<: *temporal-sdk-metrics
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       SPREADS_CLICKHOUSE_URL: http://spreads:spreads@clickhouse:8123/spreads
       SPREADS_WORKFLOW_ADDRESS: temporal:7233
